@@ -59,10 +59,34 @@ async function fetchFromAniList(id) {
   const body = JSON.stringify({ query: fullQuery, variables: { id } });
   const res = await fetch("https://graphql.anilist.co", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": UA },
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "User-Agent": UA,
+      "Origin": "https://anilist.co",
+      "Referer": "https://anilist.co/",
+    },
     body,
   }).catch(() => null);
   return await mediaFromResponse(res) ?? fetchFromAniListWeb(body);
+}
+
+// Fallback metadata source when AniList GraphQL is blocked/rate-limited (e.g.
+// from Cloudflare's network). ani.zip is a different host and gives titles + the
+// MAL id, which is enough for the providers to resolve.
+async function fetchFromAniZip(id) {
+  const res = await fetch(`https://api.ani.zip/mappings?anilist_id=${id}`, {
+    headers: { "User-Agent": UA, "Accept": "application/json" },
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const data = await res.json().catch(() => null);
+  const titles = data?.titles ?? {};
+  const english = titles.en ?? titles["en-us"] ?? null;
+  const romaji = titles["x-jat"] ?? titles.ja_jp ?? null;
+  const native = titles.ja ?? titles["ja-jp"] ?? null;
+  const malId = data?.mappings?.mal_id ?? null;
+  if (!english && !romaji && !native && !malId) return null;
+  return { english, romaji, native, malId, synonyms: Object.values(titles).filter((t) => typeof t === "string") };
 }
 
 async function getMedia(anilistId) {
@@ -78,7 +102,28 @@ async function getMedia(anilistId) {
     }).catch(() => null);
 
     const al = await fetchFromAniList(id);
-    if (!al) throw new Error(`No data found for AniList ID ${id}`);
+    if (!al) {
+      // AniList unreachable — build minimal media from ani.zip so providers
+      // (which only need title + MAL id) can still resolve.
+      const az = await fetchFromAniZip(id);
+      if (!az) throw new Error(`No data found for AniList ID ${id}`);
+      const media = {
+        id,
+        idMal: az.malId ?? arm?.myanimelist ?? null,
+        title: { english: az.english, romaji: az.romaji, native: az.native },
+        status: "RELEASING",
+        format: null,
+        episodes: null,
+        seasonYear: null,
+        startDate: null,
+        genres: [],
+        nextAiringEpisode: null,
+        synonyms: Array.isArray(az.synonyms) ? az.synonyms : [],
+      };
+      resolved.set(id, media);
+      inflight.delete(id);
+      return media;
+    }
     const media = {
       id,
       idMal: al.idMal ?? arm?.myanimelist ?? null,

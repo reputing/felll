@@ -24,6 +24,20 @@ export default async function WatchPage({ params, searchParams }: Props) {
   if (!anime) notFound();
 
   const [{ episodes, providers }, titleLang] = await Promise.all([getWatchEpisodes(anime), getTitleLanguage()]);
+
+  if (episodes.length === 0) {
+    return (
+      <div className="py-20 text-center">
+        <h1 className="text-xl font-semibold">{displayTitle(anime, titleLang)}</h1>
+        <p className="mx-auto mt-3 max-w-md text-muted">
+          No streamable episodes were found for this title right now. External providers can be
+          temporarily unavailable — try again later, or pick another title.
+        </p>
+        <Link href={`/anime/${anime.slug}`} className="mt-6 inline-block text-accent">← Back to details</Link>
+      </div>
+    );
+  }
+
   const index = Math.max(0, episodes.findIndex((e) => String(e.number) === (ep ?? String(episodes[0]?.number))));
   const episode = episodes[index];
   if (!episode) notFound();
