@@ -9,21 +9,25 @@
 // deployed Anivexa URL in production). When unset, every helper no-ops and the
 // site falls back to self-hosted sources only.
 
-/** Provider slugs understood by Anivexa, with their display names. */
+// Provider slugs understood by Anivexa, with their display names. Ordered by
+// observed playback reliability (most reliable first) so the player defaults to
+// a server that actually plays and only falls through to flakier ones.
 export const ANIVEXA_PROVIDERS: { slug: string; name: string }[] = [
-  { slug: "mkissa", name: "MKissa" },
-  { slug: "reanime", name: "Reanime" },
   { slug: "anikoto", name: "Anikoto" },
   { slug: "animegg", name: "AnimeGG" },
+  { slug: "aniwaves", name: "AniWaves" },
+  { slug: "reanime", name: "Reanime" },
+  { slug: "kaa", name: "KickAssAnime" },
+  { slug: "senshi", name: "Senshi" },
+  { slug: "mkissa", name: "MKissa" },
+  { slug: "anipm", name: "Ani.pm" },
   { slug: "animenosub", name: "AnimeNoSub" },
   { slug: "anizone", name: "AniZone" },
-  { slug: "aniwaves", name: "AniWaves" },
-  { slug: "senshi", name: "Senshi" },
-  { slug: "kaa", name: "KickAssAnime" },
-  { slug: "animedunya", name: "AnimeDunya" },
   { slug: "animeonsen", name: "AnimeOnsen" },
-  { slug: "anipm", name: "Ani.pm" },
+  { slug: "animedunya", name: "AnimeDunya" },
 ];
+
+const PROVIDER_ORDER = new Map(ANIVEXA_PROVIDERS.map((p, i) => [p.slug, i]));
 
 const PROVIDER_SLUGS = new Set(ANIVEXA_PROVIDERS.map((p) => p.slug));
 const PROVIDER_NAME = new Map(ANIVEXA_PROVIDERS.map((p) => [p.slug, p.name]));
@@ -135,6 +139,8 @@ export async function fetchAnivexaCatalog(anilistId: number): Promise<AnivexaCat
   }
 
   if (providers.length === 0) return null;
+  // Most-reliable providers first, so the default player server actually plays.
+  providers.sort((a, b) => (PROVIDER_ORDER.get(a.slug) ?? 99) - (PROVIDER_ORDER.get(b.slug) ?? 99));
   const episodes = [...merged.values()].sort((a, b) => a.number - b.number);
   return { providers, episodes };
 }
