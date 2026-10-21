@@ -12,23 +12,41 @@ interface Props {
   intro: { start: number | null; end: number | null };
   outroStart: number | null;
   nextHref: string | null;
+  defaultAudio?: string;
 }
 
-const AUDIO_LABELS: Record<VideoSource["audio"], string> = { sub: "Sub", dub: "Dub", raw: "Raw" };
+const AUDIO_LABELS: Record<VideoSource["audio"], string> = { sub: "SUB", dub: "DUB", raw: "RAW" };
 
-/**
- * Plays an episode from one of its sources ("servers"). Playback URLs are
- * fetched from /api/play per source, so signed URLs never sit in the HTML.
- * If a source fails, the next one in priority order is tried.
- */
-export function Player({ animeId, episodeKey, sources, subtitles, intro, outroStart, nextHref }: Props) {
+function usePref(key: string, fallback: boolean): [boolean, (v: boolean) => void] {
+  const [val, setVal] = useState(fallback);
+  useEffect(() => {
+    try { setVal(localStorage.getItem(key) === "1"); } catch {}
+  }, [key]);
+  const set = useCallback((v: boolean) => {
+    setVal(v);
+    try { localStorage.setItem(key, v ? "1" : "0"); } catch {}
+  }, [key]);
+  return [val, set];
+}
+
+export function Player({ animeId, episodeKey, sources, subtitles, intro, outroStart, nextHref, defaultAudio }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const [current, setCurrent] = useState<VideoSource | undefined>(sources[0]);
+  const [current, setCurrent] = useState<VideoSource | undefined>(() => {
+    if (defaultAudio) {
+      const match = sources.find((s) => s.audio === defaultAudio);
+      if (match) return match;
+    }
+    return sources[0];
+  });
   const [failed, setFailed] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [time, setTime] = useState(0);
-  const [autoNext, setAutoNext] = useState(false);
+  const [theater, setTheater] = usePref("theater", false);
+  const [autoNext, setAutoNext] = usePref("autoNext", false);
+  const [autoPlay, setAutoPlay] = usePref("autoPlay", true);
+  const [autoSkip, setAutoSkip] = usePref("autoSkip", false);
+  const [showKeys, setShowKeys] = useState(false);
 
   const progressKey = `progress:${episodeKey}`;
 
@@ -44,14 +62,6 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
     },
     [sources],
   );
-
-  useEffect(() => {
-    try {
-      setAutoNext(localStorage.getItem("autoNext") === "1");
-    } catch {
-      // Storage unavailable (private mode); keep the default.
-    }
-  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -83,20 +93,17 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
         hls.loadSource(url);
         hls.attachMedia(video);
       } else {
-        // Safari plays HLS natively.
         video.src = url;
       }
       if (resumeAt > 5) video.currentTime = resumeAt;
+      if (autoPlay) video.play().catch(() => {});
     })().catch(() => fallback(current));
 
-    return () => {
-      cancelled = true;
-    };
-  }, [current, fallback, progressKey]);
+    return () => { cancelled = true; };
+  }, [current, fallback, progressKey, autoPlay]);
 
   useEffect(() => () => hlsRef.current?.destroy(), []);
 
-  // Count one view per episode page load.
   useEffect(() => {
     fetch("/api/view", {
       method: "POST",
@@ -108,17 +115,72 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
   const onTimeUpdate = () => {
     const video = videoRef.current;
     if (!video) return;
-    setTime(video.currentTime);
-    if (Math.floor(video.currentTime) % 5 === 0) {
-      try {
-        localStorage.setItem(progressKey, String(Math.floor(video.currentTime)));
-      } catch {}
+    const t = video.currentTime;
+    setTime(t);
+    if (Math.floor(t) % 5 === 0) {
+      try { localStorage.setItem(progressKey, String(Math.floor(t))); } catch {}
+    }
+    if (autoSkip && intro.start != null && intro.end != null && t >= intro.start && t < intro.end) {
+      video.currentTime = intro.end;
+    }
+    if (autoSkip && outroStart != null && nextHref && t >= outroStart) {
+      window.location.href = nextHref;
     }
   };
 
-  const showSkipIntro =
-    intro.start != null && intro.end != null && time >= intro.start && time < intro.end;
-  const showSkipOutro = outroStart != null && nextHref != null && time >= outroStart;
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const video = videoRef.current;
+      if (!video || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      switch (e.key) {
+        case " ":
+        case "k":
+          e.preventDefault();
+          video.paused ? video.play() : video.pause();
+          break;
+        case "f":
+          e.preventDefault();
+          document.fullscreenElement ? document.exitFullscreen() : video.requestFullscreen?.();
+          break;
+        case "m":
+          e.preventDefault();
+          video.muted = !video.muted;
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 10);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          video.currentTime += 10;
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          video.volume = Math.min(1, video.volume + 0.1);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          video.volume = Math.max(0, video.volume - 0.1);
+          break;
+        case "t":
+          e.preventDefault();
+          setTheater(!theater);
+          break;
+        case "n":
+          if (nextHref) {
+            e.preventDefault();
+            window.location.href = nextHref;
+          }
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [nextHref, setTheater]);
+
+  const showSkipIntro = !autoSkip && intro.start != null && intro.end != null && time >= intro.start && time < intro.end;
+  const showSkipOutro = !autoSkip && outroStart != null && nextHref != null && time >= outroStart;
 
   if (sources.length === 0) {
     return (
@@ -131,7 +193,7 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
   const audios = [...new Set(sources.map((s) => s.audio))];
 
   return (
-    <div>
+    <div data-theater={theater || undefined}>
       <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
         <video
           ref={videoRef}
@@ -140,9 +202,7 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
           className="h-full w-full"
           onTimeUpdate={onTimeUpdate}
           onEnded={() => {
-            try {
-              localStorage.removeItem(progressKey);
-            } catch {}
+            try { localStorage.removeItem(progressKey); } catch {}
             if (autoNext && nextHref) window.location.href = nextHref;
           }}
         >
@@ -173,40 +233,74 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
         )}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-4 rounded-lg bg-panel p-3 text-sm">
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-panel p-3 text-sm">
+        {/* Server buttons grouped by audio */}
         {audios.map((audio) => (
           <div key={audio} className="flex flex-wrap items-center gap-2">
-            <span className="w-10 text-muted">{AUDIO_LABELS[audio]}</span>
-            {sources
-              .filter((s) => s.audio === audio)
-              .map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => setCurrent(s)}
-                  disabled={failed.has(s.id)}
-                  className={`rounded-md px-3 py-1 ${
-                    s.id === current?.id ? "bg-accent text-black" : "bg-line hover:bg-line/70"
-                  } disabled:opacity-40`}
-                >
-                  {s.label}
-                </button>
-              ))}
+            <span className="min-w-[40px] text-xs font-bold tracking-wider text-muted">{AUDIO_LABELS[audio]}:</span>
+            <div className="flex items-center gap-1 rounded-lg bg-black/40 p-1 ring-1 ring-white/5">
+              {sources
+                .filter((s) => s.audio === audio)
+                .map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setCurrent(s)}
+                    disabled={failed.has(s.id)}
+                    className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                      s.id === current?.id ? "bg-accent text-black shadow-md" : "text-zinc-400 hover:bg-white/10 hover:text-white"
+                    } disabled:opacity-40`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+            </div>
           </div>
         ))}
-        <label className="ml-auto flex items-center gap-2 text-muted">
-          <input
-            type="checkbox"
-            checked={autoNext}
-            onChange={(e) => {
-              setAutoNext(e.target.checked);
-              try {
-                localStorage.setItem("autoNext", e.target.checked ? "1" : "0");
-              } catch {}
-            }}
-          />
-          Auto next
-        </label>
+
+        {/* Divider */}
+        <div className="hidden h-6 w-px bg-line sm:block" />
+
+        {/* Feature toggles */}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <ToggleBtn label="Theater" active={theater} onToggle={() => setTheater(!theater)} />
+          <ToggleBtn label="Auto Play" active={autoPlay} onToggle={() => setAutoPlay(!autoPlay)} />
+          <ToggleBtn label="Auto Next" active={autoNext} onToggle={() => setAutoNext(!autoNext)} />
+          <ToggleBtn label="Auto Skip" active={autoSkip} onToggle={() => setAutoSkip(!autoSkip)} />
+          <button
+            onClick={() => setShowKeys(!showKeys)}
+            className="rounded-md bg-line/60 px-2 py-1 text-xs text-muted hover:text-white"
+          >
+            Keys
+          </button>
+        </div>
       </div>
+
+      {showKeys && (
+        <div className="mt-2 rounded-lg bg-panel p-3 text-xs text-muted">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
+            <span><kbd className="rounded bg-line px-1">Space</kbd> / <kbd className="rounded bg-line px-1">K</kbd> Play/Pause</span>
+            <span><kbd className="rounded bg-line px-1">F</kbd> Fullscreen</span>
+            <span><kbd className="rounded bg-line px-1">M</kbd> Mute</span>
+            <span><kbd className="rounded bg-line px-1">←</kbd> / <kbd className="rounded bg-line px-1">→</kbd> Seek ±10s</span>
+            <span><kbd className="rounded bg-line px-1">↑</kbd> / <kbd className="rounded bg-line px-1">↓</kbd> Volume</span>
+            <span><kbd className="rounded bg-line px-1">T</kbd> Theater</span>
+            <span><kbd className="rounded bg-line px-1">N</kbd> Next episode</span>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function ToggleBtn({ label, active, onToggle }: { label: string; active: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`rounded-md px-2 py-1 text-xs transition ${
+        active ? "bg-accent/20 text-accent" : "bg-line/60 text-muted hover:text-white"
+      }`}
+    >
+      {label}
+    </button>
   );
 }

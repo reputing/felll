@@ -63,6 +63,22 @@ export async function getSubtitles(episodeId: number): Promise<Subtitle[]> {
   return data ?? [];
 }
 
+export async function getEpisodeAudioMap(animeId: number): Promise<Record<number, { sub: boolean; dub: boolean }>> {
+  const { data, error } = await supabase()
+    .from("video_sources")
+    .select("episode_id, audio, episodes!inner(anime_id)")
+    .eq("episodes.anime_id", animeId);
+  if (error) throw error;
+  const map: Record<number, { sub: boolean; dub: boolean }> = {};
+  for (const row of data ?? []) {
+    const epId = row.episode_id as number;
+    map[epId] ??= { sub: false, dub: false };
+    if (row.audio === "sub" || row.audio === "raw") map[epId].sub = true;
+    if (row.audio === "dub") map[epId].dub = true;
+  }
+  return map;
+}
+
 export async function getSchedule(from: Date, to: Date) {
   const { data, error } = await supabase().rpc("airing_schedule", {
     p_from: from.toISOString(),

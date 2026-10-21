@@ -54,11 +54,18 @@ export default async function AnimePage({ params }: Props) {
               </Link>
             ))}
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             {first ? (
-              <Link href={`/watch/${anime.slug}?ep=${first.number}`} className="rounded-lg bg-accent px-5 py-2 font-semibold text-black">
-                ▶ Watch now
-              </Link>
+              <>
+                <Link href={`/watch/${anime.slug}?ep=${first.number}&lang=sub`} className="rounded-lg bg-accent px-5 py-2 font-semibold text-black">
+                  ▶ Watch Sub
+                </Link>
+                {anime.dub_episodes > 0 && (
+                  <Link href={`/watch/${anime.slug}?ep=${first.number}&lang=dub`} className="rounded-lg border border-accent px-5 py-2 font-semibold text-accent">
+                    ▶ Watch Dub
+                  </Link>
+                )}
+              </>
             ) : (
               <span className="rounded-lg border border-line px-5 py-2 text-muted">Not available to stream yet</span>
             )}
