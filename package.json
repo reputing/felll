@@ -13,7 +13,9 @@
     "sync:catalog": "tsx scripts/sync-anilist.ts",
     "sync:airing": "tsx scripts/sync-anilist.ts --airing",
     "sync:ratings": "tsx scripts/sync-ratings.ts",
-    "upload": "tsx scripts/upload-episode.ts"
+    "upload": "tsx scripts/upload-episode.ts",
+    "upload:folder": "tsx scripts/upload-folder.ts",
+    "upload:watch": "tsx scripts/upload-folder.ts --watch"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.118.0",

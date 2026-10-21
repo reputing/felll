@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
+// Scripts read .env.local / .env like Next.js does; variables already set in
+// the environment (e.g. GitHub Actions secrets) win.
+for (const file of [".env.local", ".env"]) {
+  try {
+    process.loadEnvFile(file);
+  } catch {
+    // File absent.
+  }
+}
+
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is not set (see .env.example)`);

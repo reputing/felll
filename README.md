@@ -68,6 +68,37 @@ the full sync weekly. Add `NEXT_PUBLIC_SUPABASE_URL` and
 
 ### 4. Upload episodes
 
+**Automatic (recommended).** Put files in a folder, one subfolder per anime
+named by its slug (the part after `/anime/` in the site URL) or
+`anilist-<id>`:
+
+```
+uploads/
+  frieren-beyond-journey-s-end-16w8tc/
+    01.mkv                        episode 1, sub
+    01.en.vtt                     captions for 01.mkv (.srt works too)
+    02 - Aura the Guillotine.mkv  episode 2 with a title
+    02.dub.mkv                    episode 2, dub
+```
+
+```bash
+npm run upload:folder -- --dir ./uploads   # upload everything new, then exit
+npm run upload:watch  -- --dir ./uploads   # keep running; new files go live on their own
+```
+
+Episodes already on the site are skipped, so files can stay in the folder.
+In watch mode a file is only picked up once it has stopped changing, so it
+is safe to copy large files in. If the process stops while Stream is
+encoding, the next run resumes without uploading again. To keep the watcher
+running on an always-on machine:
+
+```bash
+npx pm2 start "npm run upload:watch -- --dir /path/to/uploads" --name uploads
+npx pm2 save && npx pm2 startup
+```
+
+**One episode at a time:**
+
 ```bash
 npm run upload -- --anime frieren-beyond-journey-s-end-16w8tc --episode 1 \
   --file ./masters/frieren-01.mkv --title "The Journey's End" \
@@ -79,9 +110,9 @@ npm run upload -- --anime anilist:154587 --episode 1 \
   --hls-url https://media.example.com/frieren/01/master.m3u8 --label "Backup" --priority 1
 ```
 
-The script uploads resumably (tus), waits for Stream to encode, attaches
-captions and registers the source. The episode appears on the site as soon
-as it finishes. Intro/outro timestamps (`episodes.intro_start`, `intro_end`,
+Both commands upload resumably (tus), wait for Stream to encode, attach
+captions and register the source. The episode appears on the site as soon
+as encoding finishes. Scripts read `.env.local` / `.env` automatically. Intro/outro timestamps (`episodes.intro_start`, `intro_end`,
 `outro_start`) enable the skip buttons.
 
 ### 5. Deploy to Cloudflare
