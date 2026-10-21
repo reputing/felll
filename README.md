@@ -1,199 +1,299 @@
-# Cupcake
+# Cupcake — full-stack handoff
 
-Anime streaming site, entirely on Cloudflare: Next.js on Cloudflare Workers
-(via OpenNext), **Cloudflare D1** (SQLite) for the catalog and search, Cloudflare
-Stream for any video you host yourself, and an optional
-[Anivexa](https://github.com/walterwhite-69/Anivexa-API) backend (also a Worker)
-for titles you don't host.
+Anime streaming site, entirely on **Cloudflare**. Browse/search a full AniList
+catalog; play episodes either from your own uploads or, via the bundled
+**Anivexa** aggregator, from 12 third-party providers resolved by AniList ID.
 
-## How it fits together
+> **This README is a handoff doc.** It describes exactly what's deployed, what
+> works, what doesn't and why, and a prioritized list of what to fix next.
 
-```
-AniList GraphQL ──sync──▶ Cloudflare D1 ◀──binding── Next.js (Cloudflare Worker)
-Jikan (MAL rating) ──┘    anime / episodes /          │
-                          video_sources / views       ├─ /api/play signs a Stream token
-your master file ──tus──▶ Cloudflare Stream ──HLS──▶  │
-AniList id ──────────────▶ Anivexa Worker ──HLS──▶ /api/anivexa/proxy ──▶ hls.js player
-```
+---
 
-| Layer | What it does |
+## 1. What it runs on (this deployment)
+
+| Thing | Value |
 |---|---|
-| **Catalog** | Every AniList anime (~20k titles) mirrored into D1: titles in EN/romaji/native, synonyms, genres, tags, studios, characters, staff, season, format, status, origin, score, popularity, trailer, next airing episode. MAL age ratings (G…R+) via Jikan. |
-| **Search** | Built in the Worker as SQLite over D1: an FTS5 **trigram** index for substring and partial-title matching ("frier" → Frieren), a prefix bonus for type-ahead, JSON-array filters (genres, tags, studios, characters, staff) and a popularity tie-breaker. Filters: genres, tags, year, season, format, status, origin, audio, rating, studio, character, staff. Sorts: best match, popularity, trending, score, year, recently updated, title. |
-| **Trending** | Your own views over the last 14 days plus AniList's trending number, so a new site isn't empty. |
-| **Video** | Each episode can have one or more `video_sources` ("servers"), each a Cloudflare Stream video or a self-hosted HLS URL, with an audio track (sub/dub/raw) and priority. The player lists them, switches on click and falls through to the next if one fails. |
-| **External providers** | Optional. With `ANIVEXA_API_URL` set, titles you don't self-host become watchable through the Anivexa aggregator: episode lists and stream sources from 12 providers, keyed by the anime's AniList ID, shown as extra "servers" after any self-hosted ones. |
-| **Playback security** | Stream videos require signed URLs. `/api/play/:id` signs a 4-hour RS256 token locally, so URLs can't be hot-linked and no API call is spent per play. |
+| Cloudflare account subdomain | `matthewsjakael` (so Workers are `*.matthewsjakael.workers.dev`) |
+| Plan | **Workers Paid** ($5/mo) — required for Cloudflare Containers |
+| Frontend (site) Worker | `felll` → `https://felll.matthewsjakael.workers.dev` |
+| Custom domain | `cupcake.gg` (attached, or being attached, as a custom domain on the `felll` worker) |
+| Catalog DB | Cloudflare **D1**, database name `cupcake` (binding `DB`) |
+| Backend (Anivexa) | Cloudflare **Containers** worker `anivexa-api` → `https://anivexa-api.matthewsjakael.workers.dev` |
+| Backend URL wired into site | `ANIVEXA_API_URL` var in `wrangler.jsonc` |
+| Dev machine | **Windows**, using **Git Bash** (paths like `/c/Users/axtze/felll`). Docker Desktop installed (needed for container deploys). |
 
-Pages: `/` (landing), `/home` (trending, recently updated, top airing,
-popular, top rated, upcoming), `/search`, `/anime/:slug`,
-`/watch/:slug?ep=N` (skip intro/outro, resume, auto-next), `/schedule`.
+Local dev gotcha (Windows): in Git Bash use forward slashes (`cd /c/Users/...`).
+`npm install` rewrites `package-lock.json` for win32; if `git pull` complains,
+run `git checkout -- package-lock.json` first (don't commit the local lockfile).
 
-## Quick start (one command)
+---
 
-Bring up D1, the schema, the Anivexa Worker and the site, with a starter
-catalog, in one go. Your token stays in your own shell — it is never committed.
+## 2. Architecture
 
+```
+AniList GraphQL ──sync (GH Action/local)──▶ Cloudflare D1 ◀──binding(DB)── Next.js site (Worker "felll")
+Jikan (MAL ratings) ──┘                     anime / episodes /              │
+                                            video_sources / views           │
+your own masters ──tus──▶ Cloudflare Stream ──signed HLS──▶ /api/play ──────┤
+                                                                            │ hls.js player
+AniList ID ──▶ Anivexa backend (Container "anivexa-api") ──▶ /api/anivexa/* │
+              (12 providers, resolves episodes + stream URLs)   proxy ──────┘
+```
+
+- **Catalog/search/metadata**: D1 (SQLite). Synced from AniList.
+- **Self-hosted video** (optional, mostly unused right now): Cloudflare Stream +
+  `video_sources` rows + `/api/play` signed URLs.
+- **External video** (the main path today): Anivexa resolves episode lists and
+  per-episode stream URLs; the site proxies the HLS through `/api/anivexa/proxy`
+  so the required `Referer` headers are applied server-side.
+
+---
+
+## 3. Tech stack & repo map
+
+Stack: Next.js 16 (App Router) on **OpenNext → Cloudflare Workers**, React 19,
+Tailwind v4, Cloudflare D1, Cloudflare Containers, hls.js, tus (uploads).
+
+```
+app/
+  layout.tsx, globals.css        # shell + theme tokens (dark plum, pink accent #ff7aa8)
+  page.tsx                       # landing
+  home/page.tsx                  # trending / popular / airing rows (searchAnime)
+  search/page.tsx                # filters + pagination
+  anime/[slug]/page.tsx          # details + episode grid + Watch buttons
+  watch/[slug]/page.tsx          # player + episode sidebar (merges local + Anivexa)
+  schedule/page.tsx              # airing schedule
+  api/
+    search/route.ts              # header search-box suggestions
+    view/route.ts                # view counter (trending)
+    play/[sourceId]/route.ts     # signs a Cloudflare Stream URL for a self-hosted source
+    anivexa/stream/[provider]/[anilistId]/[audio]/[ep]/route.ts  # resolve 1 external stream
+    anivexa/proxy/route.ts       # HLS proxy: applies Referer, rewrites m3u8 children
+components/
+  Header, Footer, SearchBox, AnimeCard, Player, LocalTime, TitleLanguageToggle
+  AppLink.tsx                    # plain <a> used instead of next/link (see Known Issues)
+lib/
+  db.ts                          # D1 binding access (getCloudflareContext)
+  catalog.ts                     # searchAnime + all catalog reads + getWatchEpisodes/Sources
+  anivexa.ts                     # Anivexa client: catalog fetch, stream resolve, proxy URL builder, provider order
+  stream.ts                      # Cloudflare Stream RS256 token signing
+  types.ts                       # Anime, Episode, VideoSource, WatchEpisode, PlayerSource, ...
+  titles.ts, format.ts           # title language + label helpers
+d1/
+  schema.sql                     # D1 schema (SQLite): tables, FTS5 trigram search, count triggers
+scripts/
+  setup-cloudflare.sh            # one-shot bring-up (D1 + schema + both workers + starter sync + deploy)
+  d1.ts                          # D1 HTTP API client used by the sync/upload scripts
+  sync-anilist.ts, sync-ratings.ts
+  upload-episode.ts, upload-folder.ts, uploader.ts   # self-host video → Stream → D1
+anivexa-server/                  # ★ ACTIVE Anivexa backend (Cloudflare Containers, full Node)
+  Dockerfile, container-worker.js, wrangler.jsonc
+  index.js, server.js, core/, providers/, extractors/
+anivexa/                         # ⚠ LEGACY Anivexa backend (Workers-only, stubbed). Not used. See §6.
+```
+
+---
+
+## 4. Data layer (D1)
+
+`d1/schema.sql` is a SQLite port of the original Postgres schema:
+- `anime` — catalog mirror of AniList (arrays stored as JSON text, booleans as 0/1).
+- `episodes`, `video_sources`, `subtitles` — self-hosted playback.
+- `anime_daily_views` — trending counter.
+- **Search**: an FTS5 **trigram** virtual table (`anime_fts`) over the title
+  variants gives substring + partial matching ("frier" → Frieren). Trigram is
+  weaker than the old Postgres `pg_trgm` on letter-transposition typos.
+- **Triggers** keep `anime.sub_episodes/dub_episodes/latest_episode_at` in step
+  with `video_sources` (replaces the old Postgres function).
+
+Access: `lib/db.ts` → `getCloudflareContext().env.DB`. All pages are
+`force-dynamic`. `lib/catalog.ts::searchAnime` builds parameterized SQL (FTS +
+prefix bonus + `json_each` filters + `COUNT(*) OVER()` pagination).
+
+Apply schema: `npm run d1:schema` (remote) / `npm run d1:schema:local` (dev).
+
+### Catalog sync & uploads
+- `npm run sync:catalog [-- --pages N]`, `sync:airing`, `sync:ratings` — pull
+  AniList/Jikan and write to D1 over the D1 **HTTP API** (`scripts/d1.ts`).
+  Needs `CLOUDFLARE_API_TOKEN` (D1:Edit), `CLOUDFLARE_ACCOUNT_ID`,
+  `CLOUDFLARE_D1_DATABASE_ID`. GH Action `.github/workflows/sync-catalog.yml`
+  runs these on a schedule (add those 3 as repo secrets).
+- `npm run upload[:folder|:watch]` — upload your own masters to Cloudflare
+  Stream and register `video_sources`. Mostly unused today but fully wired.
+
+---
+
+## 5. Playback pipeline
+
+1. `watch/[slug]` calls `getWatchEpisodes(anime)` which **merges** self-hosted
+   episodes (D1) with Anivexa's episode list (by `anime.anilist_id`). Returns a
+   unified episode list + the Anivexa provider summaries.
+2. `getWatchSources(anime, episode, providers)` builds `PlayerSource[]`:
+   self-hosted "servers" first, then one entry per Anivexa provider that has
+   this episode (sub/dub). Providers are ordered by reliability (see
+   `ANIVEXA_PROVIDERS` in `lib/anivexa.ts`) so the **default server actually plays**.
+3. `components/Player.tsx` (hls.js): for a local source it hits
+   `/api/play/:id`; for an Anivexa source it hits
+   `/api/anivexa/stream/:provider/:anilistId/:audio/:ep`.
+4. `/api/anivexa/stream/...` → `lib/anivexa.ts::resolveAnivexaStream`: calls the
+   backend, picks the best stream (active HLS → HLS → DASH → embed), and returns
+   a **ready URL**. For HLS/DASH the URL points at `/api/anivexa/proxy`; for
+   `embed` it's the raw URL (player shows it in an `<iframe>`).
+5. `/api/anivexa/proxy` fetches the upstream with the provider's `Referer`
+   (and any headers), and **rewrites m3u8 child URIs** to go back through the
+   proxy too (so segments/keys also carry the Referer). It also **sniffs for
+   `#EXTM3U`** so playlists served with a bogus content-type (e.g. AniWaves
+   serves m3u8 as `image/jpeg`) are still rewritten. Binary segments/keys are
+   passed through untouched. It refuses non-HTTP(S) and private/loopback hosts
+   (SSRF guard).
+
+---
+
+## 6. Anivexa backend — two builds
+
+Anivexa is the upstream project `walterwhite-69/Anivexa-API`, vendored twice:
+
+### `anivexa-server/` — ACTIVE (Cloudflare Containers, full Node)
+Runs the real Node server in a container, so all providers (incl. `wreq-js`
+TLS-impersonation, `node:vm`, `child_process`) work.
+- Deploy: `npm run anivexa:container:deploy` (**Docker Desktop must be running**;
+  Cloudflare builds the image locally and pushes it).
+- `container-worker.js` fronts the container via `@cloudflare/containers`,
+  keeps it **warm 1h** (`sleepAfter`), and passes cache env (`CACHE_ENABLED`,
+  optional `UPSTASH_*`) into it.
+- **Patch applied** in `anivexa-server/core/anilist.js`: send `Origin`/`Referer`
+  on the AniList GraphQL call, and **fall back to ani.zip** for title + MAL id
+  when AniList is blocked. Without this, AniList rate-limits Cloudflare egress
+  and ~11/12 providers fail with "No data found". This patch is baked into the
+  image, so **re-run `anivexa:container:deploy` after editing it**.
+
+### `anivexa/` — LEGACY (Workers-only). Do not use.
+A stubbed Workers build (no `wreq-js`, no `vm`). On Workers, AniList blocks the
+metadata fetch from Cloudflare's shared edge IPs, so almost every provider
+returns "No data found". Kept only for reference. `ANIVEXA_API_URL` should
+point at the **container** worker, not this.
+
+> **Key lesson:** the IP a request egresses from matters. Even Cloudflare
+> Containers egress from Cloudflare's network, which some hosts/AniList
+> rate-limit or block. A plain VPS / Oracle free VM often has a cleaner IP.
+
+---
+
+## 7. Provider status (observed, for Attack on Titan / AniList 16498)
+
+| Provider | Status | Notes |
+|---|---|---|
+| **Anikoto** | ✅ works | clean HLS, reliable — default server |
+| **AnimeGG** | ✅ works | `embed` (iframe to animegg.org) |
+| **AniWaves** | ✅ works (after proxy sniff fix) | serves m3u8 as `image/jpeg`; sniff fix handles it |
+| **Reanime** | ⚠ test | HLS (flixcloud); should work, verify |
+| **KickAssAnime (kaa)** | ⚠ test | HLS; verify |
+| **Senshi** | ⚠ speed-dependent | stream URLs **expire ~60s** → only plays if backend is warm/fast (hence the cache/warm container). Shows `Cannot GET …/playlist.m3u8` when expired. |
+| **MKissa** | ⚠ flaky | resolves episodes; playback often fails |
+| **AnimeNoSub** | ❌ can't fix from proxy | returns an anti-hotlink HTML wall ("Portal Security → Go to Official Site") instead of video |
+| **Ani.pm** | ❌ can't fix from proxy | host (`settlar.io`) returns **403** to our server IP |
+| **AnimeOnsen** | ❌ unsupported | **DASH** manifest; player only does HLS |
+| **AniZone** | ❌ usually | "match not confident" for many titles |
+| **AnimeDunya** | ❌ usually | empty / no match |
+
+**Realistic ceiling: ~4–6 working providers per popular title.** The ❌ rows
+are blocked by the *hosts themselves* (anti-hotlink, IP bans, DASH) — no proxy
+change serves their bytes. This is inherent to scraping aggregators.
+
+---
+
+## 8. Known issues & current workarounds
+
+1. **Client-side navigation was broken (worked around).** Under OpenNext on
+   Cloudflare, RSC requests get a `307` that strips the `?_rsc` value, so Next's
+   soft navigation stalls — a left-click did nothing (only open-in-new-tab
+   worked). **Workaround:** `components/AppLink.tsx` renders a plain `<a>` and we
+   use it instead of `next/link` everywhere; search submit and the EN/JP toggle
+   use `window.location`. Trade-off: **full page loads, no SPA nav/prefetch.**
+   *Possible real fix: a newer OpenNext, or a Cloudflare routing rule for RSC.*
+2. **Slowness / Senshi expiry.** Backend re-scrapes all 12 providers live; cold
+   starts + no cache made lookups take many seconds, which blew Senshi's 60s
+   window. **Workaround:** container kept warm 1h + `CACHE_ENABLED` (in-memory);
+   add Upstash for a persistent cache. First load of a cold title is still slow.
+3. **Disguised m3u8 (fixed).** Proxy now sniffs `#EXTM3U`.
+4. **Embeds / DASH / anti-hotlink / IP-blocks** — not fixable from our side (see §7).
+
+---
+
+## 9. Environment & secrets
+
+Site worker (`wrangler.jsonc` `vars`, not secret): `NEXT_PUBLIC_SITE_NAME`,
+`ANIVEXA_API_URL` (→ the container worker URL), the `DB` d1 binding
+(`database_id` filled by setup).
+Site secrets (only if self-hosting video): `STREAM_CUSTOMER_DOMAIN`,
+`STREAM_SIGNING_KEY_ID`, `STREAM_SIGNING_KEY_JWK`.
+Scripts (`.env.local` / repo secrets): `CLOUDFLARE_API_TOKEN` (D1:Edit +
+Workers Scripts:Edit), `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_D1_DATABASE_ID`,
+and `CLOUDFLARE_STREAM_API_TOKEN` for uploads.
+Container (`anivexa-server/wrangler.jsonc` vars + secrets): `CACHE_ENABLED=true`,
+optional `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (set via
+`wrangler secret put ... -c anivexa-server/wrangler.jsonc`).
+
+---
+
+## 10. Deploy runbooks
+
+**Site (frontend) — most changes:**
 ```bash
-npm install
-export CLOUDFLARE_API_TOKEN=...      # D1:Edit + Workers Scripts:Edit
-export CLOUDFLARE_ACCOUNT_ID=...     # optional; auto-detected from `wrangler whoami`
-npm run setup:cloudflare             # creates D1, applies schema, deploys both Workers, syncs ~1,000 titles
+git pull
+npm run deploy            # opennextjs-cloudflare build + deploy → worker "felll"
 ```
-
-Options: `SKIP_SYNC=1` to skip the starter sync, `SYNC_PAGES=N` to change its
-size (default 40 pages ≈ 1,000 titles).
-
-Then attach your domain: **Workers & Pages → `felll` → Settings → Domains &
-Routes → Add → Custom domain → `cupcake.gg`** (and `www.cupcake.gg`). Cloudflare
-creates the DNS records and the certificate.
-
-That's it — the site is live with a catalog, and playback works immediately
-through Anivexa. Everything below is the manual version of those same steps.
-
-## Manual setup
-
-### 1. Cloudflare D1
-
+**Backend (container) — changes under anivexa-server/ (needs Docker running):**
 ```bash
-npx wrangler login
-npx wrangler d1 create cupcake          # copy the database_id it prints
-# paste it into wrangler.jsonc → d1_databases[0].database_id
-npm run d1:schema                        # apply d1/schema.sql to the remote DB
+npm run anivexa:container:deploy
+# prints https://anivexa-api.matthewsjakael.workers.dev — put in wrangler.jsonc ANIVEXA_API_URL, then npm run deploy
 ```
+**One-shot first-time bring-up:** `export CLOUDFLARE_API_TOKEN=... ; npm run setup:cloudflare`
+(creates D1, applies schema, deploys the *legacy Workers* anivexa — switch
+`ANIVEXA_API_URL` to the **container** afterward, syncs a starter catalog,
+deploys the site).
+**Domain:** Workers & Pages → `felll` → Settings → Domains & Routes → Add custom
+domain → `cupcake.gg` (+ `www`).
 
-### 2. Catalog
+Everything typechecks with `npm run typecheck`. D1 search/triggers were
+validated locally against a real SQLite D1.
 
-The sync scripts write to D1 over its HTTP API. Put these in `.env.local` (and,
-for the GitHub Action, as repo secrets): `CLOUDFLARE_API_TOKEN` (D1:Edit),
-`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_D1_DATABASE_ID`.
+---
 
-```bash
-npm run sync:catalog -- --pages 40   # quick start: 1,000 most popular titles
-npm run sync:catalog                 # everything (~30 min, AniList rate limits)
-npm run sync:ratings                 # MAL age ratings, 500 at a time
-npm run sync:airing                  # refresh airing titles / schedule
-```
+## 11. What to fix next (prioritized, for Opus 5.5)
 
-`.github/workflows/sync-catalog.yml` runs the airing sync every 3 hours and the
-full sync weekly — add the three `CLOUDFLARE_*` values above as repository
-secrets.
+1. **Confirm latest deploys are live.** Run `npm run deploy` (site) and
+   `npm run anivexa:container:deploy` (backend). Verify `ANIVEXA_API_URL` has **no
+   `felll` in it** (correct: `https://anivexa-api.matthewsjakael.workers.dev`).
+2. **Add Upstash Redis to the container** for a persistent cache — biggest
+   remaining speed win; also helps Senshi. (Free tier; set `UPSTASH_*` secrets.)
+3. **Trim dead-end providers** from the UI — hide/disable AnimeNoSub, Ani.pm,
+   AnimeOnsen (and maybe AniZone/AnimeDunya) so viewers never click a server
+   that can't play. Edit `ANIVEXA_PROVIDERS` / the source-building in
+   `lib/anivexa.ts` + `lib/catalog.ts::getWatchSources`.
+4. **Backend latency:** the episode aggregation waits on *all* providers
+   (`Promise.all`). Add per-provider timeouts / return early so one slow/blocked
+   provider doesn't gate the response. (`anivexa-server/core/episode-strategy.js`,
+   `episode-cache.js`.)
+5. **Reconsider the navigation workaround.** Full-page loads work but lose SPA
+   feel. Try a newer `@opennextjs/cloudflare`, or investigate the `?_rsc` 307 —
+   if fixed, revert `AppLink` back to `next/link`.
+6. **Reliability ceiling → self-hosting.** The only path to "every title plays,
+   instantly, forever" is hosting your own video. The pieces exist
+   (`video_sources.hls_url`, `/api/play`, hls.js, the upload scripts). Recommended:
+   an **R2** (zero-egress) pipeline — `ffmpeg` → HLS ladder → R2 → signed URL —
+   for flagship titles, with Anivexa as the best-effort long-tail fallback. Not
+   built yet.
+7. Optional: **DASH support** (dash.js) to recover AnimeOnsen; a residential
+   proxy to recover IP-blocked hosts (costs money). Both low priority.
 
-### 3. Cloudflare Stream (optional — only to self-host video)
+---
 
-1. Enable Stream and create an API token with **Stream: Edit**. Put it in
-   `CLOUDFLARE_STREAM_API_TOKEN`, with `CLOUDFLARE_ACCOUNT_ID`.
-2. Create a signing key once:
-   ```bash
-   curl -X POST -H "Authorization: Bearer $CLOUDFLARE_STREAM_API_TOKEN" \
-     https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/stream/keys
-   ```
-   Put `result.id` in `STREAM_SIGNING_KEY_ID` and `result.jwk` in
-   `STREAM_SIGNING_KEY_JWK`.
-3. Set `STREAM_CUSTOMER_DOMAIN` to your `customer-xxxx.cloudflarestream.com` host.
+## 12. Data sources & terms
 
-### 4. Upload episodes (optional)
-
-**Automatic.** One subfolder per anime, named by its slug (the part after
-`/anime/` in the site URL) or `anilist-<id>`:
-
-```
-uploads/
-  frieren-beyond-journeys-end-k3x9qa/
-    01.mkv                        episode 1, sub
-    01.en.vtt                     captions for 01.mkv (.srt works too)
-    02 - Aura the Guillotine.mkv  episode 2 with a title
-    02.dub.mkv                    episode 2, dub
-```
-
-```bash
-npm run upload:folder -- --dir ./uploads   # upload everything new, then exit
-npm run upload:watch  -- --dir ./uploads   # keep running; new files go live on their own
-```
-
-**One episode at a time:**
-
-```bash
-npm run upload -- --anime frieren-beyond-journeys-end-k3x9qa --episode 1 \
-  --file ./masters/frieren-01.mkv --title "The Journey's End" \
-  --captions en:./subs/frieren-01.en.vtt
-
-npm run upload -- --anime anilist:154587 --episode 1 \
-  --hls-url https://media.example.com/frieren/01/master.m3u8 --label "Backup" --priority 1
-```
-
-Both upload resumably (tus), wait for Stream to encode, attach captions and
-register the source. The D1 triggers update the sub/dub counts automatically.
-
-### 5. External providers with Anivexa (optional)
-
-To fill the catalog without hosting video, run the vendored Anivexa backend —
-a read-only aggregator that resolves 12 providers from an AniList ID. A
-Cloudflare-Worker build lives in `anivexa/`:
-
-```bash
-npm run anivexa:dev        # run locally → http://localhost:8799
-npm run anivexa:deploy     # deploy the "anivexa-api" Worker
-```
-
-Point the site at it with the `ANIVEXA_API_URL` var in `wrangler.jsonc` (the
-one-shot setup fills this in), or `http://localhost:8799` in `.env.local` for
-dev. How the site uses it:
-
-- `lib/anivexa.ts` fetches `/episodes/:anilistId` and merges those episodes into
-  each anime's list (self-hosted episodes always take precedence).
-- `/api/anivexa/stream/...` resolves one playable stream per provider/episode.
-- `/api/anivexa/proxy` streams the upstream HLS through our origin, applying the
-  `Referer`/auth headers providers require (a browser can't set `Referer`) and
-  rewriting the m3u8 so segments and keys go through the proxy too. It refuses
-  non-HTTP(S) and private/loopback hosts.
-
-**Workers build caveat.** Some upstream providers need a real Node runtime
-Workers don't offer. In this build: `animedunya` was ported from a `curl`
-subprocess to `fetch` (works); `senshi` / `anipm` / `mkissa` lose their
-TLS-impersonation client (`wreq-js`) and fall back to plain `fetch`, so strict
-anti-bot origins may block them; and the `megaplay` extractor (`node:vm`) is
-disabled. The aggregator reports per-provider errors and returns whatever else
-succeeds. To run every provider, host the upstream Anivexa project on a Node
-platform and set `ANIVEXA_API_URL` to that URL instead. Proxying video segments
-through the Worker uses Worker CPU/subrequests — fine for a hobby deployment,
-worth watching at scale.
-
-### 6. Deploy
-
-```bash
-npx wrangler secret put STREAM_CUSTOMER_DOMAIN   # only if self-hosting video
-npx wrangler secret put STREAM_SIGNING_KEY_ID
-npx wrangler secret put STREAM_SIGNING_KEY_JWK
-npm run deploy
-```
-
-`ANIVEXA_API_URL` and the D1 binding are plain config in `wrangler.jsonc`, not
-secrets. Then add your domain under Workers → `felll` → Settings → Domains. The
-Cloudflare API token and Stream API token are only for the scripts and must
-never be given to the Worker.
-
-## Development
-
-```bash
-cp .env.example .env.local        # fill in values
-npm run d1:schema:local           # apply the schema to a local D1
-npm run dev                       # http://localhost:3000
-npm run typecheck
-npm run preview                   # run the Worker build locally
-```
-
-For local data, run the sync scripts (they write to the remote D1), or seed the
-local DB with `wrangler d1 execute cupcake --local --command "..."`.
-
-## Data sources and terms
-
-- **AniList**: free for non-commercial use; commercial use needs their
-  permission. Cover and banner images are served from AniList's CDN.
-- **Jikan / MyAnimeList**: used only for age ratings.
-- **Video**: only upload content you own or have licensed for streaming in the
-  regions you serve.
-- **Anivexa**: the external-provider integration is optional and off unless you
-  set `ANIVEXA_API_URL`. It aggregates third-party streaming sources; you are
-  responsible for whether running it is lawful where you operate.
+- **AniList** (catalog, free non-commercial), **Jikan/MAL** (age ratings).
+- **Self-hosted video**: only upload content you own or have licensed.
+- **Anivexa**: optional, off unless `ANIVEXA_API_URL` is set. It aggregates
+  third-party streams — free because the bytes are someone else's, which is also
+  why it's fragile and legally grey. You are responsible for lawful operation.
 ```
