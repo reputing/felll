@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getAnime, getEpisodes } from "@/lib/catalog";
+import { getAnime, getWatchEpisodes } from "@/lib/catalog";
 import { durationLabel, formatLabel, scoreLabel, statusLabel } from "@/lib/format";
 import { displayTitle, getTitleLanguage } from "@/lib/titles";
 
@@ -16,9 +16,10 @@ export async function generateMetadata({ params }: Props) {
 export default async function AnimePage({ params }: Props) {
   const anime = await getAnime((await params).slug);
   if (!anime) notFound();
-  const [episodes, lang] = await Promise.all([getEpisodes(anime.id), getTitleLanguage()]);
+  const [{ episodes }, lang] = await Promise.all([getWatchEpisodes(anime), getTitleLanguage()]);
   const title = displayTitle(anime, lang);
   const first = episodes[0];
+  const hasDub = episodes.some((e) => e.dub);
 
   const facts: [string, string | null][] = [
     ["Format", formatLabel(anime.format)],
@@ -60,7 +61,7 @@ export default async function AnimePage({ params }: Props) {
                 <Link href={`/watch/${anime.slug}?ep=${first.number}&lang=sub`} className="rounded-lg bg-accent px-5 py-2 font-semibold text-black">
                   ▶ Watch Sub
                 </Link>
-                {anime.dub_episodes > 0 && (
+                {hasDub && (
                   <Link href={`/watch/${anime.slug}?ep=${first.number}&lang=dub`} className="rounded-lg border border-accent px-5 py-2 font-semibold text-accent">
                     ▶ Watch Dub
                   </Link>
@@ -70,7 +71,7 @@ export default async function AnimePage({ params }: Props) {
               <span className="rounded-lg border border-line px-5 py-2 text-muted">Not available to stream yet</span>
             )}
             <span className="self-center text-sm text-muted">
-              Sub {anime.sub_episodes} · Dub {anime.dub_episodes}
+              Sub {episodes.filter((e) => e.sub).length} · Dub {episodes.filter((e) => e.dub).length}
             </span>
           </div>
           {anime.description && <p className="max-w-3xl whitespace-pre-line text-sm leading-relaxed text-gray-300">{anime.description}</p>}
@@ -81,15 +82,15 @@ export default async function AnimePage({ params }: Props) {
         <section>
           <h2 className="mb-3 text-xl font-semibold">Episodes</h2>
           {episodes.length === 0 ? (
-            <p className="text-muted">No episodes uploaded yet.</p>
+            <p className="text-muted">No episodes available yet.</p>
           ) : (
             <div className="grid grid-cols-4 gap-2 sm:grid-cols-8 md:grid-cols-10">
               {episodes.map((e) => (
                 <Link
-                  key={e.id}
+                  key={e.number}
                   href={`/watch/${anime.slug}?ep=${e.number}`}
                   title={e.title ?? `Episode ${e.number}`}
-                  className={`rounded-md py-2 text-center text-sm hover:bg-accent hover:text-black ${e.is_filler ? "bg-amber-900/40" : "bg-panel"}`}
+                  className={`rounded-md py-2 text-center text-sm hover:bg-accent hover:text-black ${e.filler ? "bg-amber-900/40" : "bg-panel"}`}
                 >
                   {e.number}
                 </Link>

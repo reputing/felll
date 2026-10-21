@@ -2,12 +2,12 @@
 
 import Hls from "hls.js";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Subtitle, VideoSource } from "@/lib/types";
+import type { PlayerSource, Subtitle } from "@/lib/types";
 
 interface Props {
   animeId: number;
   episodeKey: string;
-  sources: VideoSource[];
+  sources: PlayerSource[];
   subtitles: Subtitle[];
   intro: { start: number | null; end: number | null };
   outroStart: number | null;
@@ -15,7 +15,33 @@ interface Props {
   defaultAudio?: string;
 }
 
-const AUDIO_LABELS: Record<VideoSource["audio"], string> = { sub: "SUB", dub: "DUB", raw: "RAW" };
+interface Track {
+  key: string;
+  url: string;
+  lang: string;
+  label: string;
+  default: boolean;
+}
+
+interface Resolved {
+  type: "hls" | "dash" | "embed";
+  url: string;
+  subtitles: Track[];
+  intro: { start: number | null; end: number | null };
+  outroStart: number | null;
+}
+
+const AUDIO_LABELS: Record<PlayerSource["audio"], string> = { sub: "SUB", dub: "DUB", raw: "RAW" };
+
+function localTracks(subtitles: Subtitle[]): Track[] {
+  return subtitles.map((s) => ({
+    key: `local-${s.id}`,
+    url: s.url,
+    lang: s.language,
+    label: s.label,
+    default: s.is_default,
+  }));
+}
 
 function usePref(key: string, fallback: boolean): [boolean, (v: boolean) => void] {
   const [val, setVal] = useState(fallback);
@@ -29,18 +55,22 @@ function usePref(key: string, fallback: boolean): [boolean, (v: boolean) => void
   return [val, set];
 }
 
-export function Player({ animeId, episodeKey, sources, subtitles, intro, outroStart, nextHref, defaultAudio }: Props) {
+export function Player({ animeId, episodeKey, sources, subtitles, intro: introProp, outroStart: outroProp, nextHref, defaultAudio }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const [current, setCurrent] = useState<VideoSource | undefined>(() => {
+  const [current, setCurrent] = useState<PlayerSource | undefined>(() => {
     if (defaultAudio) {
       const match = sources.find((s) => s.audio === defaultAudio);
       if (match) return match;
     }
     return sources[0];
   });
-  const [failed, setFailed] = useState<Set<number>>(new Set());
+  const [failed, setFailed] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [embedUrl, setEmbedUrl] = useState<string | null>(null);
+  const [tracks, setTracks] = useState<Track[]>(() => localTracks(subtitles));
+  const [intro, setIntro] = useState(introProp);
+  const [outroStart, setOutroStart] = useState(outroProp);
   const [time, setTime] = useState(0);
   const [theater, setTheater] = usePref("theater", false);
   const [autoNext, setAutoNext] = usePref("autoNext", false);
@@ -51,29 +81,71 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
   const progressKey = `progress:${episodeKey}`;
 
   const fallback = useCallback(
-    (source: VideoSource) => {
+    (source: PlayerSource) => {
       setFailed((prev) => {
-        const next = new Set(prev).add(source.id);
-        const candidate = sources.find((s) => !next.has(s.id));
+        const next = new Set(prev).add(source.key);
+        const candidate = sources.find((s) => !next.has(s.key));
         if (candidate) setCurrent(candidate);
-        else setError("This episode could not be played. Please try again later.");
+        else setError("This episode could not be played. Please try another server.");
         return next;
       });
     },
     [sources],
   );
 
+  // Resolve the playable URL for the current source (self-hosted or Anivexa).
+  const resolve = useCallback(
+    async (source: PlayerSource): Promise<Resolved | null> => {
+      if (source.kind === "local") {
+        const res = await fetch(`/api/play/${source.sourceId}`);
+        if (!res.ok) return null;
+        const { url } = (await res.json()) as { url: string };
+        return { type: "hls", url, subtitles: localTracks(subtitles), intro: introProp, outroStart: outroProp };
+      }
+      const res = await fetch(
+        `/api/anivexa/stream/${source.provider}/${source.anilistId}/${source.audio}/${source.episode}`,
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        type: "hls" | "dash" | "embed";
+        url: string;
+        subtitles: { url: string; label: string; lang: string; default: boolean }[];
+        intro: { start: number; end: number } | null;
+        outro: { start: number; end: number } | null;
+      };
+      return {
+        type: data.type,
+        url: data.url,
+        subtitles: data.subtitles.map((s, i) => ({ key: `anivexa-${i}`, ...s })),
+        intro: data.intro ?? { start: null, end: null },
+        outroStart: data.outro?.start ?? null,
+      };
+    },
+    [subtitles, introProp, outroProp],
+  );
+
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !current) return;
+    if (!current) return;
     let cancelled = false;
     setError(null);
+    setEmbedUrl(null);
 
     (async () => {
-      const res = await fetch(`/api/play/${current.id}`);
-      if (!res.ok) return fallback(current);
-      const { url } = (await res.json()) as { url: string };
+      const resolved = await resolve(current);
       if (cancelled) return;
+      if (!resolved) return fallback(current);
+
+      setTracks(resolved.subtitles);
+      setIntro(resolved.intro);
+      setOutroStart(resolved.outroStart);
+
+      if (resolved.type === "embed") {
+        hlsRef.current?.destroy();
+        setEmbedUrl(resolved.url);
+        return;
+      }
+      if (!video) return;
 
       let resumeAt = 0;
       try {
@@ -81,7 +153,8 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
       } catch {}
 
       hlsRef.current?.destroy();
-      if (Hls.isSupported()) {
+      const canNative = video.canPlayType("application/vnd.apple.mpegurl");
+      if (resolved.type === "hls" && Hls.isSupported()) {
         const hls = new Hls({ capLevelToPlayerSize: true });
         hlsRef.current = hls;
         hls.on(Hls.Events.ERROR, (_e, data) => {
@@ -90,17 +163,20 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
             fallback(current);
           }
         });
-        hls.loadSource(url);
+        hls.loadSource(resolved.url);
         hls.attachMedia(video);
+      } else if (resolved.type === "hls" && canNative) {
+        video.src = resolved.url;
       } else {
-        video.src = url;
+        // DASH or a direct file: let the browser try natively.
+        video.src = resolved.url;
       }
       if (resumeAt > 5) video.currentTime = resumeAt;
       if (autoPlay) video.play().catch(() => {});
     })().catch(() => fallback(current));
 
     return () => { cancelled = true; };
-  }, [current, fallback, progressKey, autoPlay]);
+  }, [current, fallback, resolve, progressKey, autoPlay]);
 
   useEffect(() => () => hlsRef.current?.destroy(), []);
 
@@ -177,10 +253,10 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [nextHref, setTheater]);
+  }, [nextHref, setTheater, theater]);
 
-  const showSkipIntro = !autoSkip && intro.start != null && intro.end != null && time >= intro.start && time < intro.end;
-  const showSkipOutro = !autoSkip && outroStart != null && nextHref != null && time >= outroStart;
+  const showSkipIntro = !embedUrl && !autoSkip && intro.start != null && intro.end != null && time >= intro.start && time < intro.end;
+  const showSkipOutro = !embedUrl && !autoSkip && outroStart != null && nextHref != null && time >= outroStart;
 
   if (sources.length === 0) {
     return (
@@ -195,21 +271,31 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
   return (
     <div data-theater={theater || undefined}>
       <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
-        <video
-          ref={videoRef}
-          controls
-          playsInline
-          className="h-full w-full"
-          onTimeUpdate={onTimeUpdate}
-          onEnded={() => {
-            try { localStorage.removeItem(progressKey); } catch {}
-            if (autoNext && nextHref) window.location.href = nextHref;
-          }}
-        >
-          {subtitles.map((s) => (
-            <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} default={s.is_default} />
-          ))}
-        </video>
+        {embedUrl ? (
+          <iframe
+            key={current?.key}
+            src={embedUrl}
+            allowFullScreen
+            allow="autoplay; encrypted-media; picture-in-picture"
+            className="h-full w-full border-0"
+          />
+        ) : (
+          <video
+            ref={videoRef}
+            controls
+            playsInline
+            className="h-full w-full"
+            onTimeUpdate={onTimeUpdate}
+            onEnded={() => {
+              try { localStorage.removeItem(progressKey); } catch {}
+              if (autoNext && nextHref) window.location.href = nextHref;
+            }}
+          >
+            {tracks.map((t) => (
+              <track key={t.key} kind="subtitles" src={t.url} srcLang={t.lang} label={t.label} default={t.default} />
+            ))}
+          </video>
+        )}
         {showSkipIntro && (
           <button
             onClick={() => videoRef.current && (videoRef.current.currentTime = intro.end!)}
@@ -243,11 +329,12 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
                 .filter((s) => s.audio === audio)
                 .map((s) => (
                   <button
-                    key={s.id}
+                    key={s.key}
                     onClick={() => setCurrent(s)}
-                    disabled={failed.has(s.id)}
+                    disabled={failed.has(s.key)}
+                    title={s.group === "external" ? "External source" : undefined}
                     className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-                      s.id === current?.id ? "bg-accent text-black shadow-md" : "text-zinc-400 hover:bg-white/10 hover:text-white"
+                      s.key === current?.key ? "bg-accent text-black shadow-md" : "text-zinc-400 hover:bg-white/10 hover:text-white"
                     } disabled:opacity-40`}
                   >
                     {s.label}
@@ -274,6 +361,12 @@ export function Player({ animeId, episodeKey, sources, subtitles, intro, outroSt
           </button>
         </div>
       </div>
+
+      {current?.group === "external" && (
+        <p className="mt-2 text-xs text-zinc-500">
+          Playing from an external provider. If it doesn&apos;t load, try another server above.
+        </p>
+      )}
 
       {showKeys && (
         <div className="mt-2 rounded-lg bg-panel p-3 text-xs text-muted">

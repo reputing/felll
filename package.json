@@ -10,6 +10,8 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "anivexa:dev": "wrangler dev -c anivexa/wrangler.jsonc --port 4000",
+    "anivexa:deploy": "wrangler deploy -c anivexa/wrangler.jsonc",
     "sync:catalog": "tsx scripts/sync-anilist.ts",
     "sync:airing": "tsx scripts/sync-anilist.ts --airing",
     "sync:ratings": "tsx scripts/sync-ratings.ts",

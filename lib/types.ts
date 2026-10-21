@@ -92,6 +92,41 @@ export interface Subtitle {
   is_default: boolean;
 }
 
+/**
+ * A unified episode as shown on the watch/anime pages. It merges episodes we
+ * host ourselves (`localId` set) with episodes resolved from the Anivexa
+ * aggregator by AniList ID (`localId` null). `sub`/`dub` say which audio tracks
+ * are available from any source.
+ */
+export interface WatchEpisode {
+  number: number;
+  title: string | null;
+  thumbnail_url: string | null;
+  synopsis: string | null;
+  filler: boolean;
+  localId: number | null;
+  intro_start: number | null;
+  intro_end: number | null;
+  outro_start: number | null;
+  sub: boolean;
+  dub: boolean;
+}
+
+/**
+ * One selectable "server" in the player. Either a self-hosted source resolved
+ * through `/api/play/:id`, or an Anivexa provider resolved on demand through
+ * `/api/anivexa/stream/...`.
+ */
+export type PlayerSource = {
+  key: string;
+  label: string;
+  audio: "sub" | "dub" | "raw";
+  group: "local" | "external";
+} & (
+  | { kind: "local"; sourceId: number }
+  | { kind: "anivexa"; provider: string; anilistId: number; episode: number }
+);
+
 export interface SearchFilters {
   q?: string;
   genres?: string[];

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Player } from "@/components/Player";
-import { getAnime, getEpisodes, getEpisodeAudioMap, getSources, getSubtitles } from "@/lib/catalog";
+import { getAnime, getWatchEpisodes, getWatchSources } from "@/lib/catalog";
 import { displayTitle, getTitleLanguage } from "@/lib/titles";
 
 export const dynamic = "force-dynamic";
@@ -23,16 +23,12 @@ export default async function WatchPage({ params, searchParams }: Props) {
   const anime = await getAnime(slug);
   if (!anime) notFound();
 
-  const [episodes, titleLang] = await Promise.all([getEpisodes(anime.id), getTitleLanguage()]);
+  const [{ episodes, providers }, titleLang] = await Promise.all([getWatchEpisodes(anime), getTitleLanguage()]);
   const index = Math.max(0, episodes.findIndex((e) => String(e.number) === (ep ?? String(episodes[0]?.number))));
   const episode = episodes[index];
   if (!episode) notFound();
 
-  const [sources, subtitles, audioMap] = await Promise.all([
-    getSources(episode.id),
-    getSubtitles(episode.id),
-    getEpisodeAudioMap(anime.id),
-  ]);
+  const { sources, subtitles } = await getWatchSources(anime, episode, providers);
 
   const next = episodes[index + 1];
   const prev = episodes[index - 1];
@@ -43,7 +39,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
       <div className="grid gap-6 lg:grid-cols-[1fr_300px] group-data-[theater]/watch:lg:grid-cols-1">
         <div className="space-y-4">
           <Player
-            key={episode.id}
+            key={episode.number}
             animeId={anime.id}
             episodeKey={`${anime.id}:${episode.number}`}
             sources={sources}
@@ -86,38 +82,35 @@ export default async function WatchPage({ params, searchParams }: Props) {
             </span>
           </div>
           <ol>
-            {episodes.map((e) => {
-              const audio = audioMap[e.id];
-              return (
-                <li key={e.id}>
-                  <Link
-                    href={href(e.number)}
-                    aria-current={e.id === episode.id ? "page" : undefined}
-                    className={`flex gap-3 px-4 py-2 text-sm hover:bg-line ${e.id === episode.id ? "bg-line text-accent" : ""}`}
-                  >
-                    {e.thumbnail_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={e.thumbnail_url} alt="" className="h-12 w-20 shrink-0 rounded object-cover" loading="lazy" />
-                    ) : (
-                      <span className="flex h-12 w-8 shrink-0 items-center justify-center text-muted">{e.number}</span>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-medium">EP {String(e.number).padStart(2, "0")}</span>
-                        {e.is_filler && <span className="rounded bg-amber-900/40 px-1 text-[10px]">Filler</span>}
-                      </div>
-                      <p className="truncate text-muted">{e.title ?? `Episode ${e.number}`}</p>
-                      {audio && (
-                        <div className="mt-0.5 flex gap-1.5 text-[10px]">
-                          {audio.sub && <span className="rounded bg-white/10 px-1 py-px">Sub</span>}
-                          {audio.dub && <span className="rounded bg-white/10 px-1 py-px">Dub</span>}
-                        </div>
-                      )}
+            {episodes.map((e) => (
+              <li key={e.number}>
+                <Link
+                  href={href(e.number)}
+                  aria-current={e.number === episode.number ? "page" : undefined}
+                  className={`flex gap-3 px-4 py-2 text-sm hover:bg-line ${e.number === episode.number ? "bg-line text-accent" : ""}`}
+                >
+                  {e.thumbnail_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={e.thumbnail_url} alt="" className="h-12 w-20 shrink-0 rounded object-cover" loading="lazy" />
+                  ) : (
+                    <span className="flex h-12 w-8 shrink-0 items-center justify-center text-muted">{e.number}</span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium">EP {String(e.number).padStart(2, "0")}</span>
+                      {e.filler && <span className="rounded bg-amber-900/40 px-1 text-[10px]">Filler</span>}
                     </div>
-                  </Link>
-                </li>
-              );
-            })}
+                    <p className="truncate text-muted">{e.title ?? `Episode ${e.number}`}</p>
+                    {(e.sub || e.dub) && (
+                      <div className="mt-0.5 flex gap-1.5 text-[10px]">
+                        {e.sub && <span className="rounded bg-white/10 px-1 py-px">Sub</span>}
+                        {e.dub && <span className="rounded bg-white/10 px-1 py-px">Dub</span>}
+                      </div>
+                    )}
+                  </div>
+                </Link>
+              </li>
+            ))}
           </ol>
         </aside>
       </div>

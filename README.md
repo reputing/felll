@@ -19,6 +19,7 @@ your master file ──tus──▶ Cloudflare Stream ──HLS──▶ hls.js 
 | **Search** | One Postgres function, `search_anime`, blending full-text rank (titles weighted above descriptions), trigram similarity (typos like "fireren", "naurto"), a prefix bonus for type-ahead, and a popularity tie-breaker. Filters: genres, tags, year, season, format, status, origin, audio (sub/dub), rating, studio, character, staff. Sorts: best match, popularity, trending, score, year, recently updated, title. |
 | **Trending** | Your own daily views (decaying 15% per day over 14 days) plus AniList's trending number, so a new site isn't empty. |
 | **Video** | Each episode has one or more `video_sources` ("servers"), each a Cloudflare Stream video or a self-hosted HLS URL, with an audio track (sub/dub/raw) and priority. The player lists them, switches on click and falls through to the next one if a source fails. |
+| **External providers** | Optional. With `ANIVEXA_API_URL` set, titles you don't self-host become watchable through the [Anivexa](https://github.com/walterwhite-69/Anivexa-API) aggregator: episode lists and stream sources from 12 providers, all keyed by the anime's AniList ID. They appear as extra "servers" in the player, after any self-hosted ones. |
 | **Playback security** | Stream videos require signed URLs. `/api/play/:id` signs a 4-hour RS256 token locally, so URLs can't be hot-linked and no API call is spent per play. |
 | **Sub/dub counts** | `anime.sub_episodes` / `dub_episodes` are kept current by triggers on your sources, so cards show "CC 12 · 🎙 8 · 24" without joins. |
 
@@ -115,7 +116,57 @@ captions and register the source. The episode appears on the site as soon
 as encoding finishes. Scripts read `.env.local` / `.env` automatically. Intro/outro timestamps (`episodes.intro_start`, `intro_end`,
 `outro_start`) enable the skip buttons.
 
-### 5. Deploy to Cloudflare
+### 5. External providers with Anivexa (optional)
+
+Self-hosting every episode is a lot of video. To fill the catalog, the site can
+pull episode lists and stream sources from [Anivexa](https://github.com/walterwhite-69/Anivexa-API),
+a read-only aggregator that resolves 12 providers from a single AniList ID.
+
+A Cloudflare-Worker build of the Anivexa backend is vendored in `anivexa/`, so
+both halves run on Cloudflare — the site Worker and the Anivexa Worker:
+
+```bash
+npm run anivexa:dev        # run the backend locally → http://localhost:8799
+npm run anivexa:deploy     # deploy it as the "anivexa-api" Worker
+```
+
+Then point the site at it, in `.env.local` and as a Cloudflare var/secret:
+
+```bash
+ANIVEXA_API_URL=http://localhost:8799                  # dev
+ANIVEXA_API_URL=https://anivexa-api.<account>.workers.dev   # prod
+```
+
+How the site uses it:
+
+- `lib/anivexa.ts` fetches `/episodes/:anilistId` and merges those episodes into
+  each anime's list (self-hosted episodes always take precedence).
+- When a viewer picks an external server, `/api/anivexa/stream/...` resolves one
+  playable stream for that provider/episode.
+- `/api/anivexa/proxy` streams the upstream HLS through our own origin, applying
+  the `Referer`/auth headers providers require (a browser can't set `Referer`)
+  and rewriting the m3u8 so segments and keys go through the proxy too. It
+  refuses non-HTTP(S) and private/loopback hosts.
+
+**Workers build caveat.** Some of Anivexa's upstream providers need a real Node
+runtime that Cloudflare Workers don't offer. In this vendored build:
+
+- `animedunya` was ported from a `curl` subprocess to `fetch` (works).
+- `senshi` / `anipm` / `mkissa` lose their TLS-impersonation client (`wreq-js`)
+  and fall back to plain `fetch`; origins with strict anti-bot may block them.
+- the `megaplay` extractor (needs `node:vm`) is disabled, so Anikoto embeds that
+  rely on it won't resolve.
+
+The aggregator reports per-provider errors and returns whatever else succeeds,
+so the site still gets plenty of sources. To run every provider, host the
+upstream Anivexa project on a Node platform instead and set `ANIVEXA_API_URL` to
+that URL — nothing else changes.
+
+Leave `ANIVEXA_API_URL` unset and the site behaves exactly as before, using
+self-hosted sources only. Note: proxying video segments through the Worker uses
+Worker CPU/subrequests — fine for a hobby deployment, worth watching at scale.
+
+### 6. Deploy to Cloudflare
 
 ```bash
 npx wrangler login
@@ -124,6 +175,7 @@ npx wrangler secret put NEXT_PUBLIC_SUPABASE_ANON_KEY
 npx wrangler secret put STREAM_CUSTOMER_DOMAIN
 npx wrangler secret put STREAM_SIGNING_KEY_ID
 npx wrangler secret put STREAM_SIGNING_KEY_JWK
+npx wrangler secret put ANIVEXA_API_URL   # only if using external providers
 npm run deploy
 ```
 
@@ -147,3 +199,6 @@ npm run preview              # run the Worker build locally
 - **Jikan / MyAnimeList**: used only for age ratings.
 - **Video**: only upload content you own or have licensed for streaming in
   the regions you serve.
+- **Anivexa**: the external-provider integration is optional and off unless you
+  set `ANIVEXA_API_URL`. It aggregates third-party streaming sources; you are
+  responsible for whether running it is lawful where you operate.
