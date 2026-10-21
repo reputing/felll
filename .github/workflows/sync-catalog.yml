@@ -1,0 +1,34 @@
+name: Sync catalog
+
+on:
+  schedule:
+    # Airing titles every 3 hours (keeps the schedule and new seasons fresh).
+    - cron: "17 */3 * * *"
+    # Full catalog + age ratings weekly, Monday 04:23 UTC.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "airing or full"
+        default: airing
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Airing titles
+        if: github.event.schedule == '17 */3 * * *' || inputs.mode == 'airing'
+        run: npm run sync:airing
+      - name: Full catalog
+        if: github.event.schedule == '23 4 * * 1' || inputs.mode == 'full'
+        run: npm run sync:catalog && npm run sync:ratings -- --limit 2000
