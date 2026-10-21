@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 
 // Scripts read .env.local / .env like Next.js does; variables already set in
 // the environment (e.g. GitHub Actions secrets) win.
@@ -15,13 +14,6 @@ export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is not set (see .env.example)`);
   return value;
-}
-
-/** Service-role client: bypasses row level security. Scripts only. */
-export function adminClient() {
-  return createClient(requireEnv("NEXT_PUBLIC_SUPABASE_URL"), requireEnv("SUPABASE_SERVICE_ROLE_KEY"), {
-    auth: { persistSession: false },
-  });
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -1,22 +1,20 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { basename, extname } from "node:path";
 import * as tus from "tus-js-client";
-import { requireEnv, sleep, type adminClient } from "./lib";
+import { requireEnv, sleep } from "./lib";
+import { d1Query } from "./d1";
 
-type Db = ReturnType<typeof adminClient>;
 export type Audio = "sub" | "dub" | "raw";
 
 const API = "https://api.cloudflare.com/client/v4";
 
 /** Accepts a slug, "anilist:154587" or "anilist-154587". */
-export async function resolveAnimeId(db: Db, ref: string): Promise<number | null> {
+export async function resolveAnimeId(ref: string): Promise<number | null> {
   const anilist = ref.match(/^anilist[:-](\d+)$/);
-  const query = anilist
-    ? db.from("anime").select("id").eq("anilist_id", Number(anilist[1]))
-    : db.from("anime").select("id").eq("slug", ref);
-  const { data, error } = await query.maybeSingle();
-  if (error) throw error;
-  return data?.id ?? null;
+  const rows = anilist
+    ? await d1Query<{ id: number }>("SELECT id FROM anime WHERE anilist_id = ?", [Number(anilist[1])])
+    : await d1Query<{ id: number }>("SELECT id FROM anime WHERE slug = ?", [ref]);
+  return rows[0]?.id ?? null;
 }
 
 function uploadToStream(file: string): Promise<string> {
@@ -108,26 +106,23 @@ export interface UploadJob {
  * not finished (the process died while Stream was encoding) is resumed
  * without uploading again. Pending sources are hidden from the site by RLS.
  */
-export async function uploadEpisodeFile(db: Db, job: UploadJob): Promise<"uploaded" | "resumed" | "skipped"> {
-  const { data: episode, error: epError } = await db
-    .from("episodes")
-    .upsert(
-      { anime_id: job.animeId, number: job.number, ...(job.title ? { title: job.title } : {}) },
-      { onConflict: "anime_id,number" },
-    )
-    .select("id")
-    .single();
-  if (epError) throw epError;
+export async function uploadEpisodeFile(job: UploadJob): Promise<"uploaded" | "resumed" | "skipped"> {
+  const episodeRows = await d1Query<{ id: number }>(
+    `INSERT INTO episodes (anime_id, number, title) VALUES (?, ?, ?)
+     ON CONFLICT (anime_id, number) DO UPDATE SET title = COALESCE(excluded.title, episodes.title)
+     RETURNING id`,
+    [job.animeId, job.number, job.title ?? null],
+  );
+  const episodeId = episodeRows[0]?.id;
+  if (!episodeId) throw new Error("Could not upsert the episode row");
 
-  const { data: existing, error: findError } = await db
-    .from("video_sources")
-    .select("id, status, stream_uid")
-    .eq("episode_id", episode.id)
-    .eq("provider", "cloudflare_stream")
-    .eq("audio", job.audio)
-    .eq("label", job.label)
-    .maybeSingle();
-  if (findError) throw findError;
+  const existing = (
+    await d1Query<{ id: number; status: string; stream_uid: string | null }>(
+      `SELECT id, status, stream_uid FROM video_sources
+       WHERE episode_id = ? AND provider = 'cloudflare_stream' AND audio = ? AND label = ?`,
+      [episodeId, job.audio, job.label],
+    )
+  )[0];
 
   if (existing?.status === "ready") return "skipped";
   if (existing?.status === "error") {
@@ -142,28 +137,22 @@ export async function uploadEpisodeFile(db: Db, job: UploadJob): Promise<"upload
     console.log(`  resuming Stream video ${uid}`);
   } else {
     uid = await uploadToStream(job.file);
-    const { data: source, error } = await db
-      .from("video_sources")
-      .insert({
-        episode_id: episode.id,
-        provider: "cloudflare_stream",
-        stream_uid: uid,
-        label: job.label,
-        audio: job.audio,
-        priority: job.priority,
-        status: "pending",
-      })
-      .select("id")
-      .single();
-    if (error) throw new Error(`Uploaded as Stream video ${uid} but could not record it: ${error.message}`);
-    sourceId = source.id;
+    const inserted = await d1Query<{ id: number }>(
+      `INSERT INTO video_sources (episode_id, provider, stream_uid, label, audio, priority, status)
+       VALUES (?, 'cloudflare_stream', ?, ?, ?, ?, 'pending') RETURNING id`,
+      [episodeId, uid, job.label, job.audio, job.priority],
+    );
+    if (!inserted[0]?.id) throw new Error(`Uploaded as Stream video ${uid} but could not record it`);
+    sourceId = inserted[0].id;
   }
 
   let duration: number | null;
   try {
     duration = await waitUntilReady(uid);
   } catch (e) {
-    if (e instanceof StreamEncodeError) await db.from("video_sources").update({ status: "error" }).eq("id", sourceId);
+    if (e instanceof StreamEncodeError) {
+      await d1Query("UPDATE video_sources SET status = 'error' WHERE id = ?", [sourceId]);
+    }
     throw e;
   }
 
@@ -175,9 +164,8 @@ export async function uploadEpisodeFile(db: Db, job: UploadJob): Promise<"upload
     console.log(`  added ${lang} captions`);
   }
 
-  const { error: readyError } = await db.from("video_sources").update({ status: "ready" }).eq("id", sourceId);
-  if (readyError) throw readyError;
-  if (duration) await db.from("episodes").update({ duration_seconds: duration }).eq("id", episode.id);
+  await d1Query("UPDATE video_sources SET status = 'ready' WHERE id = ?", [sourceId]);
+  if (duration) await d1Query("UPDATE episodes SET duration_seconds = ? WHERE id = ?", [duration, episodeId]);
 
   return existing ? "resumed" : "uploaded";
 }

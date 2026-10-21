@@ -1,78 +1,285 @@
 import { anivexaEnabled, fetchAnivexaCatalog, type AnivexaProviderSummary } from "./anivexa";
-import { supabase } from "./supabase";
+import { query, queryOne } from "./db";
 import type { Anime, AnimeCard, Episode, PlayerSource, SearchFilters, Subtitle, VideoSource, WatchEpisode } from "./types";
 
+// --- row mappers -----------------------------------------------------------
+
+function arr(value: unknown): string[] {
+  if (Array.isArray(value)) return value as string[];
+  if (typeof value !== "string" || value === "") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+const bool = (v: unknown): boolean => v === 1 || v === true || v === "1";
+const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
+
+function mapCard(r: Record<string, unknown>): AnimeCard {
+  return {
+    id: Number(r.id),
+    slug: String(r.slug),
+    title_english: (r.title_english as string) ?? null,
+    title_romaji: String(r.title_romaji),
+    format: (r.format as AnimeCard["format"]) ?? null,
+    status: (r.status as AnimeCard["status"]) ?? null,
+    season_year: numOrNull(r.season_year),
+    age_rating: (r.age_rating as string) ?? null,
+    episodes_total: numOrNull(r.episodes_total),
+    duration_minutes: numOrNull(r.duration_minutes),
+    genres: arr(r.genres),
+    cover_url: (r.cover_url as string) ?? null,
+    color: (r.color as string) ?? null,
+    average_score: numOrNull(r.average_score),
+    popularity: Number(r.popularity ?? 0),
+    sub_episodes: Number(r.sub_episodes ?? 0),
+    dub_episodes: Number(r.dub_episodes ?? 0),
+    rank: Number(r.rank ?? 0),
+    total_count: Number(r.total_count ?? 0),
+  };
+}
+
+function mapAnime(r: Record<string, unknown>): Anime {
+  return {
+    id: Number(r.id),
+    slug: String(r.slug),
+    anilist_id: numOrNull(r.anilist_id),
+    mal_id: numOrNull(r.mal_id),
+    title_english: (r.title_english as string) ?? null,
+    title_romaji: String(r.title_romaji),
+    title_native: (r.title_native as string) ?? null,
+    synonyms: arr(r.synonyms),
+    description: (r.description as string) ?? null,
+    format: (r.format as Anime["format"]) ?? null,
+    status: (r.status as Anime["status"]) ?? null,
+    season: (r.season as Anime["season"]) ?? null,
+    season_year: numOrNull(r.season_year),
+    country_of_origin: (r.country_of_origin as string) ?? null,
+    age_rating: (r.age_rating as string) ?? null,
+    episodes_total: numOrNull(r.episodes_total),
+    duration_minutes: numOrNull(r.duration_minutes),
+    genres: arr(r.genres),
+    tags: arr(r.tags),
+    studios: arr(r.studios),
+    characters: arr(r.characters),
+    staff: arr(r.staff),
+    cover_url: (r.cover_url as string) ?? null,
+    banner_url: (r.banner_url as string) ?? null,
+    color: (r.color as string) ?? null,
+    trailer_youtube_id: (r.trailer_youtube_id as string) ?? null,
+    average_score: numOrNull(r.average_score),
+    popularity: Number(r.popularity ?? 0),
+    next_episode: numOrNull(r.next_episode),
+    next_episode_at: (r.next_episode_at as string) ?? null,
+    sub_episodes: Number(r.sub_episodes ?? 0),
+    dub_episodes: Number(r.dub_episodes ?? 0),
+  };
+}
+
+function mapEpisode(r: Record<string, unknown>): Episode {
+  return {
+    id: Number(r.id),
+    anime_id: Number(r.anime_id),
+    number: Number(r.number),
+    title: (r.title as string) ?? null,
+    synopsis: (r.synopsis as string) ?? null,
+    thumbnail_url: (r.thumbnail_url as string) ?? null,
+    duration_seconds: numOrNull(r.duration_seconds),
+    intro_start: numOrNull(r.intro_start),
+    intro_end: numOrNull(r.intro_end),
+    outro_start: numOrNull(r.outro_start),
+    is_filler: bool(r.is_filler),
+  };
+}
+
+// --- search ----------------------------------------------------------------
+
+const CARD_COLUMNS = `a.id, a.slug, a.title_english, a.title_romaji, a.format, a.status,
+  a.season_year, a.age_rating, a.episodes_total, a.duration_minutes, a.genres,
+  a.cover_url, a.color, a.average_score, a.popularity, a.sub_episodes, a.dub_episodes`;
+
+const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
+
+/** FTS5 trigram match string for a term (quoted so punctuation can't break syntax). */
+function ftsMatch(term: string): string {
+  return `"${term.replace(/"/g, '""')}"`;
+}
+
 export async function searchAnime(f: SearchFilters): Promise<{ results: AnimeCard[]; total: number }> {
-  const { data, error } = await supabase().rpc("search_anime", {
-    q: f.q || null,
-    p_genres: f.genres?.length ? f.genres : null,
-    p_tags: f.tags?.length ? f.tags : null,
-    p_year: f.year ?? null,
-    p_season: f.season ?? null,
-    p_format: f.format ?? null,
-    p_status: f.status ?? null,
-    p_origin: f.origin ?? null,
-    p_audio: f.audio ?? null,
-    p_rating: f.rating ?? null,
-    p_studio: f.studio || null,
-    p_character: f.character || null,
-    p_staff: f.staff || null,
-    p_sort: f.sort || null,
-    p_page: f.page ?? 1,
-    p_page_size: f.pageSize ?? 24,
-  });
-  if (error) throw error;
-  const results = (data ?? []) as AnimeCard[];
+  const selectParams: unknown[] = [];
+  const whereParams: unknown[] = [];
+  const where: string[] = ["a.is_published = 1", "a.is_adult = 0"];
+
+  const term = f.q?.trim().toLowerCase() || "";
+  const hasTerm = term.length > 0;
+
+  // Relevance: prefix match ranks highest, then any substring. Added in the
+  // SELECT list, so these params come first.
+  let rankExpr = "0";
+  if (hasTerm) {
+    rankExpr = "(CASE WHEN a.search_titles LIKE ? THEN 2 WHEN a.search_titles LIKE ? THEN 1 ELSE 0 END)";
+    selectParams.push(`${term}%`, `%${term}%`);
+  }
+
+  if (hasTerm) {
+    if (term.length >= 3) {
+      where.push("(a.id IN (SELECT rowid FROM anime_fts WHERE anime_fts MATCH ?) OR a.search_titles LIKE ?)");
+      whereParams.push(ftsMatch(term), `%${term}%`);
+    } else {
+      where.push("a.search_titles LIKE ?");
+      whereParams.push(`%${term}%`);
+    }
+  }
+
+  for (const g of f.genres ?? []) {
+    where.push("EXISTS (SELECT 1 FROM json_each(a.genres) j WHERE j.value = ?)");
+    whereParams.push(g);
+  }
+  for (const t of f.tags ?? []) {
+    where.push("EXISTS (SELECT 1 FROM json_each(a.tags) j WHERE j.value = ?)");
+    whereParams.push(t);
+  }
+  if (f.year != null) {
+    where.push("a.season_year = ?");
+    whereParams.push(f.year);
+  }
+  if (f.season) {
+    where.push("a.season = ?");
+    whereParams.push(f.season);
+  }
+  if (f.format) {
+    where.push("a.format = ?");
+    whereParams.push(f.format);
+  }
+  if (f.status) {
+    where.push("a.status = ?");
+    whereParams.push(f.status);
+  }
+  if (f.origin) {
+    where.push("a.country_of_origin = ?");
+    whereParams.push(f.origin);
+  }
+  if (f.rating) {
+    where.push("a.age_rating = ?");
+    whereParams.push(f.rating);
+  }
+  if (f.audio === "sub") where.push("a.sub_episodes > 0");
+  else if (f.audio === "dub") where.push("a.dub_episodes > 0");
+  else if (f.audio === "both") where.push("a.sub_episodes > 0 AND a.dub_episodes > 0");
+
+  if (f.studio) {
+    where.push("EXISTS (SELECT 1 FROM json_each(a.studios) j WHERE lower(j.value) LIKE ?)");
+    whereParams.push(`${f.studio.toLowerCase()}%`);
+  }
+  if (f.character) {
+    where.push("EXISTS (SELECT 1 FROM json_each(a.characters) j WHERE lower(j.value) LIKE ?)");
+    whereParams.push(`%${f.character.toLowerCase()}%`);
+  }
+  if (f.staff) {
+    where.push("EXISTS (SELECT 1 FROM json_each(a.staff) j WHERE lower(j.value) LIKE ?)");
+    whereParams.push(`%${f.staff.toLowerCase()}%`);
+  }
+
+  const trendingScore =
+    "(COALESCE((SELECT SUM(v.views) FROM anime_daily_views v WHERE v.anime_id = a.id AND v.day > date('now','-14 day')), 0) * 10 + a.anilist_trending)";
+
+  const sort = f.sort || (hasTerm ? "relevance" : "popularity");
+  const ORDER: Record<string, string> = {
+    trending: `${trendingScore} DESC, a.popularity DESC, a.id`,
+    popularity: "a.popularity DESC, a.id",
+    score: "a.average_score DESC, a.popularity DESC, a.id",
+    year: "a.season_year DESC, a.popularity DESC, a.id",
+    updated: "a.latest_episode_at DESC, a.popularity DESC, a.id",
+    title: "COALESCE(a.title_english, a.title_romaji) COLLATE NOCASE ASC, a.id",
+    relevance: "rank DESC, a.popularity DESC, a.id",
+  };
+  const orderBy = ORDER[sort] ?? ORDER.relevance;
+
+  const pageSize = clamp(f.pageSize ?? 24, 1, 100);
+  const offset = (Math.max(f.page ?? 1, 1) - 1) * pageSize;
+
+  const sql = `
+    SELECT ${CARD_COLUMNS},
+           ${rankExpr} AS rank,
+           COUNT(*) OVER () AS total_count
+    FROM anime a
+    WHERE ${where.join(" AND ")}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?`;
+
+  const rows = await query(sql, [...selectParams, ...whereParams, pageSize, offset]);
+  const results = rows.map(mapCard);
   return { results, total: results[0]?.total_count ?? 0 };
 }
 
 export async function getFilterValues(): Promise<{ genres: string[]; tags: string[]; years: number[] }> {
-  const { data, error } = await supabase().rpc("list_filter_values");
-  if (error) throw error;
-  return data;
+  const [genres, tags, years] = await Promise.all([
+    query<{ value: string }>(
+      "SELECT DISTINCT j.value AS value FROM anime a, json_each(a.genres) j WHERE a.is_published = 1 AND a.is_adult = 0 ORDER BY j.value",
+    ),
+    query<{ value: string }>(
+      "SELECT DISTINCT j.value AS value FROM anime a, json_each(a.tags) j WHERE a.is_published = 1 AND a.is_adult = 0 ORDER BY j.value",
+    ),
+    query<{ y: number }>(
+      "SELECT DISTINCT season_year AS y FROM anime WHERE season_year IS NOT NULL AND is_published = 1 ORDER BY y DESC",
+    ),
+  ]);
+  return { genres: genres.map((r) => r.value), tags: tags.map((r) => r.value), years: years.map((r) => Number(r.y)) };
 }
 
 export async function getAnime(slug: string): Promise<Anime | null> {
-  const { data, error } = await supabase().from("anime").select("*").eq("slug", slug).maybeSingle();
-  if (error) throw error;
-  return data;
+  const row = await queryOne("SELECT * FROM anime WHERE slug = ? AND is_published = 1", [slug]);
+  return row ? mapAnime(row) : null;
 }
 
 export async function getEpisodes(animeId: number): Promise<Episode[]> {
-  const { data, error } = await supabase()
-    .from("episodes")
-    .select("*")
-    .eq("anime_id", animeId)
-    .order("number");
-  if (error) throw error;
-  return data ?? [];
+  const rows = await query(
+    "SELECT * FROM episodes WHERE anime_id = ? AND is_published = 1 ORDER BY number",
+    [animeId],
+  );
+  return rows.map(mapEpisode);
 }
 
 export async function getSources(episodeId: number): Promise<VideoSource[]> {
-  const { data, error } = await supabase()
-    .from("video_sources")
-    .select("id, episode_id, provider, label, audio, priority")
-    .eq("episode_id", episodeId)
-    .order("priority");
-  if (error) throw error;
-  return data ?? [];
+  const rows = await query<Record<string, unknown>>(
+    "SELECT id, episode_id, provider, label, audio, priority FROM video_sources WHERE episode_id = ? AND status = 'ready' ORDER BY priority",
+    [episodeId],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    episode_id: Number(r.episode_id),
+    provider: r.provider as VideoSource["provider"],
+    label: String(r.label),
+    audio: r.audio as VideoSource["audio"],
+    priority: Number(r.priority),
+  }));
 }
 
 export async function getSubtitles(episodeId: number): Promise<Subtitle[]> {
-  const { data, error } = await supabase().from("subtitles").select("*").eq("episode_id", episodeId);
-  if (error) throw error;
-  return data ?? [];
+  const rows = await query<Record<string, unknown>>("SELECT * FROM subtitles WHERE episode_id = ?", [episodeId]);
+  return rows.map((r) => ({
+    id: Number(r.id),
+    episode_id: Number(r.episode_id),
+    language: String(r.language),
+    label: String(r.label),
+    url: String(r.url),
+    is_default: bool(r.is_default),
+  }));
 }
 
 export async function getEpisodeAudioMap(animeId: number): Promise<Record<number, { sub: boolean; dub: boolean }>> {
-  const { data, error } = await supabase()
-    .from("video_sources")
-    .select("episode_id, audio, episodes!inner(anime_id)")
-    .eq("episodes.anime_id", animeId);
-  if (error) throw error;
+  const rows = await query<{ episode_id: number; audio: string }>(
+    `SELECT s.episode_id AS episode_id, s.audio AS audio
+     FROM video_sources s JOIN episodes e ON e.id = s.episode_id
+     WHERE e.anime_id = ? AND e.is_published = 1 AND s.status = 'ready'`,
+    [animeId],
+  );
   const map: Record<number, { sub: boolean; dub: boolean }> = {};
-  for (const row of data ?? []) {
-    const epId = row.episode_id as number;
+  for (const row of rows) {
+    const epId = Number(row.episode_id);
     map[epId] ??= { sub: false, dub: false };
     if (row.audio === "sub" || row.audio === "raw") map[epId].sub = true;
     if (row.audio === "dub") map[epId].dub = true;
@@ -201,18 +408,20 @@ export async function getWatchSources(
 }
 
 export async function getSchedule(from: Date, to: Date) {
-  const { data, error } = await supabase().rpc("airing_schedule", {
-    p_from: from.toISOString(),
-    p_to: to.toISOString(),
-  });
-  if (error) throw error;
-  return (data ?? []) as {
-    id: number;
-    slug: string;
-    title_english: string | null;
-    title_romaji: string;
-    cover_url: string | null;
-    next_episode: number;
-    next_episode_at: string;
-  }[];
+  const rows = await query<Record<string, unknown>>(
+    `SELECT id, slug, title_english, title_romaji, cover_url, next_episode, next_episode_at
+     FROM anime
+     WHERE is_published = 1 AND is_adult = 0 AND next_episode_at >= ? AND next_episode_at < ?
+     ORDER BY next_episode_at`,
+    [from.toISOString(), to.toISOString()],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    slug: String(r.slug),
+    title_english: (r.title_english as string) ?? null,
+    title_romaji: String(r.title_romaji),
+    cover_url: (r.cover_url as string) ?? null,
+    next_episode: Number(r.next_episode),
+    next_episode_at: String(r.next_episode_at),
+  }));
 }

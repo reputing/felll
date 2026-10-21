@@ -6,7 +6,8 @@
 //
 // Jikan allows 3 requests/second and 60/minute; this makes one per 1.1s.
 
-import { adminClient, arg, sleep } from "./lib";
+import { arg, sleep } from "./lib";
+import { d1Query } from "./d1";
 
 const RATINGS: [RegExp, string][] = [
   [/^G\b/, "G"],
@@ -18,19 +19,14 @@ const RATINGS: [RegExp, string][] = [
 ];
 
 async function main() {
-  const db = adminClient();
   const limit = Number(arg("limit")) || 500;
-  const { data: rows, error } = await db
-    .from("anime")
-    .select("id, mal_id")
-    .is("age_rating", null)
-    .not("mal_id", "is", null)
-    .order("popularity", { ascending: false })
-    .limit(limit);
-  if (error) throw error;
+  const rows = await d1Query<{ id: number; mal_id: number }>(
+    "SELECT id, mal_id FROM anime WHERE age_rating IS NULL AND mal_id IS NOT NULL ORDER BY popularity DESC LIMIT ?",
+    [limit],
+  );
 
   let updated = 0;
-  for (const row of rows ?? []) {
+  for (const row of rows) {
     await sleep(1100);
     const res = await fetch(`https://api.jikan.moe/v4/anime/${row.mal_id}`);
     if (res.status === 429) {
@@ -38,14 +34,13 @@ async function main() {
       continue;
     }
     if (!res.ok) continue;
-    const rating: string | null = (await res.json()).data?.rating ?? null;
+    const rating: string | null = ((await res.json()) as { data?: { rating?: string } }).data?.rating ?? null;
     const value = rating && RATINGS.find(([re]) => re.test(rating))?.[1];
     if (!value) continue;
-    const { error: e } = await db.from("anime").update({ age_rating: value }).eq("id", row.id);
-    if (e) throw e;
+    await d1Query("UPDATE anime SET age_rating = ? WHERE id = ?", [value, row.id]);
     updated++;
   }
-  console.log(`Updated ${updated} of ${rows?.length ?? 0} titles.`);
+  console.log(`Updated ${updated} of ${rows.length} titles.`);
 }
 
 main().catch((e) => {

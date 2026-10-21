@@ -24,7 +24,8 @@
 
 import { readdirSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { adminClient, arg, flag, sleep } from "./lib";
+import { arg, flag, sleep } from "./lib";
+import { d1Query } from "./d1";
 import { resolveAnimeId, uploadEpisodeFile, type Audio } from "./uploader";
 
 const VIDEO_EXT = new Set([".mkv", ".mp4", ".m4v", ".mov", ".webm", ".avi", ".ts", ".mpg"]);
@@ -87,26 +88,23 @@ function settled(path: string): boolean {
   return previous === fingerprint && Date.now() - s.mtimeMs > 15_000;
 }
 
-async function scan(db: ReturnType<typeof adminClient>) {
+async function scan() {
   let uploaded = 0;
   for (const folder of readdirSync(dir!, { withFileTypes: true })) {
     if (!folder.isDirectory() || folder.name.startsWith(".")) continue;
-    const animeId = await resolveAnimeId(db, folder.name);
+    const animeId = await resolveAnimeId(folder.name);
     if (!animeId) {
       warnOnce(folder.name, `Skipping ${folder.name}/: no anime with that slug or AniList id. Run the catalog sync, or rename the folder.`);
       continue;
     }
 
-    const { data: live, error } = await db
-      .from("episodes")
-      .select("number, video_sources(audio, label, status)")
-      .eq("anime_id", animeId);
-    if (error) throw error;
-    const done = new Set(
-      (live ?? []).flatMap((e) =>
-        e.video_sources.filter((s) => s.status === "ready").map((s) => `${Number(e.number)}|${s.audio}|${s.label}`),
-      ),
+    const live = await d1Query<{ number: number; audio: string; label: string }>(
+      `SELECT e.number AS number, s.audio AS audio, s.label AS label
+       FROM episodes e JOIN video_sources s ON s.episode_id = e.id
+       WHERE e.anime_id = ? AND s.status = 'ready'`,
+      [animeId],
     );
+    const done = new Set(live.map((r) => `${Number(r.number)}|${r.audio}|${r.label}`));
 
     const folderPath = join(dir!, folder.name);
     const names = readdirSync(folderPath).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -123,7 +121,7 @@ async function scan(db: ReturnType<typeof adminClient>) {
 
       console.log(`${folder.name} episode ${parsed.number} (${parsed.audio}): ${name}`);
       try {
-        const result = await uploadEpisodeFile(db, {
+        const result = await uploadEpisodeFile({
           animeId,
           number: parsed.number,
           file: path,
@@ -149,16 +147,15 @@ async function scan(db: ReturnType<typeof adminClient>) {
 
 async function main() {
   if (!dir) throw new Error("Usage: --dir <folder> [--watch] [--interval 60] [--label Main]");
-  const db = adminClient();
   if (!watch) {
-    const n = await scan(db);
+    const n = await scan();
     console.log(n ? `Done: ${n} episode(s) uploaded.` : "Nothing new to upload.");
     return;
   }
   console.log(`Watching ${dir} every ${intervalMs / 1000}s. Drop files in and they go live automatically.`);
   for (;;) {
     try {
-      await scan(db);
+      await scan();
     } catch (e) {
       console.error(`Scan failed, retrying next round: ${e instanceof Error ? e.message : e}`);
     }

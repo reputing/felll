@@ -11,7 +11,8 @@
 // --anime also accepts an AniList id ("anilist:154587"). For whole seasons,
 // use `npm run upload:folder` instead.
 
-import { adminClient, arg } from "./lib";
+import { arg } from "./lib";
+import { d1Query } from "./d1";
 import { resolveAnimeId, uploadEpisodeFile, type Audio } from "./uploader";
 
 async function main() {
@@ -25,14 +26,13 @@ async function main() {
   const audio = (arg("audio") ?? "sub") as Audio;
   const label = arg("label") ?? "Main";
   const priority = Number(arg("priority")) || 0;
-  const db = adminClient();
-  const animeId = await resolveAnimeId(db, animeRef);
+  const animeId = await resolveAnimeId(animeRef);
   if (!animeId) throw new Error(`No anime matches ${animeRef}. Run the catalog sync first.`);
 
   if (file) {
     const captions = arg("captions");
     const [lang, path] = captions?.split(/:(.+)/) ?? [];
-    const result = await uploadEpisodeFile(db, {
+    const result = await uploadEpisodeFile({
       animeId,
       number,
       file,
@@ -46,22 +46,17 @@ async function main() {
     return;
   }
 
-  const { data: episode, error: epError } = await db
-    .from("episodes")
-    .upsert({ anime_id: animeId, number, ...(arg("title") ? { title: arg("title") } : {}) }, { onConflict: "anime_id,number" })
-    .select("id")
-    .single();
-  if (epError) throw epError;
-  const { error } = await db.from("video_sources").insert({
-    episode_id: episode.id,
-    provider: "hls_url",
-    hls_url: hlsUrl,
-    label,
-    audio,
-    priority,
-    status: "ready",
-  });
-  if (error) throw error;
+  const episodeRows = await d1Query<{ id: number }>(
+    `INSERT INTO episodes (anime_id, number, title) VALUES (?, ?, ?)
+     ON CONFLICT (anime_id, number) DO UPDATE SET title = COALESCE(excluded.title, episodes.title)
+     RETURNING id`,
+    [animeId, number, arg("title") ?? null],
+  );
+  await d1Query(
+    `INSERT INTO video_sources (episode_id, provider, hls_url, label, audio, priority, status)
+     VALUES (?, 'hls_url', ?, ?, ?, ?, 'ready')`,
+    [episodeRows[0].id, hlsUrl, label, audio, priority],
+  );
   console.log(`Episode ${number} (${audio}) is live.`);
 }
 

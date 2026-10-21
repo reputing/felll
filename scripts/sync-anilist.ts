@@ -1,4 +1,4 @@
-// Mirrors the AniList anime catalog into Supabase.
+// Mirrors the AniList anime catalog into Cloudflare D1.
 //
 //   npm run sync:catalog                  every title, oldest id first
 //   npm run sync:catalog -- --pages 40    first 40 pages (1,000 most popular)
@@ -6,8 +6,10 @@
 //
 // AniList allows ~90 requests/minute (30 while degraded); this paces itself
 // and honours Retry-After on 429s. A full sync takes about 30 minutes.
+// Writes go through the D1 HTTP API (see scripts/d1.ts for the env it needs).
 
-import { adminClient, animeSlug, arg, flag, sleep } from "./lib";
+import { animeSlug, arg, flag, sleep } from "./lib";
+import { d1Query, mapLimit } from "./d1";
 
 const ENDPOINT = "https://graphql.anilist.co";
 const PER_PAGE = 25;
@@ -87,43 +89,65 @@ async function fetchPage(page: number, variables: Record<string, unknown>) {
 const stripHtml = (s: string | null) =>
   s?.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/\n{3,}/g, "\n\n").trim() || null;
 
-function toRow(m: Media) {
-  return {
-    anilist_id: m.id,
-    slug: animeSlug(m.title.english || m.title.romaji, m.id),
-    mal_id: m.idMal,
-    title_english: m.title.english,
-    title_romaji: m.title.romaji,
-    title_native: m.title.native,
-    synonyms: m.synonyms ?? [],
-    description: stripHtml(m.description),
-    format: m.format,
-    status: m.status,
-    season: m.season,
-    season_year: m.seasonYear,
-    country_of_origin: m.countryOfOrigin,
-    is_adult: m.isAdult,
-    episodes_total: m.episodes,
-    duration_minutes: m.duration,
-    genres: m.genres ?? [],
-    tags: m.tags.filter((t) => !t.isMediaSpoiler && t.rank >= 60).map((t) => t.name),
-    studios: m.studios.nodes.map((s) => s.name),
-    characters: m.characters.nodes.map((c) => c.name.full).filter(Boolean),
-    staff: m.staff.nodes.map((s) => s.name.full).filter(Boolean),
-    cover_url: m.coverImage.extraLarge,
-    color: m.coverImage.color,
-    banner_url: m.bannerImage,
-    trailer_youtube_id: m.trailer?.site === "youtube" ? m.trailer.id : null,
-    average_score: m.averageScore,
-    popularity: m.popularity ?? 0,
-    anilist_trending: m.trending ?? 0,
-    next_episode: m.nextAiringEpisode?.episode ?? null,
-    next_episode_at: m.nextAiringEpisode ? new Date(m.nextAiringEpisode.airingAt * 1000).toISOString() : null,
-  };
+// Columns written per title, in the order the upsert binds them.
+const COLUMNS = [
+  "slug", "anilist_id", "mal_id", "title_english", "title_romaji", "title_native",
+  "synonyms", "description", "format", "status", "season", "season_year",
+  "country_of_origin", "is_adult", "episodes_total", "duration_minutes",
+  "genres", "tags", "studios", "characters", "staff", "cover_url", "banner_url",
+  "color", "trailer_youtube_id", "average_score", "popularity", "anilist_trending",
+  "next_episode", "next_episode_at", "search_titles",
+] as const;
+
+const UPSERT_SQL = `
+  INSERT INTO anime (${COLUMNS.join(", ")})
+  VALUES (${COLUMNS.map(() => "?").join(", ")})
+  ON CONFLICT (anilist_id) DO UPDATE SET
+    ${COLUMNS.filter((c) => c !== "anilist_id").map((c) => `${c} = excluded.${c}`).join(", ")},
+    updated_at = datetime('now')`;
+
+function toParams(m: Media): unknown[] {
+  const synonyms = m.synonyms ?? [];
+  const searchTitles = [m.title.english, m.title.romaji, m.title.native, ...synonyms]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return [
+    animeSlug(m.title.english || m.title.romaji, m.id),
+    m.id,
+    m.idMal,
+    m.title.english,
+    m.title.romaji,
+    m.title.native,
+    JSON.stringify(synonyms),
+    stripHtml(m.description),
+    m.format,
+    m.status,
+    m.season,
+    m.seasonYear,
+    m.countryOfOrigin,
+    m.isAdult ? 1 : 0,
+    m.episodes,
+    m.duration,
+    JSON.stringify(m.genres ?? []),
+    JSON.stringify(m.tags.filter((t) => !t.isMediaSpoiler && t.rank >= 60).map((t) => t.name)),
+    JSON.stringify(m.studios.nodes.map((s) => s.name)),
+    JSON.stringify(m.characters.nodes.map((c) => c.name.full).filter(Boolean)),
+    JSON.stringify(m.staff.nodes.map((s) => s.name.full).filter(Boolean)),
+    m.coverImage.extraLarge,
+    m.bannerImage,
+    m.coverImage.color,
+    m.trailer?.site === "youtube" ? m.trailer.id : null,
+    m.averageScore,
+    m.popularity ?? 0,
+    m.trending ?? 0,
+    m.nextAiringEpisode?.episode ?? null,
+    m.nextAiringEpisode ? new Date(m.nextAiringEpisode.airingAt * 1000).toISOString() : null,
+    searchTitles,
+  ];
 }
 
 async function main() {
-  const db = adminClient();
   const airing = flag("airing");
   const maxPages = Number(arg("pages")) || Infinity;
   const variables = airing
@@ -135,8 +159,8 @@ async function main() {
     const started = Date.now();
     const { media, pageInfo } = await fetchPage(page, variables);
     if (media.length) {
-      const { error } = await db.from("anime").upsert(media.map(toRow), { onConflict: "anilist_id" });
-      if (error) throw error;
+      // One upsert per title (D1 caps bound params at 100), run a few at a time.
+      await mapLimit(media, 8, (m) => d1Query(UPSERT_SQL, toParams(m)));
       total += media.length;
     }
     console.log(`page ${page}: ${media.length} titles (${total} total)`);
@@ -147,11 +171,9 @@ async function main() {
 
   if (airing) {
     // Titles that finished airing since the last run drop off the schedule.
-    const { error } = await db
-      .from("anime")
-      .update({ next_episode: null, next_episode_at: null })
-      .lt("next_episode_at", new Date().toISOString());
-    if (error) throw error;
+    await d1Query("UPDATE anime SET next_episode = NULL, next_episode_at = NULL WHERE next_episode_at < ?", [
+      new Date().toISOString(),
+    ]);
   }
   console.log(`Synced ${total} titles.`);
 }

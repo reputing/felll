@@ -10,7 +10,10 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
-    "anivexa:dev": "wrangler dev -c anivexa/wrangler.jsonc --port 4000",
+    "setup:cloudflare": "bash scripts/setup-cloudflare.sh",
+    "d1:schema": "wrangler d1 execute cupcake --remote --file d1/schema.sql",
+    "d1:schema:local": "wrangler d1 execute cupcake --local --file d1/schema.sql",
+    "anivexa:dev": "wrangler dev -c anivexa/wrangler.jsonc --port 8799",
     "anivexa:deploy": "wrangler deploy -c anivexa/wrangler.jsonc",
     "sync:catalog": "tsx scripts/sync-anilist.ts",
     "sync:airing": "tsx scripts/sync-anilist.ts --airing",
@@ -20,7 +23,6 @@
     "upload:watch": "tsx scripts/upload-folder.ts --watch"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.118.0",
     "hls.js": "1.7.3",
     "next": "16.4.2",
     "react": "19.3.1",

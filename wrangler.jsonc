@@ -8,10 +8,23 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // Catalog / search / episodes live in D1 (SQLite). `database_id` is filled in
+  // by `npm run setup:cloudflare` (or `wrangler d1 create cupcake`). Apply the
+  // schema with `wrangler d1 execute cupcake --remote --file d1/schema.sql`.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cupcake",
+      "database_id": "D1_DATABASE_ID_PLACEHOLDER"
+    }
+  ],
   "observability": { "enabled": true },
   // Public values; secrets (SUPABASE_SERVICE_ROLE_KEY is never needed by the
   // site, only by scripts) are set with `wrangler secret put`.
   "vars": {
-    "NEXT_PUBLIC_SITE_NAME": "Cupcake"
+    "NEXT_PUBLIC_SITE_NAME": "Cupcake",
+    // Deployed Anivexa Worker URL; filled in by `npm run setup:cloudflare`.
+    // Leave empty to run on self-hosted sources only. Not a secret (just a URL).
+    "ANIVEXA_API_URL": ""
   }
 }
