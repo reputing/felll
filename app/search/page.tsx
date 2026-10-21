@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { AppLink as Link } from "@/components/AppLink";
 import { AnimeGrid } from "@/components/AnimeCard";
 import { getFilterValues, searchAnime } from "@/lib/catalog";
 import { getTitleLanguage } from "@/lib/titles";

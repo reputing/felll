@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { AppLink as Link } from "@/components/AppLink";
 import { LocalTime } from "@/components/LocalTime";
 import { getSchedule } from "@/lib/catalog";
 import { displayTitle, getTitleLanguage } from "@/lib/titles";

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { AppLink as Link } from "@/components/AppLink";
 import { notFound } from "next/navigation";
 import { getAnime, getWatchEpisodes } from "@/lib/catalog";
 import { durationLabel, formatLabel, scoreLabel, statusLabel } from "@/lib/format";

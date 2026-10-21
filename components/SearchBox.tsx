@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { AppLink as Link } from "@/components/AppLink";
 import { useEffect, useRef, useState } from "react";
 
 interface Suggestion {
@@ -13,7 +12,6 @@ interface Suggestion {
 
 /** Search input with instant suggestions; Enter goes to the full search page. */
 export function SearchBox({ autoFocus = false, large = false }: { autoFocus?: boolean; large?: boolean }) {
-  const router = useRouter();
   const [q, setQ] = useState("");
   const [items, setItems] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
@@ -60,7 +58,7 @@ export function SearchBox({ autoFocus = false, large = false }: { autoFocus?: bo
       onSubmit={(e) => {
         e.preventDefault();
         setOpen(false);
-        router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+        window.location.href = `/search?q=${encodeURIComponent(q.trim())}`;
       }}
     >
       <input

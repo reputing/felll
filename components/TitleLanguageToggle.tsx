@@ -1,17 +1,15 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import type { TitleLanguage } from "@/lib/titles";
 
 export function TitleLanguageToggle({ current }: { current: TitleLanguage }) {
-  const router = useRouter();
   const next = current === "en" ? "jp" : "en";
   return (
     <button
       type="button"
       onClick={() => {
         document.cookie = `title_lang=${next}; path=/; max-age=31536000; samesite=lax`;
-        router.refresh();
+        window.location.reload();
       }}
       aria-label={current === "en" ? "Show titles in Japanese (romaji)" : "Show titles in English"}
       className="rounded-md border border-line px-2 py-1 text-xs font-semibold"

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { AppLink as Link } from "@/components/AppLink";
 import { displayTitle, type TitleLanguage } from "@/lib/titles";
 import { durationLabel, formatLabel, scoreLabel } from "@/lib/format";
 import type { AnimeCard as Card } from "@/lib/types";

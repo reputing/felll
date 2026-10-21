@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { AppLink as Link } from "@/components/AppLink";
 import { SITE_NAME } from "./Header";
 
 export function Footer() {

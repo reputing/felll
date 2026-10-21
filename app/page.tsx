@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { AppLink as Link } from "@/components/AppLink";
 import { SearchBox } from "@/components/SearchBox";
 import { SITE_NAME } from "@/components/Header";
 import { searchAnime } from "@/lib/catalog";

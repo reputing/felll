@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { AppLink as Link } from "@/components/AppLink";
 import { getTitleLanguage } from "@/lib/titles";
 import { SearchBox } from "./SearchBox";
 import { TitleLanguageToggle } from "./TitleLanguageToggle";
