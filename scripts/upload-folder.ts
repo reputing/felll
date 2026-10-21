@@ -4,18 +4,19 @@
 //   npm run upload:folder -- --dir ./uploads            # once
 //   npm run upload:watch  -- --dir ./uploads            # keep running
 //
-// Layout: one folder per anime, named by its slug (from the site URL) or
-// "anilist-<id>". File names give the episode number, an optional title and
+// Layout: one folder per anime, named by its MyAnimeList id (the number in the
+// cupcake url), optionally followed by anything readable: "52991" or
+// "52991-frieren". File names give the episode number, an optional title and
 // an optional audio track; captions sit next to the video they belong to.
 //
 //   uploads/
-//     frieren-beyond-journey-s-end-16w8tc/
+//     52991-frieren/
 //       01.mkv                       episode 1, sub
 //       01.en.vtt                    English captions for 01.mkv
 //       02 - Aura the Guillotine.mkv episode 2, sub, with a title
 //       02.dub.mkv                   episode 2, dub
 //       12.5.mkv                     episode 12.5 (recap/special)
-//     anilist-154587/
+//     21-one-piece/
 //       ...
 //
 // Files already live on the site are skipped, so the folder can keep its
@@ -24,8 +25,8 @@
 
 import { readdirSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { adminClient, arg, flag, sleep } from "./lib";
-import { resolveAnimeId, uploadEpisodeFile, type Audio } from "./uploader";
+import { arg, d1, flag, malIdOf, sleep } from "./lib";
+import { uploadEpisodeFile, type Audio } from "./uploader";
 
 const VIDEO_EXT = new Set([".mkv", ".mp4", ".m4v", ".mov", ".webm", ".avi", ".ts", ".mpg"]);
 const CAPTION_EXT = new Set([".vtt", ".srt"]);
@@ -87,26 +88,22 @@ function settled(path: string): boolean {
   return previous === fingerprint && Date.now() - s.mtimeMs > 15_000;
 }
 
-async function scan(db: ReturnType<typeof adminClient>) {
+async function scan() {
   let uploaded = 0;
   for (const folder of readdirSync(dir!, { withFileTypes: true })) {
     if (!folder.isDirectory() || folder.name.startsWith(".")) continue;
-    const animeId = await resolveAnimeId(db, folder.name);
-    if (!animeId) {
-      warnOnce(folder.name, `Skipping ${folder.name}/: no anime with that slug or AniList id. Run the catalog sync, or rename the folder.`);
+    const malId = malIdOf(folder.name);
+    if (!malId) {
+      warnOnce(folder.name, `Skipping ${folder.name}/: start the folder name with the MyAnimeList id, e.g. "52991-frieren".`);
       continue;
     }
 
-    const { data: live, error } = await db
-      .from("episodes")
-      .select("number, video_sources(audio, label, status)")
-      .eq("anime_id", animeId);
-    if (error) throw error;
-    const done = new Set(
-      (live ?? []).flatMap((e) =>
-        e.video_sources.filter((s) => s.status === "ready").map((s) => `${Number(e.number)}|${s.audio}|${s.label}`),
-      ),
+    const live = await d1<{ number: number; audio: string; label: string }>(
+      `select e.number, s.audio, s.label from episodes e join video_sources s on s.episode_id = e.id
+       where e.mal_id = ? and s.status = 'ready'`,
+      malId,
     );
+    const done = new Set(live.map((s) => `${Number(s.number)}|${s.audio}|${s.label}`));
 
     const folderPath = join(dir!, folder.name);
     const names = readdirSync(folderPath).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -123,8 +120,8 @@ async function scan(db: ReturnType<typeof adminClient>) {
 
       console.log(`${folder.name} episode ${parsed.number} (${parsed.audio}): ${name}`);
       try {
-        const result = await uploadEpisodeFile(db, {
-          animeId,
+        const result = await uploadEpisodeFile({
+          malId,
           number: parsed.number,
           file: path,
           audio: parsed.audio,
@@ -149,16 +146,15 @@ async function scan(db: ReturnType<typeof adminClient>) {
 
 async function main() {
   if (!dir) throw new Error("Usage: --dir <folder> [--watch] [--interval 60] [--label Main]");
-  const db = adminClient();
   if (!watch) {
-    const n = await scan(db);
+    const n = await scan();
     console.log(n ? `Done: ${n} episode(s) uploaded.` : "Nothing new to upload.");
     return;
   }
   console.log(`Watching ${dir} every ${intervalMs / 1000}s. Drop files in and they go live automatically.`);
   for (;;) {
     try {
-      await scan(db);
+      await scan();
     } catch (e) {
       console.error(`Scan failed, retrying next round: ${e instanceof Error ? e.message : e}`);
     }

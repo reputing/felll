@@ -1,24 +1,26 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { searchAnime } from "@/lib/catalog";
-import { durationLabel, formatLabel } from "@/lib/format";
+import { memberOr401 } from "@/lib/auth";
+import { all } from "@/lib/db";
+import { formatLabel, searchAnime } from "@/lib/jikan";
 
-// Instant suggestions for the header search box.
-export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.get("q")?.trim().slice(0, 100);
-  if (!q || q.length < 2) return NextResponse.json({ results: [] });
-
-  const lang = req.cookies.get("title_lang")?.value === "jp" ? "jp" : "en";
-  const { results } = await searchAnime({ q, pageSize: 6 });
-
-  return NextResponse.json(
+// The ⌘K palette: a handful of anime from Jikan plus matching members.
+export async function GET(req: Request) {
+  const me = await memberOr401();
+  if (me instanceof Response) return me;
+  const q = (new URL(req.url).searchParams.get("q") || "").trim().slice(0, 80);
+  if (q.length < 2) return Response.json({ anime: [], members: [] });
+  const [anime, members] = await Promise.all([
+    searchAnime({ q, limit: 8, order_by: "members", sort: "desc" }).catch(() => ({ items: [] })),
+    all<{ handle: string; display_name: string; avatar_url: string | null }>(
+      "select handle, display_name, avatar_url from users where handle like ? or display_name like ? order by last_seen desc limit 4",
+      `${q.replace(/[%_]/g, "")}%`,
+      `%${q.replace(/[%_]/g, "")}%`,
+    ),
+  ]);
+  return Response.json(
     {
-      results: results.map((a) => ({
-        slug: a.slug,
-        title: lang === "en" ? a.title_english || a.title_romaji : a.title_romaji,
-        cover_url: a.cover_url,
-        meta: [formatLabel(a.format), a.season_year, durationLabel(a.duration_minutes)].filter(Boolean).join(" · "),
-      })),
+      anime: anime.items.map((a) => ({ id: a.id, title: a.title, image: a.posterSm, sub: [formatLabel(a), a.year, a.score !== "–" ? `★ ${a.score}` : null].filter(Boolean).join(" · ") })),
+      members,
     },
-    { headers: { "cache-control": "public, max-age=30, s-maxage=300", vary: "cookie" } },
+    { headers: { "cache-control": "private, max-age=60" } },
   );
 }

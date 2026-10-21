@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "felll",
-  "main": ".open-next/worker.js",
+  "main": "worker.ts",
   "compatibility_date": "2025-09-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
@@ -9,9 +9,23 @@
     "binding": "ASSETS"
   },
   "observability": { "enabled": true },
-  // Public values; secrets (SUPABASE_SERVICE_ROLE_KEY is never needed by the
-  // site, only by scripts) are set with `wrangler secret put`.
+  // Members, lists, comments, video sources and the Jikan cache.
+  // `npx wrangler d1 create felll` prints the id to paste here.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "felll",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Keeps the Jikan cache warm so nobody waits on a cold MyAnimeList call.
+  "triggers": { "crons": ["*/20 * * * *"] },
+  // Public values. Secrets (KURO_SERVICE_KEY, STREAM_SIGNING_KEY_*) are set
+  // with `wrangler secret put`, never here.
   "vars": {
-    "NEXT_PUBLIC_SITE_NAME": "Cupcake"
+    "NEXT_PUBLIC_SITE_NAME": "cupcake.gg",
+    "KURO_URL": "https://kuro.rip",
+    "REQUIRE_KURO_PLUS": "0"
   }
 }

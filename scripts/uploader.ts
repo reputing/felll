@@ -1,23 +1,13 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { basename, extname } from "node:path";
 import * as tus from "tus-js-client";
-import { requireEnv, sleep, type adminClient } from "./lib";
+import { d1, requireEnv, sleep } from "./lib";
 
-type Db = ReturnType<typeof adminClient>;
 export type Audio = "sub" | "dub" | "raw";
 
 const API = "https://api.cloudflare.com/client/v4";
-
-/** Accepts a slug, "anilist:154587" or "anilist-154587". */
-export async function resolveAnimeId(db: Db, ref: string): Promise<number | null> {
-  const anilist = ref.match(/^anilist[:-](\d+)$/);
-  const query = anilist
-    ? db.from("anime").select("id").eq("anilist_id", Number(anilist[1]))
-    : db.from("anime").select("id").eq("slug", ref);
-  const { data, error } = await query.maybeSingle();
-  if (error) throw error;
-  return data?.id ?? null;
-}
+// one token can carry both "Stream: Edit" and "D1: Edit"
+const streamToken = () => process.env.CLOUDFLARE_STREAM_API_TOKEN || requireEnv("CLOUDFLARE_API_TOKEN");
 
 function uploadToStream(file: string): Promise<string> {
   const size = statSync(file).size;
@@ -27,7 +17,7 @@ function uploadToStream(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const upload = new tus.Upload(createReadStream(file), {
       endpoint: `${API}/accounts/${requireEnv("CLOUDFLARE_ACCOUNT_ID")}/stream`,
-      headers: { Authorization: `Bearer ${requireEnv("CLOUDFLARE_STREAM_API_TOKEN")}` },
+      headers: { Authorization: `Bearer ${streamToken()}` },
       uploadSize: size,
       // Cloudflare requires a multiple of 256 KiB, at least 5 MiB.
       chunkSize: 50 * 1024 * 1024,
@@ -59,7 +49,7 @@ function uploadToStream(file: string): Promise<string> {
 async function streamApi(path: string, init: RequestInit = {}) {
   const res = await fetch(`${API}/accounts/${requireEnv("CLOUDFLARE_ACCOUNT_ID")}/stream${path}`, {
     ...init,
-    headers: { Authorization: `Bearer ${requireEnv("CLOUDFLARE_STREAM_API_TOKEN")}`, ...init.headers },
+    headers: { Authorization: `Bearer ${streamToken()}`, ...init.headers },
   });
   const body = await res.json();
   if (!body.success) throw new Error(`Stream API ${path}: ${JSON.stringify(body.errors)}`);
@@ -92,7 +82,7 @@ function captionAsVtt(path: string): string {
 }
 
 export interface UploadJob {
-  animeId: number;
+  malId: number;
   number: number;
   file: string;
   audio: Audio;
@@ -102,32 +92,30 @@ export interface UploadJob {
   captions?: { lang: string; path: string }[];
 }
 
+/** The episode row for (anime, number), created if needed; returns its id. */
+export async function episodeId(malId: number, number: number, title?: string): Promise<number> {
+  const [row] = await d1<{ id: number }>(
+    `insert into episodes (mal_id, number, title) values (?, ?, ?)
+     on conflict(mal_id, number) do update set title = coalesce(excluded.title, episodes.title)
+     returning id`,
+    malId, number, title ?? null,
+  );
+  return row.id;
+}
+
 /**
  * Uploads one file to Stream and registers it as a source. Safe to re-run:
  * a source that is already ready is skipped, and one that was uploaded but
  * not finished (the process died while Stream was encoding) is resumed
- * without uploading again. Pending sources are hidden from the site by RLS.
+ * without uploading again. Pending sources are never shown on the site.
  */
-export async function uploadEpisodeFile(db: Db, job: UploadJob): Promise<"uploaded" | "resumed" | "skipped"> {
-  const { data: episode, error: epError } = await db
-    .from("episodes")
-    .upsert(
-      { anime_id: job.animeId, number: job.number, ...(job.title ? { title: job.title } : {}) },
-      { onConflict: "anime_id,number" },
-    )
-    .select("id")
-    .single();
-  if (epError) throw epError;
-
-  const { data: existing, error: findError } = await db
-    .from("video_sources")
-    .select("id, status, stream_uid")
-    .eq("episode_id", episode.id)
-    .eq("provider", "cloudflare_stream")
-    .eq("audio", job.audio)
-    .eq("label", job.label)
-    .maybeSingle();
-  if (findError) throw findError;
+export async function uploadEpisodeFile(job: UploadJob): Promise<"uploaded" | "resumed" | "skipped"> {
+  const epId = await episodeId(job.malId, job.number, job.title);
+  const [existing] = await d1<{ id: number; status: string; stream_uid: string | null }>(
+    `select id, status, stream_uid from video_sources
+     where episode_id = ? and provider = 'cloudflare_stream' and audio = ? and label = ?`,
+    epId, job.audio, job.label,
+  );
 
   if (existing?.status === "ready") return "skipped";
   if (existing?.status === "error") {
@@ -142,28 +130,23 @@ export async function uploadEpisodeFile(db: Db, job: UploadJob): Promise<"upload
     console.log(`  resuming Stream video ${uid}`);
   } else {
     uid = await uploadToStream(job.file);
-    const { data: source, error } = await db
-      .from("video_sources")
-      .insert({
-        episode_id: episode.id,
-        provider: "cloudflare_stream",
-        stream_uid: uid,
-        label: job.label,
-        audio: job.audio,
-        priority: job.priority,
-        status: "pending",
-      })
-      .select("id")
-      .single();
-    if (error) throw new Error(`Uploaded as Stream video ${uid} but could not record it: ${error.message}`);
-    sourceId = source.id;
+    try {
+      const [row] = await d1<{ id: number }>(
+        `insert into video_sources (episode_id, provider, stream_uid, label, audio, priority, status)
+         values (?, 'cloudflare_stream', ?, ?, ?, ?, 'pending') returning id`,
+        epId, uid, job.label, job.audio, job.priority,
+      );
+      sourceId = row.id;
+    } catch (e) {
+      throw new Error(`Uploaded as Stream video ${uid} but could not record it: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   let duration: number | null;
   try {
     duration = await waitUntilReady(uid);
   } catch (e) {
-    if (e instanceof StreamEncodeError) await db.from("video_sources").update({ status: "error" }).eq("id", sourceId);
+    if (e instanceof StreamEncodeError) await d1("update video_sources set status = 'error' where id = ?", sourceId);
     throw e;
   }
 
@@ -175,9 +158,22 @@ export async function uploadEpisodeFile(db: Db, job: UploadJob): Promise<"upload
     console.log(`  added ${lang} captions`);
   }
 
-  const { error: readyError } = await db.from("video_sources").update({ status: "ready" }).eq("id", sourceId);
-  if (readyError) throw readyError;
-  if (duration) await db.from("episodes").update({ duration_seconds: duration }).eq("id", episode.id);
+  await d1("update video_sources set status = 'ready' where id = ?", sourceId);
+  if (duration) await d1("update episodes set duration_seconds = ? where id = ?", duration, epId);
+  await notifyRequesters(job.malId);
 
   return existing ? "resumed" : "uploaded";
+}
+
+/** First episode of a requested show is live: mark the request filled and ping everyone who asked. */
+async function notifyRequesters(malId: number) {
+  const [req] = await d1<{ title: string }>("select title from requests where mal_id = ? and status = 'open'", malId);
+  if (!req) return;
+  await d1(
+    `insert into notifications (user_id, kind, mal_id, text)
+     select user_id, 'request_filled', mal_id, ? from request_votes where mal_id = ?`,
+    `${req.title} just landed in the vault. Go watch!`, malId,
+  );
+  await d1("update requests set status = 'filled' where mal_id = ?", malId);
+  console.log(`  told everyone who requested ${req.title}`);
 }
