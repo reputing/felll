@@ -241,6 +241,9 @@ export async function resolveAnivexaStream(
   const rawSubs = chosen.subtitles?.length ? chosen.subtitles : data.subtitles ?? [];
   const subtitles = (rawSubs ?? [])
     .filter((s): s is Required<Pick<RawSubtitle, "url">> & RawSubtitle => Boolean(s?.url))
+    // Drop thumbnail / storyboard "subtitle" tracks (scrubber previews) — some
+    // providers ship them as VTT, which otherwise render as on-screen captions.
+    .filter((s) => !/thumb|sprite|storyboard|preview/i.test(`${s.label ?? ""} ${s.srclang ?? ""} ${s.url}`))
     .map((s, i) => ({
       url: anivexaProxyPath(s.url!, headers),
       label: s.label ?? `Subtitles ${i + 1}`,

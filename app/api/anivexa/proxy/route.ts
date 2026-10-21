@@ -56,12 +56,15 @@ export async function GET(req: Request) {
     headers = {};
   }
 
-  const upstreamHeaders: Record<string, string> = { "user-agent": USER_AGENT, ...headers };
-  if (headers.Referer && !headers.Origin) {
-    try {
-      upstreamHeaders.Origin = new URL(headers.Referer).origin;
-    } catch {}
-  }
+  const upstreamHeaders: Record<string, string> = {
+    "user-agent": USER_AGENT,
+    accept: "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    ...headers,
+  };
+  // Note: we deliberately do NOT synthesize an Origin header — several stream
+  // hosts return 403 when an unexpected Origin is present. We send only the
+  // Referer the provider gave us (plus anything in its headers).
   // Forward Range so seeking works on segment/MP4 requests.
   const range = req.headers.get("range");
   if (range) upstreamHeaders.range = range;
