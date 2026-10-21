@@ -18,5 +18,12 @@
     "bindings": [{ "class_name": "AnivexaContainer", "name": "ANIVEXA_CONTAINER" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AnivexaContainer"] }],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Turns on the in-memory cache inside the container. For a shared cache that
+  // survives restarts, also set UPSTASH_REDIS_REST_URL / _TOKEN as secrets:
+  //   wrangler secret put UPSTASH_REDIS_REST_URL  -c anivexa-server/wrangler.jsonc
+  //   wrangler secret put UPSTASH_REDIS_REST_TOKEN -c anivexa-server/wrangler.jsonc
+  "vars": {
+    "CACHE_ENABLED": "true"
+  }
 }

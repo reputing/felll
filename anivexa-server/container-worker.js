@@ -3,16 +3,27 @@
 import { Container, getContainer } from "@cloudflare/containers";
 
 export class AnivexaContainer extends Container {
-  // The port server.js listens on inside the container.
-  defaultPort = 4000;
-  // Keep a warm instance for 20 min after the last request, then scale to zero.
-  sleepAfter = "20m";
+  constructor(ctx, env) {
+    super(ctx, env);
+    // The port server.js listens on inside the container.
+    this.defaultPort = 4000;
+    // Stay warm for an hour after the last request so the in-memory cache
+    // survives between visits and there are no cold starts during active use.
+    this.sleepAfter = "1h";
+    // Pass caching config into the container. CACHE_ENABLED turns on the
+    // in-memory cache; add the UPSTASH_* values (as wrangler secrets) for a
+    // shared cache that survives restarts.
+    this.envVars = {
+      CACHE_ENABLED: env.CACHE_ENABLED ?? "true",
+      DEFAULT_REDIS_TTL: env.DEFAULT_REDIS_TTL ?? "900",
+      UPSTASH_REDIS_REST_URL: env.UPSTASH_REDIS_REST_URL ?? "",
+      UPSTASH_REDIS_REST_TOKEN: env.UPSTASH_REDIS_REST_TOKEN ?? "",
+    };
+  }
 }
 
 export default {
   async fetch(request, env) {
-    // Single shared instance is plenty for a resolve-only API; getContainer
-    // routes every request to the same warm container.
     return getContainer(env.ANIVEXA_CONTAINER).fetch(request);
   },
 };
