@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "anivexa-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // The container image is built from the Dockerfile in this folder (needs
+  // Docker running locally when you `wrangler deploy`). It runs the full Node
+  // backend — all 12 providers, wreq-js, node:vm — unlike the Workers build.
+  "containers": [
+    {
+      "class_name": "AnivexaContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "AnivexaContainer", "name": "ANIVEXA_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AnivexaContainer"] }],
+  "observability": { "enabled": true }
+}

@@ -15,6 +15,7 @@
     "d1:schema:local": "wrangler d1 execute cupcake --local --file d1/schema.sql",
     "anivexa:dev": "wrangler dev -c anivexa/wrangler.jsonc --port 8799",
     "anivexa:deploy": "wrangler deploy -c anivexa/wrangler.jsonc",
+    "anivexa:container:deploy": "wrangler deploy -c anivexa-server/wrangler.jsonc",
     "sync:catalog": "tsx scripts/sync-anilist.ts",
     "sync:airing": "tsx scripts/sync-anilist.ts --airing",
     "sync:ratings": "tsx scripts/sync-ratings.ts",
@@ -23,6 +24,7 @@
     "upload:watch": "tsx scripts/upload-folder.ts --watch"
   },
   "dependencies": {
+    "@cloudflare/containers": "^0.3.7",
     "hls.js": "1.7.3",
     "next": "16.4.2",
     "react": "19.3.1",
