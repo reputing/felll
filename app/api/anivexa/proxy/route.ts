@@ -81,19 +81,20 @@ export async function GET(req: Request) {
 
   const contentType = upstream.headers.get("content-type") ?? "";
   const path = targetUrl.pathname.toLowerCase();
-  const isPlaylist =
-    /mpegurl|vnd\.apple/i.test(contentType) || path.endsWith(".m3u8");
+  const contentLength = Number(upstream.headers.get("content-length") || "0");
 
-  if (isPlaylist) {
-    const text = await upstream.text();
-    const body = rewritePlaylist(text, targetUrl, headers, origin);
-    return new Response(body, {
+  const makePlaylist = (text: string) =>
+    new Response(rewritePlaylist(text, targetUrl, headers, origin), {
       headers: {
         "content-type": "application/vnd.apple.mpegurl",
         "access-control-allow-origin": "*",
         "cache-control": "no-store",
       },
     });
+
+  // Obvious playlist by content-type or extension.
+  if (/mpegurl|vnd\.apple|x-mpegurl/i.test(contentType) || /\.m3u8(\?|$)/i.test(path)) {
+    return makePlaylist(await upstream.text());
   }
 
   const responseHeaders = new Headers();
@@ -103,6 +104,24 @@ export async function GET(req: Request) {
   }
   responseHeaders.set("access-control-allow-origin", "*");
   responseHeaders.set("cache-control", "public, max-age=3600");
+
+  // Some providers serve m3u8 disguised with a wrong content-type (e.g.
+  // image/jpeg) and no .m3u8 extension. If this isn't an obvious media segment,
+  // sniff the first bytes for the #EXTM3U marker and rewrite it as a playlist.
+  const clearlyBinary =
+    /\.(ts|m4s|mp4|m4v|aac|mp3|ogg|opus|flac|key|vtt|srt|ass|webp|jpg|jpeg|png|gif|woff2?)(\?|$)/i.test(path) ||
+    contentLength > 2_000_000;
+
+  if (!clearlyBinary) {
+    const buf = await upstream.arrayBuffer();
+    const head = new TextDecoder().decode(buf.slice(0, 16));
+    if (/#EXTM3U/.test(head)) {
+      return makePlaylist(new TextDecoder().decode(buf));
+    }
+    // Not a playlist — return the raw bytes untouched (don't corrupt binary).
+    return new Response(buf, { status: upstream.status, headers: responseHeaders });
+  }
+
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
 
