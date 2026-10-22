@@ -6,8 +6,10 @@ import { DEFAULT_SKIN, isSkin } from "@/lib/skins";
 import "./globals.css";
 
 // Plus Jakarta Sans: a clean, modern, professional grotesque — crisper than the
-// old wordmark font while keeping the friendly feel.
-const sans = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--font-sans-src", display: "swap" });
+// old wordmark font while keeping the friendly feel. Loaded as the variable font
+// (no weight array) so next/font emits a single @font-face — this also sidesteps
+// a nondeterministic Turbopack import-map error on multi-weight google fonts.
+const sans = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-sans-src", display: "swap" });
 const plex = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex", display: "swap" });
 
 export const metadata: Metadata = {
