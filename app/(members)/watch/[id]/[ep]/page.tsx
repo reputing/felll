@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Clapperboard, Play } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getAnime, getEpisodeList, nextAiring, episodeAt } from "@/lib/jikan";
+import { anivexaEnabled, fetchAnivexaCatalog, malToAnilist } from "@/lib/anivexa";
 import { refOf } from "@/lib/anime-ref";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/avatar";
@@ -62,6 +63,26 @@ export default async function WatchPage({ params, searchParams }: Props) {
       ]).then(([s, t]): [Source[], Track[]] => [s.results as Source[], t.results as Track[]])
     : [[], []];
 
+  // External servers via the Anivexa bot (resolved by AniList id; this catalog
+  // is MAL-keyed, so map MAL -> AniList first). Subtitles for these arrive with
+  // the stream at play time.
+  const anivexaSources: Source[] = [];
+  let anivexaEps = new Set<number>();
+  if (await anivexaEnabled()) {
+    const anilistId = await malToAnilist(id);
+    if (anilistId) {
+      const catalog = await fetchAnivexaCatalog(anilistId);
+      if (catalog) {
+        anivexaEps = new Set(catalog.episodeNumbers);
+        for (const prov of catalog.providers) {
+          if (prov.sub.includes(ep)) anivexaSources.push({ id: `anivexa:${prov.slug}:${anilistId}:sub:${ep}`, label: prov.name, audio: "sub" });
+          if (prov.dub.includes(ep)) anivexaSources.push({ id: `anivexa:${prov.slug}:${anilistId}:dub:${ep}`, label: prov.name, audio: "dub" });
+        }
+      }
+    }
+  }
+  const allSources: Source[] = [...sources, ...anivexaSources];
+
   const sp = await searchParams;
   // resume where you left off, unless you'd basically finished: then from the top
   const saved = resume.results[0] as { position: number; duration: number } | undefined;
@@ -91,14 +112,14 @@ export default async function WatchPage({ params, searchParams }: Props) {
 
       <div className="watch-grid grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-4">
-          {here && sources.length ? (
+          {allSources.length ? (
             <Player
-              key={here.id}
-              sources={sources}
+              key={here?.id ?? `ext-${ep}`}
+              sources={allSources}
               subtitles={subtitles}
-              intro={{ start: here.intro_start, end: here.intro_end }}
-              outroStart={here.outro_start}
-              nextHref={nextHref && vaultSet.has(ep + 1) ? nextHref : null}
+              intro={{ start: here?.intro_start ?? null, end: here?.intro_end ?? null }}
+              outroStart={here?.outro_start ?? null}
+              nextHref={nextHref && (vaultSet.has(ep + 1) || anivexaEps.has(ep + 1)) ? nextHref : null}
               prevHref={prevHref}
               startAt={startAt}
               poster={a.banner}
@@ -165,17 +186,18 @@ export default async function WatchPage({ params, searchParams }: Props) {
             {numbers.map((n) => {
               const meta = list.items.find((e) => e.number === n);
               const audio = vaultSet.get(n);
+              const streamable = !!audio || anivexaEps.has(n);
               const on = n === ep;
               return (
                 <li key={n}>
                   <Link href={`/watch/${id}/${n}`} aria-current={on ? "page" : undefined} scroll={false}
                     className={cn("grid grid-cols-[40px_1fr] items-center gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep")}>
-                    <span className={cn("grid h-10 place-items-center rounded-xl font-mono text-[13px]", on ? "bg-frost text-frost-ink" : audio ? "bg-paper text-frost-text" : "bg-cream-tint text-plum-faint")}>
+                    <span className={cn("grid h-10 place-items-center rounded-xl font-mono text-[13px]", on ? "bg-frost text-frost-ink" : streamable ? "bg-paper text-frost-text" : "bg-cream-tint text-plum-faint")}>
                       {on ? <Play className="size-4" fill="currentColor" /> : String(n).padStart(2, "0")}
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate font-bold">{meta?.title ?? `Episode ${n}`}</span>
-                      <span className="text-[11px] font-semibold text-plum-muted">{audio ? audio.replace(",", " · ").toUpperCase() : "not uploaded"}{meta?.filler ? " · filler" : ""}</span>
+                      <span className="text-[11px] font-semibold text-plum-muted">{audio ? audio.replace(",", " · ").toUpperCase() : anivexaEps.has(n) ? "stream" : "not uploaded"}{meta?.filler ? " · filler" : ""}</span>
                     </span>
                   </Link>
                 </li>

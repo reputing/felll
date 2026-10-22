@@ -1,0 +1,17 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "anivexa-api",
+  "main": "index.js",
+  "compatibility_date": "2025-09-01",
+  // nodejs_compat provides node:crypto, Buffer and a process shim, which the
+  // providers and extractors rely on. The Node-only providers (TLS-impersonation
+  // via wreq-js, child_process, node:vm) are stubbed/degraded in this build; see
+  // core/wreq.js, extractors/megaplay.js and the README.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // Caching is off by default. To enable the Upstash Redis cache, set
+  // CACHE_ENABLED=true and the UPSTASH_* values with `wrangler secret put`.
+  "vars": {
+    "CACHE_ENABLED": "false"
+  }
+}

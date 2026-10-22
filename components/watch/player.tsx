@@ -11,8 +11,8 @@ import { POPUP, POPUP_ITEM, POPUP_LABEL, POPUP_SEPARATOR } from "@/components/ui
 import { useBox } from "@/lib/store";
 import { clock, cn } from "@/lib/utils";
 
-export interface Source { id: number; label: string; audio: "sub" | "dub" | "raw" }
-export interface Track { id: number; language: string; label: string; url: string; is_default: number }
+export interface Source { id: string | number; label: string; audio: "sub" | "dub" | "raw" }
+export interface Track { id: string | number; language: string; label: string; url: string; is_default: number }
 export interface Meta { malId: number; ep: number; title: string; image: string | null; episodes: number | null; format: string }
 
 interface Props {
@@ -45,8 +45,9 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const hls = useRef<Hls | null>(null);
   const dub = useBox((s) => s.dub);
   const [current, setCurrent] = useState<Source | undefined>(() => sources.find((s) => s.audio === (dub ? "dub" : "sub")) ?? sources[0]);
-  const [failed, setFailed] = useState<Set<number>>(new Set());
+  const [failed, setFailed] = useState<Set<string | number>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [extraSubs, setExtraSubs] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [t, setT] = useState(0);
@@ -100,8 +101,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     (async () => {
       const res = await fetch(`/api/play/${current.id}`);
       if (!res.ok) return fallback(current);
-      const { url } = (await res.json()) as { url: string };
+      const data = (await res.json()) as { url: string; subtitles?: Track[] };
+      const url = data.url;
       if (cancelled) return;
+      setExtraSubs(data.subtitles ?? []);
       hls.current?.destroy();
       hls.current = null;
       if (v.canPlayType("application/vnd.apple.mpegurl")) {
@@ -208,7 +211,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         arrowup: () => { v.volume = Math.min(1, v.volume + 0.1); setFlash(`${Math.round(v.volume * 100)}%`); },
         arrowdown: () => { v.volume = Math.max(0, v.volume - 0.1); setFlash(`${Math.round(v.volume * 100)}%`); },
         t: () => setTheater(!theater),
-        c: () => setCaption((c) => (c ? null : subtitles[0]?.language ?? null)),
+        c: () => setCaption((c) => (c ? null : (extraSubs.length ? extraSubs : subtitles)[0]?.language ?? null)),
         s: () => { if (intro.end != null) v.currentTime = intro.end; },
         n: () => { if (nextHref) router.push(nextHref); },
         p: () => { if (prevHref) router.push(prevHref); },
@@ -220,7 +223,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggle, fullscreen, seekBy, theater, setTheater, subtitles, intro.end, nextHref, prevHref, router, wake]);
+  }, [toggle, fullscreen, seekBy, theater, setTheater, subtitles, extraSubs, intro.end, nextHref, prevHref, router, wake]);
 
   // captions: show the chosen track only
   useEffect(() => {
@@ -242,6 +245,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   };
 
   if (!sources.length) return null;
+
+  // Local episodes carry their subtitles as a prop; Anivexa streams return them
+  // with the stream (extraSubs). Only one applies to a given source.
+  const subs = extraSubs.length ? extraSubs : subtitles;
 
   const inIntro = intro.start != null && intro.end != null && t >= intro.start && t < intro.end;
   const inOutro = outroStart != null && nextHref != null && t >= outroStart;
@@ -274,7 +281,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         onEnded={() => { report(true); if (autoNext && nextHref) setNextIn((n) => n ?? 5); }}
         crossOrigin="anonymous"
       >
-        {subtitles.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
+        {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
       </video>
 
       {/* centre states */}
@@ -345,8 +352,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
           </div>
           <span className="ml-2 font-mono text-[12.5px] text-white/85 tabular-nums">{clock(t)} <span className="text-white/45">/ {clock(dur)}</span></span>
           <span className="flex-1" />
-          {subtitles.length > 0 && (
-            <button type="button" className={cn(bar, caption && "text-frost")} onClick={() => setCaption((c) => (c ? null : subtitles.find((s) => s.is_default)?.language ?? subtitles[0].language))} aria-label="Captions" aria-pressed={!!caption}>
+          {subs.length > 0 && (
+            <button type="button" className={cn(bar, caption && "text-frost")} onClick={() => setCaption((c) => (c ? null : subs.find((s) => s.is_default)?.language ?? subs[0].language))} aria-label="Captions" aria-pressed={!!caption}>
               <Captions className="size-5" />
             </button>
           )}
@@ -368,12 +375,12 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
                     <button key={s} type="button" onClick={() => { if (video.current) video.current.playbackRate = s; }} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", speed === s ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>{s}×</button>
                   ))}
                 </div>
-                {subtitles.length > 0 && (
+                {subs.length > 0 && (
                   <>
                     <Menu.Separator className={POPUP_SEPARATOR} />
                     <div className={POPUP_LABEL}>Captions</div>
                     <Menu.Item className={POPUP_ITEM} onSelect={() => setCaption(null)}><span className="flex-1">Off</span>{!caption && <Check className="size-4" strokeWidth={3} />}</Menu.Item>
-                    {subtitles.map((s) => (
+                    {subs.map((s) => (
                       <Menu.Item key={s.id} className={POPUP_ITEM} onSelect={() => setCaption(s.language)}><span className="flex-1">{s.label}</span>{caption === s.language && <Check className="size-4" strokeWidth={3} />}</Menu.Item>
                     ))}
                   </>
