@@ -1,6 +1,7 @@
 import { currentSeason, getGenres, getHome, getScheduleDay, getSeason, WEEKDAYS } from "@/lib/jikan";
 import { run } from "@/lib/db";
 import { runAiringCheck } from "@/lib/airing";
+import { backfillAvatars } from "@/lib/kuro";
 
 // Called by the cron in worker.ts (never reachable from outside: only the
 // cron's internal request has this host). Touches the busiest Jikan lists so
@@ -13,6 +14,7 @@ export async function GET(req: Request) {
   for (const d of WEEKDAYS) await getScheduleDay(d);
   await getGenres();
   await runAiringCheck().catch(() => {});
+  await backfillAvatars().catch(() => {});
   await Promise.allSettled([
     run("delete from presence where updated_at < unixepoch() - 86400"),
     run("delete from sessions where expires_at < unixepoch()"),

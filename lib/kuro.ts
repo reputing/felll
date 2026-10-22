@@ -1,4 +1,4 @@
-import { env } from "./db";
+import { db, env, run } from "./db";
 
 // Signing in with a kuro account (kuro.rip, formerly kirari.cafe).
 //
@@ -102,7 +102,7 @@ export async function kuroProfile(uid: string, fallbackHandle?: string): Promise
 
   const [banned, page] = await Promise.all([
     rest<{ handle: string }[]>(`banned_handles?handle=eq.${encodeURIComponent(handle)}&select=handle`),
-    rest<{ data: { profile?: { premium?: boolean; premiumUntil?: number } } }[]>(
+    rest<{ data: { profile?: { premium?: boolean; premiumUntil?: number; assets?: { avatar?: string } } } }[]>(
       `pages?handle=eq.${encodeURIComponent(handle)}&select=data`,
     ),
   ]);
@@ -110,7 +110,9 @@ export async function kuroProfile(uid: string, fallbackHandle?: string): Promise
   const prof = page?.[0]?.data?.profile;
   const plus = !!prof?.premium && (prof.premiumUntil == null || prof.premiumUntil > Date.now());
 
-  let avatar = p?.pfp_url || null;
+  // The avatar lives in the member's page assets (a /m/<path> media ref), not
+  // the profiles row; fall back to pfp_url for older accounts.
+  let avatar = prof?.assets?.avatar || p?.pfp_url || null;
   // kuro serves member media through its own proxy, never raw storage urls
   if (avatar && avatar.startsWith("/")) avatar = c.url + avatar;
   return {
@@ -122,6 +124,25 @@ export async function kuroProfile(uid: string, fallbackHandle?: string): Promise
     pronouns: p?.pronouns || "",
     plus,
   };
+}
+
+/** Keep members' kuro avatars fresh without a re-login: refresh a batch each
+ *  cron run, missing ones first, so pictures appear (and changes catch up). */
+export async function backfillAvatars(limit = 25): Promise<void> {
+  let users: { id: string; avatar_url: string | null }[] = [];
+  try {
+    const { results } = await (await db())
+      .prepare("select id, avatar_url from users order by (avatar_url is not null), last_seen desc limit ?")
+      .bind(limit)
+      .all<{ id: string; avatar_url: string | null }>();
+    users = results;
+  } catch {
+    return;
+  }
+  for (const u of users) {
+    const p = await kuroProfile(u.id).catch(() => null);
+    if (p?.avatar && p.avatar !== u.avatar_url) await run("update users set avatar_url = ? where id = ?", p.avatar, u.id).catch(() => {});
+  }
 }
 
 /** kuro's app sign-in. Returns the uid and canonical handle, or an error message to show. */
