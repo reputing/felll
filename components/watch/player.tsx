@@ -63,7 +63,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [vol, setVol] = useState(1);
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [caption, setCaption] = useState<string | null>(null);
+  const [caption, setCaption] = useState<string | number | null>(null);
   const [full, setFull] = useState(false);
   const [idle, setIdle] = useState(false);
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
@@ -286,7 +286,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         arrowup: () => { v.volume = Math.min(1, v.volume + 0.1); setFlash(`${Math.round(v.volume * 100)}%`); },
         arrowdown: () => { v.volume = Math.max(0, v.volume - 0.1); setFlash(`${Math.round(v.volume * 100)}%`); },
         t: () => setTheater(!theater),
-        c: () => setCaption((c) => (c ? null : (extraSubs.length ? extraSubs : subtitles)[0]?.language ?? null)),
+        c: () => setCaption((c) => { const l = extraSubs.length ? extraSubs : subtitles; return c ? null : (l.find((s) => s.is_default) ?? l[0])?.id ?? null; }),
         s: () => { if (introEnd != null) v.currentTime = introEnd; },
         n: () => { if (nextHref) router.push(nextHref); },
         p: () => { if (prevHref) router.push(prevHref); },
@@ -304,8 +304,13 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   useEffect(() => {
     const v = video.current;
     if (!v) return;
-    for (const tr of Array.from(v.textTracks)) tr.mode = tr.language === caption ? "showing" : "disabled";
-  }, [caption, current]);
+    // Match the <track> elements to our subs by order (same order they render)
+    // and show only the one whose unique id is selected — many providers hand
+    // back several tracks with the same language code, so keying by language
+    // would show them all at once.
+    const list = extraSubs.length ? extraSubs : subtitles;
+    Array.from(v.textTracks).forEach((tr, i) => { tr.mode = list[i] && list[i].id === caption ? "showing" : "disabled"; });
+  }, [caption, current, extraSubs, subtitles]);
 
   const onTime = () => {
     const v = video.current!;
@@ -442,7 +447,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
           <span className="ml-2 font-mono text-[12.5px] text-white/85 tabular-nums">{clock(t)} <span className="text-white/45">/ {clock(dur)}</span></span>
           <span className="flex-1" />
           {subs.length > 0 && (
-            <button type="button" className={cn(bar, caption && "text-frost")} onClick={() => setCaption((c) => (c ? null : subs.find((s) => s.is_default)?.language ?? subs[0].language))} aria-label="Captions" aria-pressed={!!caption}>
+            <button type="button" className={cn(bar, caption && "text-frost")} onClick={() => setCaption((c) => (c ? null : (subs.find((s) => s.is_default) ?? subs[0])?.id ?? null))} aria-label="Captions" aria-pressed={!!caption}>
               <Captions className="size-5" />
             </button>
           )}
@@ -470,7 +475,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
                     <div className={POPUP_LABEL}>Captions</div>
                     <Menu.Item className={POPUP_ITEM} onSelect={() => setCaption(null)}><span className="flex-1">Off</span>{!caption && <Check className="size-4" strokeWidth={3} />}</Menu.Item>
                     {subs.map((s) => (
-                      <Menu.Item key={s.id} className={POPUP_ITEM} onSelect={() => setCaption(s.language)}><span className="flex-1">{s.label}</span>{caption === s.language && <Check className="size-4" strokeWidth={3} />}</Menu.Item>
+                      <Menu.Item key={s.id} className={POPUP_ITEM} onSelect={() => setCaption(s.id)}><span className="flex-1">{s.label}</span>{caption === s.id && <Check className="size-4" strokeWidth={3} />}</Menu.Item>
                     ))}
                   </>
                 )}
