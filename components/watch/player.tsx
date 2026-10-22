@@ -166,8 +166,13 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         const { default: HlsJs } = await import("hls.js");
         if (cancelled) return;
         if (!HlsJs.isSupported()) { setError("This browser can’t play the stream."); return; }
-        const h = new HlsJs({ capLevelToPlayerSize: true, startPosition: resumeAt > 5 ? resumeAt : -1 });
+        // Auto-quality: hls.js adapts to bandwidth on its own; on Data Saver or a
+        // 2g/3g connection, start low and cap to the middle rung to save data.
+        const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+        const thrifty = !!conn?.saveData || /2g|3g/.test(conn?.effectiveType ?? "");
+        const h = new HlsJs({ capLevelToPlayerSize: true, startPosition: resumeAt > 5 ? resumeAt : -1, startLevel: thrifty ? 0 : -1, capLevelOnFPSDrop: true });
         hls.current = h;
+        if (thrifty) h.on(HlsJs.Events.MANIFEST_PARSED, () => { if (h.levels.length > 2) h.autoLevelCapping = Math.floor((h.levels.length - 1) / 2); });
         h.on(HlsJs.Events.ERROR, (_e, data) => { if (data.fatal) { h.destroy(); fallback(current); } });
         h.loadSource(url);
         h.attachMedia(v);
@@ -407,6 +412,20 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       >
         {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
       </video>
+
+      {/* Cupcake broadcaster bug: a soft watermark while you're on our own server. */}
+      {current?.label === "Cupcake" && !docked && !error && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src="/cupcake.png"
+          alt=""
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute left-3.5 top-3.5 z-[5] size-11 select-none drop-shadow-[0_2px_8px_rgba(0,0,0,.65)] transition-opacity duration-500",
+            hidden ? "opacity-15" : "opacity-35",
+          )}
+        />
+      )}
 
       {/* centre states */}
       {loading && !error && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Loader2 className="size-12 animate-spin text-frost" /></div>}

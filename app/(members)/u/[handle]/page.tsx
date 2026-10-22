@@ -126,7 +126,10 @@ export default async function Profile({ params }: Props) {
       <section className="rounded-box border-1.5 border-line bg-cream-card p-5">
         <div className="flex items-end justify-between">
           <div><div className="eyebrow">Achievements</div><h2 className="mt-1 text-xl font-extrabold tracking-[-.6px]">Badges</h2></div>
-          <span className="font-mono text-[13px] text-plum-muted">{earnedBadges}/{badges.length}</span>
+          <div className="flex items-center gap-3">
+            {self && <Link href="/wrapped" className="flex items-center gap-1.5 rounded-full border-1.5 border-line bg-paper px-3 py-1.5 text-[12.5px] font-bold text-frost-text hover:border-frost-hot"><Sparkles className="size-3.5" />Your Wrapped</Link>}
+            <span className="font-mono text-[13px] text-plum-muted">{earnedBadges}/{badges.length}</span>
+          </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
           {badges.map((b) => (
