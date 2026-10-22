@@ -102,7 +102,7 @@ export async function kuroProfile(uid: string, fallbackHandle?: string): Promise
 
   const [banned, page] = await Promise.all([
     rest<{ handle: string }[]>(`banned_handles?handle=eq.${encodeURIComponent(handle)}&select=handle`),
-    rest<{ data: { profile?: { premium?: boolean; premiumUntil?: number; assets?: { avatar?: string } } } }[]>(
+    rest<{ data: { profile?: { premium?: boolean; premiumUntil?: number; pfpUrl?: string } } }[]>(
       `pages?handle=eq.${encodeURIComponent(handle)}&select=data`,
     ),
   ]);
@@ -110,9 +110,9 @@ export async function kuroProfile(uid: string, fallbackHandle?: string): Promise
   const prof = page?.[0]?.data?.profile;
   const plus = !!prof?.premium && (prof.premiumUntil == null || prof.premiumUntil > Date.now());
 
-  // The avatar lives in the member's page assets (a /m/<path> media ref), not
-  // the profiles row; fall back to pfp_url for older accounts.
-  let avatar = prof?.assets?.avatar || p?.pfp_url || null;
+  // The avatar lives on the member's page profile (data.profile.pfpUrl, a
+  // /m/<path> media ref), not the profiles row; fall back to pfp_url for old accounts.
+  let avatar = prof?.pfpUrl || p?.pfp_url || null;
   // kuro serves member media through its own proxy, never raw storage urls
   if (avatar && avatar.startsWith("/")) avatar = c.url + avatar;
   return {
