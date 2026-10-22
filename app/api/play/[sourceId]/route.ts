@@ -25,6 +25,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ sourceI
     return Response.json(
       {
         url: resolved.url,
+        intro: resolved.intro,
+        outro: resolved.outro,
         subtitles: resolved.subtitles.map((s, i) => ({
           id: `a${i}`,
           language: s.lang,

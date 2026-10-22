@@ -8,7 +8,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { POPUP, POPUP_ITEM, POPUP_LABEL, POPUP_SEPARATOR } from "@/components/ui/popup";
-import { useBox } from "@/lib/store";
+import { setMini, useBox } from "@/lib/store";
 import { clock, cn } from "@/lib/utils";
 
 export interface Source { id: string | number; label: string; audio: "sub" | "dub" | "raw" }
@@ -46,6 +46,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const dub = useBox((s) => s.dub);
   const [current, setCurrent] = useState<Source | undefined>(() => sources.find((s) => s.audio === (dub ? "dub" : "sub")) ?? sources[0]);
   const [failed, setFailed] = useState<Set<string | number>>(new Set());
+  // Servers a background probe found unplayable — hidden from the picker.
+  const [dead, setDead] = useState<Set<string | number>>(new Set());
+  // Some providers return skip markers with the stream; they win over the props.
+  const [streamIntro, setStreamIntro] = useState<{ start: number; end: number } | null>(null);
+  const [streamOutro, setStreamOutro] = useState<{ start: number; end: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [extraSubs, setExtraSubs] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,6 +72,13 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [theater, setTheater] = usePref("theater", false);
   const started = useRef(false);
   const lastSent = useRef(0);
+  const ended = useRef(false);
+
+  // Effective skip markers: a provider's own markers (Anivexa) override the
+  // vault's stored ones for the current source.
+  const introStart = streamIntro?.start ?? intro.start;
+  const introEnd = streamIntro?.end ?? intro.end;
+  const outroStartEff = streamOutro?.start ?? outroStart;
 
   useEffect(() => {
     if (theater) document.documentElement.dataset.theater = "1";
@@ -101,10 +113,12 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     (async () => {
       const res = await fetch(`/api/play/${current.id}`);
       if (!res.ok) return fallback(current);
-      const data = (await res.json()) as { url: string; subtitles?: Track[] };
+      const data = (await res.json()) as { url: string; subtitles?: Track[]; intro?: { start: number; end: number } | null; outro?: { start: number; end: number } | null };
       const url = data.url;
       if (cancelled) return;
       setExtraSubs(data.subtitles ?? []);
+      setStreamIntro(data.intro ?? null);
+      setStreamOutro(data.outro ?? null);
       hls.current?.destroy();
       hls.current = null;
       if (v.canPlayType("application/vnd.apple.mpegurl")) {
@@ -127,6 +141,46 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   }, [current, fallback, startAt]);
 
   useEffect(() => () => hls.current?.destroy(), []);
+
+  // Hide servers that won't play. Local vault rows are known-ready; only the
+  // external (Anivexa) servers need checking, and the resolve is cached upstream
+  // so this stays cheap. Runs in the background, a few at a time, after load.
+  useEffect(() => {
+    const probe = sources.filter((s) => typeof s.id === "string" && s.id.startsWith("anivexa:"));
+    if (!probe.length) return;
+    const ac = new AbortController();
+    let i = 0;
+    const worker = async () => {
+      while (i < probe.length && !ac.signal.aborted) {
+        const s = probe[i++];
+        if (s.id === current?.id) continue; // the playing server proves itself
+        try {
+          const res = await fetch(`/api/play/${s.id}`, { signal: ac.signal });
+          if (!res.ok) setDead((d) => new Set(d).add(s.id));
+        } catch { /* aborted or a transient error — leave it listed */ }
+      }
+    };
+    Promise.allSettled(Array.from({ length: 3 }, worker));
+    return () => ac.abort();
+  }, [sources]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the store's "now playing" in sync so the mini-player can take over when
+  // the watch page unmounts. On unmount we hand off the live position; if the
+  // episode had ended, we clear it instead.
+  useEffect(() => {
+    setMini({
+      sourceId: current?.id ?? sources[0].id, malId: meta.malId, ep: meta.ep, title: meta.title,
+      image: meta.image, episodes: meta.episodes, format: meta.format,
+      href: `/watch/${meta.malId}/${meta.ep}`, position: startAt, paused: true,
+    });
+    return () => {
+      const v = video.current;
+      if (ended.current) setMini(null);
+      else if (v) setMini({ position: v.currentTime || startAt, paused: v.paused });
+    };
+  }, [meta.malId, meta.ep]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { if (current) setMini({ sourceId: current.id }); }, [current]);
 
   const report = useCallback((force = false) => {
     const v = video.current;
@@ -212,7 +266,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         arrowdown: () => { v.volume = Math.max(0, v.volume - 0.1); setFlash(`${Math.round(v.volume * 100)}%`); },
         t: () => setTheater(!theater),
         c: () => setCaption((c) => (c ? null : (extraSubs.length ? extraSubs : subtitles)[0]?.language ?? null)),
-        s: () => { if (intro.end != null) v.currentTime = intro.end; },
+        s: () => { if (introEnd != null) v.currentTime = introEnd; },
         n: () => { if (nextHref) router.push(nextHref); },
         p: () => { if (prevHref) router.push(prevHref); },
         ",": () => { if (v.paused) v.currentTime -= 1 / 24; },
@@ -223,7 +277,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggle, fullscreen, seekBy, theater, setTheater, subtitles, extraSubs, intro.end, nextHref, prevHref, router, wake]);
+  }, [toggle, fullscreen, seekBy, theater, setTheater, subtitles, extraSubs, introEnd, nextHref, prevHref, router, wake]);
 
   // captions: show the chosen track only
   useEffect(() => {
@@ -237,11 +291,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setT(v.currentTime);
     if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
     report();
-    if (autoSkip && intro.start != null && intro.end != null && v.currentTime >= intro.start && v.currentTime < intro.end - 0.5) {
-      v.currentTime = intro.end;
+    if (autoSkip && introStart != null && introEnd != null && v.currentTime >= introStart && v.currentTime < introEnd - 0.5) {
+      v.currentTime = introEnd;
       setFlash("Skipped intro");
     }
-    if (autoNext && nextHref && outroStart != null && v.currentTime >= outroStart && nextIn === null) setNextIn(8);
+    if (autoNext && nextHref && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
   };
 
   if (!sources.length) return null;
@@ -250,8 +304,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   // with the stream (extraSubs). Only one applies to a given source.
   const subs = extraSubs.length ? extraSubs : subtitles;
 
-  const inIntro = intro.start != null && intro.end != null && t >= intro.start && t < intro.end;
-  const inOutro = outroStart != null && nextHref != null && t >= outroStart;
+  const inIntro = introStart != null && introEnd != null && t >= introStart && t < introEnd;
+  const inOutro = outroStartEff != null && nextHref != null && t >= outroStartEff;
   const VolIcon = muted || vol === 0 ? VolumeX : vol < 0.5 ? Volume1 : Volume2;
   const pct = dur ? (t / dur) * 100 : 0;
   const hidden = playing && idle && !hover;
@@ -268,8 +322,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         className="size-full"
         onClick={toggle}
         onDoubleClick={fullscreen}
-        onPlay={() => { setPlaying(true); wake(); }}
-        onPause={() => { setPlaying(false); setIdle(false); report(true); }}
+        onPlay={() => { setPlaying(true); ended.current = false; setMini({ paused: false }); wake(); }}
+        onPause={() => { setPlaying(false); setIdle(false); report(true); setMini({ paused: true }); }}
         onWaiting={() => setLoading(true)}
         onPlaying={() => setLoading(false)}
         onCanPlay={() => setLoading(false)}
@@ -278,7 +332,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         onTimeUpdate={onTime}
         onVolumeChange={(e) => { setVol(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
         onRateChange={(e) => setSpeed(e.currentTarget.playbackRate)}
-        onEnded={() => { report(true); if (autoNext && nextHref) setNextIn((n) => n ?? 5); }}
+        onEnded={() => { ended.current = true; report(true); setMini(null); if (autoNext && nextHref) setNextIn((n) => n ?? 5); }}
         crossOrigin="anonymous"
       >
         {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
@@ -296,7 +350,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
 
       {/* skip buttons */}
       {inIntro && !autoSkip && (
-        <button type="button" onClick={() => { video.current!.currentTime = intro.end!; }} className="absolute bottom-24 right-5 flex h-11 items-center gap-2 rounded-full border-1.5 border-white/30 bg-black/60 px-5 text-[14px] font-extrabold text-white backdrop-blur-md transition hover:bg-frost hover:text-frost-ink animate-in fade-in slide-in-from-right-4">
+        <button type="button" onClick={() => { video.current!.currentTime = introEnd!; }} className="absolute bottom-24 right-5 flex h-11 items-center gap-2 rounded-full border-1.5 border-white/30 bg-black/60 px-5 text-[14px] font-extrabold text-white backdrop-blur-md transition hover:bg-frost hover:text-frost-ink animate-in fade-in slide-in-from-right-4">
           <FastForward className="size-4" /> Skip intro
         </button>
       )}
@@ -334,7 +388,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         >
           <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/20 transition-all group-hover/seek:h-1.5">
             <div className="absolute inset-y-0 left-0 bg-white/30" style={{ width: `${dur ? (buffered / dur) * 100 : 0}%` }} />
-            {intro.start != null && intro.end != null && dur > 0 && <div className="absolute inset-y-0 bg-sprinkle-butter/70" style={{ left: `${(intro.start / dur) * 100}%`, width: `${((intro.end - intro.start) / dur) * 100}%` }} />}
+            {introStart != null && introEnd != null && dur > 0 && <div className="absolute inset-y-0 bg-sprinkle-butter/70" style={{ left: `${(introStart / dur) * 100}%`, width: `${((introEnd - introStart) / dur) * 100}%` }} />}
             <div className="absolute inset-y-0 left-0 bg-frost" style={{ width: `${pct}%` }} />
           </div>
           <div className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-frost shadow-[0_0_0_4px_rgb(var(--glow)/.35)] opacity-0 transition group-hover/seek:opacity-100" style={{ left: `${pct}%` }} />
@@ -362,7 +416,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
             <Menu.Portal container={box.current}>
               <Menu.Content side="top" align="end" sideOffset={10} className={cn(POPUP, "max-h-[60vh] w-[250px] overflow-y-auto")}>
                 <div className={POPUP_LABEL}>Server</div>
-                {sources.map((s) => (
+                {sources.filter((s) => s.id === current?.id || (!dead.has(s.id) && !failed.has(s.id))).map((s) => (
                   <Menu.Item key={s.id} disabled={failed.has(s.id)} className={POPUP_ITEM} onSelect={() => setCurrent(s)}>
                     <span className="w-9 text-[10.5px] font-extrabold uppercase text-plum-muted">{AUDIO[s.audio]}</span>
                     <span className="flex-1">{s.label}</span>{current?.id === s.id && <Check className="size-4" strokeWidth={3} />}

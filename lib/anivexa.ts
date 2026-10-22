@@ -185,6 +185,18 @@ export interface ResolvedAnivexaStream {
   type: "hls" | "dash" | "embed";
   url: string; // proxied for hls/dash, raw for embed
   subtitles: { url: string; label: string; lang: string; default: boolean }[];
+  // Some providers (Senshi) return intro/outro skip markers, in seconds.
+  intro: { start: number; end: number } | null;
+  outro: { start: number; end: number } | null;
+}
+
+// Senshi et al. report {start, end} in seconds, with 0/0 meaning "no marker".
+function skipMarker(raw: unknown): { start: number; end: number } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const start = Number((raw as { start?: unknown }).start);
+  const end = Number((raw as { end?: unknown }).end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start: Math.max(0, start), end };
 }
 
 export function anivexaProxyPath(targetUrl: string, headers?: Record<string, string>): string {
@@ -219,7 +231,7 @@ export async function resolveAnivexaStream(
 ): Promise<ResolvedAnivexaStream | null> {
   if (!isAnivexaProvider(provider) || (audio !== "sub" && audio !== "dub")) return null;
   const data = (await getJson(`/watch/${provider}/${anilistId}/${audio}/${provider}-${episode}`)) as
-    | { streams?: RawStream[]; subtitles?: RawSubtitle[] }
+    | { streams?: RawStream[]; subtitles?: RawSubtitle[]; intro?: unknown; outro?: unknown }
     | null;
   if (!data || !Array.isArray(data.streams)) return null;
 
@@ -241,5 +253,5 @@ export async function resolveAnivexaStream(
       default: Boolean(s.default),
     }));
 
-  return { type, url, subtitles };
+  return { type, url, subtitles, intro: skipMarker(data.intro), outro: skipMarker(data.outro) };
 }
