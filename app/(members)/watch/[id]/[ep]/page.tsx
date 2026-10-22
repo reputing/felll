@@ -3,10 +3,12 @@ import { notFound } from "next/navigation";
 import { ChevronLeft, ChevronRight, Clapperboard, Play } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getAnime, getEpisodeList, nextAiring, episodeAt } from "@/lib/jikan";
+import { getAnime, getEpisodeList, getRecommendations, nextAiring, episodeAt } from "@/lib/jikan";
 import { anivexaEnabled, fetchAnivexaCatalog, malToAnilist } from "@/lib/anivexa";
+import { fetchAnizipEpisodes } from "@/lib/anizip";
 import { refOf } from "@/lib/anime-ref";
 import { cn } from "@/lib/utils";
+import { Shelf } from "@/components/shelf";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { Countdown } from "@/components/countdown";
@@ -61,22 +63,23 @@ export default async function WatchPage({ params, searchParams }: Props) {
       ]).then(([s, t]): [Source[], Track[]] => [s.results as Source[], t.results as Track[]])
     : [[], []];
 
-  // External servers via the Anivexa bot (resolved by AniList id; this catalog
-  // is MAL-keyed, so map MAL -> AniList first). Subtitles for these arrive with
-  // the stream at play time.
+  // Everything keyed by AniList id: the Anivexa servers (this catalog is
+  // MAL-keyed, so map MAL -> AniList first) and ani.zip's per-episode art and
+  // summaries. Subtitles for external streams arrive with the stream at play time.
+  const anilistId = await malToAnilist(id);
+  const enabled = anilistId ? await anivexaEnabled() : false;
+  const [catalog, anizip, recs] = await Promise.all([
+    enabled && anilistId ? fetchAnivexaCatalog(anilistId) : Promise.resolve(null),
+    fetchAnizipEpisodes(anilistId),
+    getRecommendations(id).catch(() => []),
+  ]);
   const anivexaSources: Source[] = [];
   let anivexaEps = new Set<number>();
-  if (await anivexaEnabled()) {
-    const anilistId = await malToAnilist(id);
-    if (anilistId) {
-      const catalog = await fetchAnivexaCatalog(anilistId);
-      if (catalog) {
-        anivexaEps = new Set(catalog.episodeNumbers);
-        for (const prov of catalog.providers) {
-          if (prov.sub.includes(ep)) anivexaSources.push({ id: `anivexa:${prov.slug}:${anilistId}:sub:${ep}`, label: prov.name, audio: "sub" });
-          if (prov.dub.includes(ep)) anivexaSources.push({ id: `anivexa:${prov.slug}:${anilistId}:dub:${ep}`, label: prov.name, audio: "dub" });
-        }
-      }
+  if (catalog && anilistId) {
+    anivexaEps = new Set(catalog.episodeNumbers);
+    for (const prov of catalog.providers) {
+      if (prov.sub.includes(ep)) anivexaSources.push({ id: `anivexa:${prov.slug}:${anilistId}:sub:${ep}`, label: prov.name, audio: "sub" });
+      if (prov.dub.includes(ep)) anivexaSources.push({ id: `anivexa:${prov.slug}:${anilistId}:dub:${ep}`, label: prov.name, audio: "dub" });
     }
   }
   const allSources: Source[] = [...sources, ...anivexaSources];
@@ -92,7 +95,9 @@ export default async function WatchPage({ params, searchParams }: Props) {
   const saved = resume.results[0] as { position: number; duration: number } | undefined;
   const startAt = Number(sp.t) || (saved && !(saved.duration && saved.position / saved.duration > 0.9) ? saved.position : 0);
   const info = list.items.find((e) => e.number === ep);
-  const epTitle = here?.title || info?.title || (a.group === "film" ? a.title : `Episode ${ep}`);
+  const az = anizip[ep];
+  const epTitle = here?.title || az?.title || info?.title || (a.group === "film" ? a.title : `Episode ${ep}`);
+  const epOverview = a.group === "film" ? null : az?.overview ?? null;
   const nextHref = ep < total ? `/watch/${id}/${ep + 1}` : null;
   const prevHref = ep > 1 ? `/watch/${id}/${ep - 1}` : null;
   const others = watchers.results as { handle: string; avatar_url: string | null; accent: string }[];
@@ -160,6 +165,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
               <div className="eyebrow">Episode {ep}{info?.aired ? ` · aired ${new Date(info.aired).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" })}` : ""}{info?.filler ? " · filler" : ""}</div>
               <h2 className="mt-1 text-balance text-[22px] font-extrabold leading-tight tracking-[-.6px]">{epTitle}</h2>
               <Link href={`/anime/${id}`} className="text-[13.5px] font-bold text-frost-text hover:text-frost-deep">{a.title}</Link>
+              {epOverview && <p className="mt-2 max-w-prose text-[13.5px] leading-relaxed text-plum-muted">{epOverview}</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {prevHref && <Button variant="outline" asChild><Link href={prevHref}><ChevronLeft className="size-4" />Prev</Link></Button>}
@@ -179,6 +185,10 @@ export default async function WatchPage({ params, searchParams }: Props) {
             )}
           </div>
 
+          {recs.length > 0 && (
+            <Shelf eyebrow="If you’re enjoying this" title="You might also like" items={recs.map((r) => ({ id: r.id, title: r.title, image: r.image }))} />
+          )}
+
           <Comments malId={id} episode={ep} title={a.title} image={a.posterSm} heading={`Episode ${ep} talk`} />
         </div>
 
@@ -190,19 +200,32 @@ export default async function WatchPage({ params, searchParams }: Props) {
           <ol className="flex-1 overflow-y-auto p-2">
             {numbers.map((n) => {
               const meta = list.items.find((e) => e.number === n);
+              const art = anizip[n];
               const audio = vaultSet.get(n);
               const streamable = !!audio || anivexaEps.has(n);
               const on = n === ep;
+              const title = art?.title ?? meta?.title ?? `Episode ${n}`;
+              const sub = `${audio ? audio.replace(",", " · ").toUpperCase() : anivexaEps.has(n) ? "Stream" : "Not uploaded"}${meta?.filler ? " · filler" : ""}`;
               return (
                 <li key={n}>
                   <Link href={`/watch/${id}/${n}`} aria-current={on ? "page" : undefined} scroll={false}
-                    className={cn("grid grid-cols-[40px_1fr] items-center gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep")}>
-                    <span className={cn("grid h-10 place-items-center rounded-xl font-mono text-[13px]", on ? "bg-frost text-frost-ink" : streamable ? "bg-paper text-frost-text" : "bg-cream-tint text-plum-faint")}>
-                      {on ? <Play className="size-4" fill="currentColor" /> : String(n).padStart(2, "0")}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate font-bold">{meta?.title ?? `Episode ${n}`}</span>
-                      <span className="text-[11px] font-semibold text-plum-muted">{audio ? audio.replace(",", " · ").toUpperCase() : anivexaEps.has(n) ? "stream" : "not uploaded"}{meta?.filler ? " · filler" : ""}</span>
+                    className={cn("flex items-start gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep")}>
+                    {art?.image ? (
+                      <span className="relative aspect-video w-[92px] flex-none overflow-hidden rounded-xl bg-night">
+                        <Poster src={art.image} className={cn("size-full transition", !streamable && "opacity-60 saturate-50")} />
+                        <span className="absolute left-1 top-1 grid min-w-5 place-items-center rounded-md bg-black/70 px-1 font-mono text-[10.5px] font-bold text-white">
+                          {on ? <Play className="size-3" fill="currentColor" /> : String(n).padStart(2, "0")}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className={cn("grid size-10 flex-none place-items-center rounded-xl font-mono text-[13px]", on ? "bg-frost text-frost-ink" : streamable ? "bg-paper text-frost-text" : "bg-cream-tint text-plum-faint")}>
+                        {on ? <Play className="size-4" fill="currentColor" /> : String(n).padStart(2, "0")}
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1 py-0.5">
+                      <span className="block truncate font-bold">{title}</span>
+                      {art?.overview && <span className="mt-0.5 line-clamp-2 text-[11px] font-medium leading-snug text-plum-muted">{art.overview}</span>}
+                      <span className="mt-0.5 block text-[11px] font-semibold text-plum-muted">{sub}</span>
                     </span>
                   </Link>
                 </li>
