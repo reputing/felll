@@ -17,7 +17,7 @@ export default async function Browse({ searchParams }: { searchParams: Promise<S
   const years = Array.from({ length: 50 }, (_, i) => thisYear + 1 - i);
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
-      <PageHead eyebrow="Cupcake / every anime" title="Browse" sub="Search all of MyAnimeList. Filters stack." />
+      <PageHead eyebrow="Cupcake / every anime" title="Browse" sub="Search every anime. Filters stack." />
       <Filters genres={genres.map((g) => g.name)} years={years} />
       <Suspense key={JSON.stringify(sp)} fallback={<GridSkeleton />}>
         <Results sp={sp} genres={genres} />
@@ -43,7 +43,7 @@ async function Results({ sp, genres }: { sp: SP; genres: { id: number; name: str
     end_date: sp.year ? `${sp.year}-12-31` : undefined,
     page,
   }).catch(() => null);
-  if (!res) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">MyAnimeList isn’t answering right now. Try again in a moment.</p>;
+  if (!res) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">The catalog isn’t answering right now. Try again in a moment.</p>;
   if (!res.items.length) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">Nothing matches that. Loosen a filter?</p>;
   const qs = (p: number) => { const n = new URLSearchParams(Object.entries(sp).filter(([, v]) => v) as [string, string][]); n.set("page", String(p)); return `/browse?${n}`; };
   return (

@@ -22,7 +22,6 @@ export function SiteFooter() {
             Discord
           </a>
         </nav>
-        <span className="font-mono text-[11.5px]">metadata via AniList · Kitsu</span>
       </div>
     </footer>
   );

@@ -29,7 +29,7 @@ export default function TermsPage() {
         </Section>
 
         <Section title="Content &amp; metadata">
-          <p>Anime artwork, titles, descriptions, and related metadata belong to their respective owners and are shown via third parties such as AniList, Kitsu, and ani.zip. Streams are resolved from third-party providers. cupcake does not claim ownership of this material and provides it for personal, non-commercial viewing within the community.</p>
+          <p>Anime artwork, titles, descriptions, and related metadata belong to their respective owners and are shown via third-party sources. Streams are resolved from third-party providers. cupcake does not claim ownership of this material and provides it for personal, non-commercial viewing within the community.</p>
         </Section>
 
         <Section title="Your content">

@@ -20,7 +20,7 @@ export default async function Rankings({ searchParams }: { searchParams: Promise
   const page = Math.max(1, Number(sp.page) || 1);
   return (
     <div className="mx-auto flex max-w-[1100px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
-      <PageHead eyebrow="Ranked" title="The charts" sub="MyAnimeList’s rankings, plus what cupcake members rate highest." />
+      <PageHead eyebrow="Ranked" title="The charts" sub="The global rankings, plus what cupcake members rate highest." />
       <nav aria-label="ranking lists" className="scrollbar-none flex gap-1.5 overflow-x-auto">
         {Object.entries(LISTS).map(([k, l]) => (
           <Link key={k} href={`/rankings?list=${k}`} aria-current={k === list ? "page" : undefined}
@@ -53,7 +53,7 @@ function Row({ rank, id, title, image, sub, score, right }: { rank: number; id: 
 
 async function Top({ list, page }: { list: TopList; page: number }) {
   const res = await getTop(list, page);
-  if (!res.items.length) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">MyAnimeList isn’t answering right now.</p>;
+  if (!res.items.length) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">The charts aren’t answering right now.</p>;
   return (
     <>
       <ol className="flex flex-col gap-2">

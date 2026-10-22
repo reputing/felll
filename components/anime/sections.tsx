@@ -141,7 +141,7 @@ export async function ScoreSpread({ id }: { id: number }) {
       <h2 className="mb-4 mt-1 text-xl font-extrabold tracking-[-.6px]">Score spread</h2>
       <div className="mb-3 flex gap-4 text-[12px] font-bold">
         <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-frost-hot" />cupcake ({hereTotal})</span>
-        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-line-hot" />MyAnimeList ({compact(malTotal)})</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-line-hot" />Everyone ({compact(malTotal)})</span>
       </div>
       <div className="flex h-40 items-end gap-1.5">
         {Array.from({ length: 10 }, (_, i) => i + 1).map((s) => {
@@ -151,7 +151,7 @@ export async function ScoreSpread({ id }: { id: number }) {
             <div key={s} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
               <div className="flex h-full w-full items-end justify-center gap-0.5">
                 <span className="w-1/2 rounded-t-md bg-frost-hot transition-all" style={{ height: `${Math.max(h * 100, h ? 4 : 0)}%` }} title={`${Math.round(h * 100)}% on cupcake`} />
-                <span className="w-1/2 rounded-t-md bg-line-hot" style={{ height: `${Math.max(m * 100, m ? 4 : 0)}%` }} title={`${Math.round(m * 100)}% on MAL`} />
+                <span className="w-1/2 rounded-t-md bg-line-hot" style={{ height: `${Math.max(m * 100, m ? 4 : 0)}%` }} title={`${Math.round(m * 100)}% everyone`} />
               </div>
               <span className="font-mono text-[11px] text-plum-muted">{s}</span>
             </div>

@@ -17,19 +17,16 @@ export function PosterCard({ a, selected, preview, extra, rank }: { a: Anime; se
   const sub = [a.studio, a.group === "film" ? "" : a.episodes ? `${a.episodes} episodes` : a.airing ? "Airing" : ""].filter(Boolean).join(" · ") || a.romaji;
   const plate = (
     <>
-      {/* a blurred cover fills the plate so no empty/checker land shows */}
-      <Poster src={a.poster} color={a.color} className="absolute inset-0 size-full scale-125 blur-2xl saturate-[1.15] opacity-70" />
-      <span className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/10" />
-      <span className="absolute inset-y-2.5 left-1/2 aspect-[2/3] -translate-x-1/2 overflow-hidden rounded-[10px] shadow-poster transition-transform duration-300 group-hover:-translate-y-1 group-hover:scale-[1.03]">
-        <Poster src={a.poster} color={a.color} sizes="160px" className="size-full" />
-      </span>
+      {/* the poster fills the whole plate — no checker, no blurred land */}
+      <Poster src={a.poster} color={a.color} sizes="230px" className="absolute inset-0 size-full transition-transform duration-500 group-hover:scale-[1.05]" />
+      <span aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/5" />
       {selected && <Badge size="sm" className="absolute left-2 top-2 rounded-[7px] font-extrabold">In preview</Badge>}
       {rank != null && <span className="absolute left-2 top-2 grid size-8 place-items-center rounded-xl bg-night/85 font-mono text-[14px] font-medium text-night-text backdrop-blur">{rank}</span>}
       <Badge variant="tag" size="xs" className="absolute bottom-2 right-2">{formatLabel(a).toUpperCase()}</Badge>
       {mine ? <Badge size="xs" className="absolute bottom-2 left-2 rounded-md px-1.5 text-[10px]">you ★ {mine}</Badge> : null}
     </>
   );
-  const plateClass = "group relative block aspect-[5/4] overflow-hidden rounded-[17px] bg-cream-blush";
+  const plateClass = "group relative block aspect-[2/3] overflow-hidden rounded-[14px] bg-cream-tint";
   return (
     <article className={cn("spotlight flex flex-col gap-2.5 rounded-3xl border-1.5 border-line bg-cream-card px-2 pb-2.5 pt-2 transition-[border-color,box-shadow,transform] hover:border-line-hot", selected && "border-frost-hot shadow-halo")}>
       {preview ? (

@@ -114,7 +114,7 @@ export function CommandPalette() {
           </div>
           <div className="flex items-center gap-4 border-t-1.5 border-line-soft px-5 py-2.5 text-[11.5px] font-semibold text-plum-muted">
             <span><kbd className="font-mono">↑↓</kbd> move</span><span><kbd className="font-mono">↵</kbd> open</span><span><kbd className="font-mono">esc</kbd> close</span>
-            <span className="ml-auto">search powered by Jikan</span>
+            <span className="ml-auto">cupcake search</span>
           </div>
         </D.Content>
       </D.Portal>
