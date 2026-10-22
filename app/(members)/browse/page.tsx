@@ -36,6 +36,7 @@ async function Results({ sp, genres }: { sp: SP; genres: { id: number; name: str
     status: sp.status,
     rating: sp.rating,
     genres: genre ? String(genre.id) : undefined,
+    genreName: genre?.name ?? sp.genre,
     order_by: order,
     sort: order === "title" ? "asc" : order ? "desc" : undefined,
     start_date: sp.year ? `${sp.year}-01-01` : undefined,

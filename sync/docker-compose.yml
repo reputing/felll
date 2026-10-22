@@ -1,0 +1,11 @@
+# docker compose -f sync/docker-compose.yml up -d --build
+services:
+  cupcake-sync:
+    build:
+      context: ..
+      dockerfile: sync/Dockerfile
+    env_file: ../.env
+    environment:
+      SYNC_EVERY_HOURS: "6"
+      # SYNC_ARGS: "--pages 120 --details 100"
+    restart: unless-stopped

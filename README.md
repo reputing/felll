@@ -79,8 +79,12 @@ whole catalog) from a Worker to a distant database, with no caching. Now:
   the Cloudflare edge cache, then D1. A stale copy is served immediately and
   refreshed after the response (`waitUntil`). Live calls are spaced to Jikan's
   3/s limit, time-boxed to 6 s, retried once, and served stale if Jikan is down.
-- **A Cron Trigger warms the cache every 20 minutes** (`worker.ts` →
-  `/api/warm`): home lists, the current season, the schedule and genres.
+- **The catalog lives in D1**, filled by `npm run sync` from outside
+  Cloudflare, so pages never depend on Jikan answering the Worker. If a live
+  call does fail, live calls pause for a minute instead of every page
+  waiting out a timeout.
+- **A Cron Trigger refreshes the cache every 20 minutes** (`worker.ts` →
+  `/api/warm`) whenever Jikan does answer.
 - **One D1 round trip per page** where possible (`db.batch`); the session
   lookup is shared across the request with React `cache()`.
 - **Slow parts stream in.** Episodes, characters, recommendations and score
@@ -120,7 +124,32 @@ npm run deploy
 
 Then add your domain under Workers → `felll` → Settings → Domains.
 
-### 2. kuro sign-in
+### 2. Fill the catalog (required)
+
+Jikan, like AniList, refuses requests from Cloudflare's shared Worker IPs, so
+the Worker can't fetch MyAnimeList itself. A sync fetches it from somewhere
+else and writes it into D1. The site reads from that copy and falls back to it
+for everything: home, search, seasons, schedule, rankings and show pages.
+
+```bash
+npm run db:migrate          # once more, for the catalog table
+npm run sync                # ~8 min (Jikan allows 60 requests a minute)
+npm run sync -- --quick     # ~3 min, enough to see the site working
+```
+
+It uses your `wrangler login`. Keep it fresh with one of:
+
+- **Docker**, on any machine you have running (not on Cloudflare):
+  `docker compose -f sync/docker-compose.yml up -d --build`. It syncs on start,
+  then every 6 hours. Put `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN`
+  with **D1: Edit** in `.env`.
+- **GitHub Actions**: `.github/workflows/sync-catalog.yml` runs every 6 hours
+  once you add those two values as repository secrets.
+
+Signed in, open `/api/health` to see whether the Worker can reach Jikan and
+how much is stored.
+
+### 3. kuro sign-in
 
 - **Handle + password** works as soon as the site is up: it asks kuro's
   `/api/app-login`, the endpoint the kuro apps use. Your password goes to kuro
@@ -136,7 +165,7 @@ The service key also lets cupcake read the member's kuro profile (display
 name, avatar, kuro+, bans) at sign-in. Without it, password sign-in still
 works, but profiles start from the handle alone.
 
-### 3. Video (Cloudflare Stream)
+### 4. Video (Cloudflare Stream)
 
 Create a Stream signing key once and put `result.id` / `result.jwk` in the
 secrets above:
@@ -146,7 +175,7 @@ curl -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/stream/keys
 ```
 
-### 4. Upload episodes
+### 5. Upload episodes
 
 Uploads are keyed by the **MyAnimeList id**, the number in a cupcake or MAL
 URL (`/anime/52991`). The scripts write to D1 through Cloudflare's API, so

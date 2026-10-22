@@ -1,4 +1,8 @@
 import { background, db, env, now } from "./db";
+import { catalogColumns, currentSeason, FALLBACK_GENRES, isAdult, PATHS, SEASONS, TOP_LISTS, WEEKDAYS, type SeasonName, type TopList, type Weekday } from "./jikan-paths";
+
+export { currentSeason, SEASONS, TOP_LISTS, WEEKDAYS };
+export type { SeasonName, TopList };
 
 // Jikan (unofficial MyAnimeList API, https://jikan.moe) is the catalog.
 //
@@ -11,10 +15,18 @@ import { background, db, env, now } from "./db";
 // returned too, and refreshed after the response is sent. Only a title nobody
 // has looked at before costs a live request, and those are spaced out and
 // time-boxed so a slow Jikan can't hold a page hostage.
+//
+// Jikan may also refuse Cloudflare's shared Worker IPs outright. So:
+//   * after a failed live call, live calls stop for a minute (no page waits
+//     on a dead upstream more than once), and
+//   * every query below falls back to the `catalog` table, a copy of the
+//     catalog that `npm run sync` fills from outside Cloudflare.
 
 const DEFAULT_BASE = "https://api.jikan.moe/v4";
-const TIMEOUT_MS = 6000;
+const TIMEOUT_MS = 5000;
 const SPACING_MS = 360; // ≈ 3 requests a second
+const COOL_OFF_MS = 60_000;
+const USER_AGENT = "cupcake.gg/1.0 (+https://github.com/reputing/felll)";
 
 export class JikanError extends Error {}
 
@@ -22,6 +34,9 @@ type Entry = { body: string; at: number };
 const memory = new Map<string, Entry>();
 const inflight = new Map<string, Promise<string>>();
 let nextSlot = 0;
+let downUntil = 0;
+/** The most recent live failure, for /api/health. */
+export let lastJikanError: { at: number; message: string } | null = null;
 
 async function base() {
   try {
@@ -38,23 +53,36 @@ async function slot() {
   if (wait) await new Promise((r) => setTimeout(r, wait));
 }
 
-async function live(path: string): Promise<string> {
+/** One live request to Jikan. Exported for the random pick and /api/health. */
+export async function live(path: string, opts: { force?: boolean } = {}): Promise<string> {
+  if (!opts.force && Date.now() < downUntil) throw new JikanError(lastJikanError?.message ?? "Jikan is cooling off");
   const url = (await base()) + path;
+  const fail = (message: string): never => {
+    downUntil = Date.now() + COOL_OFF_MS;
+    lastJikanError = { at: Date.now(), message };
+    throw new JikanError(message);
+  };
   for (let attempt = 0; attempt < 2; attempt++) {
     await slot();
-    const res = await fetch(url, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    }).catch((e) => {
-      if (attempt) throw new JikanError(`Jikan unreachable: ${e}`);
-      return null;
-    });
-    if (res?.ok) return res.text();
-    if (res && res.status === 404) throw new JikanError("not found");
-    if (attempt) throw new JikanError(`Jikan ${res?.status ?? "error"}`);
-    await new Promise((r) => setTimeout(r, res?.status === 429 ? 1100 : 400));
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { accept: "application/json", "user-agent": USER_AGENT },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (e) {
+      return fail(`Jikan unreachable: ${e instanceof Error ? e.message : e}`);
+    }
+    if (res.ok) return res.text();
+    if (res.status === 404) throw new JikanError("not found");
+    // only a rate limit is worth a second try; a block or an outage isn't
+    if (res.status !== 429 || attempt) {
+      const snippet = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
+      return fail(`Jikan ${res.status}${snippet ? `: ${snippet}` : ""}`);
+    }
+    await new Promise((r) => setTimeout(r, 1100));
   }
-  throw new JikanError("unreachable");
+  return fail("Jikan unreachable");
 }
 
 function edgeCache(): Cache | null {
@@ -233,8 +261,6 @@ function youtubeId(t: Raw): string | null {
 const clean = (s: string | null | undefined) =>
   (s ?? "").replace(/\[Written by MAL Rewrite\]/gi, "").replace(/\(Source:[^)]*\)/gi, "").replace(/\s+\n/g, "\n").trim();
 
-const isAdult = (m: Raw) => /^Rx/.test(m?.rating ?? "") || (m?.genres ?? []).some((g: Raw) => g.name === "Hentai");
-
 export function normAnime(m: Raw): Anime {
   const titles: Raw[] = m.titles ?? [];
   const english = m.title_english || titles.find((t) => t.type === "English")?.title;
@@ -307,49 +333,102 @@ const EMPTY = { data: [] as Raw[], pagination: null };
 const HOUR = 3600;
 const DAY = 86400;
 
+// ---- the local catalog (fallback) -----------------------------------------
+
+type Row = { body: string };
+
+async function fromCatalog(where: string, params: unknown[], order = "members desc", limit = 25, offset = 0): Promise<Anime[]> {
+  try {
+    const { results } = await (await db())
+      .prepare(`select body from catalog ${where ? `where ${where}` : ""} order by ${order} limit ? offset ?`)
+      .bind(...params, limit, offset)
+      .all<Row>();
+    return results.map((r) => normAnime(JSON.parse(r.body)));
+  } catch {
+    return [];
+  }
+}
+
+async function catalogPage(where: string, params: unknown[], order: string, pageNo: number, size = 24): Promise<Page<Anime>> {
+  const items = await fromCatalog(where, params, order, size + 1, (pageNo - 1) * size);
+  let total = 0;
+  try {
+    total = Number((await (await db()).prepare(`select count(*) as n from catalog ${where ? `where ${where}` : ""}`).bind(...params).first<{ n: number }>())?.n ?? 0);
+  } catch { /* 0 */ }
+  return { items: items.slice(0, size), hasNext: items.length > size, lastPage: Math.max(1, Math.ceil(total / size)), total };
+}
+
+/** A Jikan list, or the same list from the catalog when Jikan (and its cache) can't answer. */
+async function listOr(path: string, ttl: number, fallback: () => Promise<Anime[]>): Promise<Anime[]> {
+  try {
+    const items = list(await jikan(path, ttl));
+    if (items.length) return items;
+  } catch { /* fall through */ }
+  return fallback();
+}
+
+async function pageOr(path: string, ttl: number, fallback: () => Promise<Page<Anime>>): Promise<Page<Anime>> {
+  try {
+    const p = page(await jikan(path, ttl));
+    if (p.items.length) return p;
+  } catch { /* fall through */ }
+  return fallback();
+}
+
+const AIRING = "airing = 1";
+const UPCOMING = "status = 'Not yet aired'";
+
+// ---- queries --------------------------------------------------------------
+
 export async function getHome() {
+  const cur = currentSeason();
   const [trending, season, top, popular, upcoming] = await Promise.all([
-    jikanOr("/top/anime?filter=airing&limit=25&sfw=true", EMPTY, HOUR),
-    jikanOr("/seasons/now?limit=25&sfw=true", EMPTY, HOUR),
-    jikanOr("/top/anime?limit=25&sfw=true", EMPTY, DAY),
-    jikanOr("/top/anime?filter=bypopularity&limit=25&sfw=true", EMPTY, DAY),
-    jikanOr("/seasons/upcoming?limit=25&sfw=true", EMPTY, 6 * HOUR),
+    listOr(PATHS.homeAiring, HOUR, () => fromCatalog(AIRING, [], "score desc")),
+    listOr(PATHS.homeSeason, HOUR, () => fromCatalog("year = ? and season = ?", [cur.year, cur.season])),
+    listOr(PATHS.homeTop, DAY, () => fromCatalog("score is not null", [], "score desc")),
+    listOr(PATHS.homePopular, DAY, () => fromCatalog("", [])),
+    listOr(PATHS.homeUpcoming, 6 * HOUR, () => fromCatalog(UPCOMING, [])),
   ]);
-  return { trending: list(trending), season: list(season), top: list(top), popular: list(popular), upcoming: list(upcoming) };
+  return { trending, season, top, popular, upcoming };
+}
+
+function full(data: Raw): AnimeFull {
+  return {
+    ...normAnime(data),
+    relations: (data.relations ?? []).map((r: Raw) => ({
+      relation: r.relation,
+      entries: (r.entry ?? []).map((e: Raw) => ({ id: e.mal_id, type: e.type, name: e.name })),
+    })),
+    openings: data.theme?.openings ?? [],
+    endings: data.theme?.endings ?? [],
+    streaming: (data.streaming ?? []).map((s: Raw) => ({ name: s.name, url: s.url })),
+  };
 }
 
 export async function getAnime(id: number): Promise<AnimeFull | null> {
   try {
-    const { data } = await jikan<{ data: Raw }>(`/anime/${id}/full`, 6 * HOUR);
+    const { data } = await jikan<{ data: Raw }>(PATHS.full(id), 6 * HOUR);
     if (!data || isAdult(data)) return null;
-    return {
-      ...normAnime(data),
-      relations: (data.relations ?? []).map((r: Raw) => ({
-        relation: r.relation,
-        entries: (r.entry ?? []).map((e: Raw) => ({ id: e.mal_id, type: e.type, name: e.name })),
-      })),
-      openings: data.theme?.openings ?? [],
-      endings: data.theme?.endings ?? [],
-      streaming: (data.streaming ?? []).map((s: Raw) => ({ name: s.name, url: s.url })),
-    };
+    return full(data);
   } catch (e) {
+    const row = await (await db()).prepare("select body from catalog where mal_id = ?").bind(id).first<Row>().catch(() => null);
+    if (row) return full(JSON.parse(row.body));
     if (e instanceof JikanError && e.message === "not found") return null;
     throw e;
   }
 }
 
-/** Light lookup for many ids (lists, showcases): only what's already cached, never a live call per id. */
+/** Light lookup for many ids (lists, showcases): only what's stored locally, never a live call per id. */
 export async function getCachedAnime(ids: number[]): Promise<Map<number, Anime>> {
   const out = new Map<number, Anime>();
   if (!ids.length) return out;
-  const keys = ids.map((id) => `/anime/${id}/full`);
   try {
     const { results } = await (await db())
-      .prepare(`select key, body from jikan_cache where key in (${keys.map(() => "?").join(",")})`)
-      .bind(...keys)
-      .all<{ key: string; body: string }>();
+      .prepare(`select body from catalog where mal_id in (${ids.map(() => "?").join(",")})`)
+      .bind(...ids)
+      .all<Row>();
     for (const r of results) {
-      const a = normAnime(JSON.parse(r.body).data);
+      const a = normAnime(JSON.parse(r.body));
       out.set(a.id, a);
     }
   } catch {
@@ -359,7 +438,7 @@ export async function getCachedAnime(ids: number[]): Promise<Map<number, Anime>>
 }
 
 export async function getCharacters(id: number): Promise<Character[]> {
-  const { data } = await jikanOr<{ data: Raw[] }>(`/anime/${id}/characters`, { data: [] }, 7 * DAY);
+  const { data } = await jikanOr<{ data: Raw[] }>(PATHS.characters(id), { data: [] }, 7 * DAY);
   return (data ?? [])
     .sort((a, b) => (a.role === b.role ? (b.favorites ?? 0) - (a.favorites ?? 0) : a.role === "Main" ? -1 : 1))
     .slice(0, 18)
@@ -377,7 +456,7 @@ export async function getCharacters(id: number): Promise<Character[]> {
 }
 
 export async function getEpisodeList(id: number, pageNo = 1): Promise<Page<EpisodeInfo>> {
-  const data = await jikanOr<Raw>(`/anime/${id}/episodes?page=${pageNo}`, EMPTY, DAY);
+  const data = await jikanOr<Raw>(PATHS.episodes(id, pageNo), EMPTY, DAY);
   return {
     items: (data.data ?? []).map((e: Raw) => ({
       number: e.mal_id,
@@ -395,7 +474,7 @@ export async function getEpisodeList(id: number, pageNo = 1): Promise<Page<Episo
 }
 
 export async function getRecommendations(id: number) {
-  const { data } = await jikanOr<{ data: Raw[] }>(`/anime/${id}/recommendations`, { data: [] }, 3 * DAY);
+  const { data } = await jikanOr<{ data: Raw[] }>(PATHS.recommendations(id), { data: [] }, 3 * DAY);
   return (data ?? []).slice(0, 12).map((r) => ({
     id: r.entry.mal_id as number,
     title: r.entry.title as string,
@@ -405,7 +484,7 @@ export async function getRecommendations(id: number) {
 }
 
 export async function getStatistics(id: number) {
-  const { data } = await jikanOr<{ data: Raw }>(`/anime/${id}/statistics`, { data: null }, DAY);
+  const { data } = await jikanOr<{ data: Raw }>(PATHS.statistics(id), { data: null }, DAY);
   if (!data) return null;
   return {
     watching: data.watching as number,
@@ -421,6 +500,7 @@ export interface SearchParams {
   type?: string;
   status?: string;
   genres?: string;
+  genreName?: string;
   order_by?: string;
   sort?: string;
   rating?: string;
@@ -428,6 +508,26 @@ export interface SearchParams {
   end_date?: string;
   page?: number;
   limit?: number;
+}
+
+const KIND: Record<string, string> = { tv: "TV", movie: "Movie", ova: "OVA", ona: "ONA", special: "Special", tv_special: "TV Special", music: "Music" };
+const STATUS: Record<string, string> = { airing: "Currently Airing", complete: "Finished Airing", upcoming: "Not yet aired" };
+const ORDER: Record<string, string> = { members: "members desc", score: "score desc", start_date: "start_date desc", favorites: "favorites desc", title: "search asc" };
+
+/** Search the local catalog: every word has to appear in some title. */
+function searchCatalog(p: SearchParams): Promise<Page<Anime>> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  for (const w of (p.q ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6)) {
+    where.push("search like ?");
+    params.push(`%${w.replace(/[%_]/g, "")}%`);
+  }
+  if (p.type && KIND[p.type]) { where.push("kind = ?"); params.push(KIND[p.type]); }
+  if (p.status && STATUS[p.status]) { where.push("status = ?"); params.push(STATUS[p.status]); }
+  if (p.genreName) { where.push("genres like ?"); params.push(`%|${p.genreName}|%`); }
+  if (p.start_date) { where.push("year = ?"); params.push(Number(p.start_date.slice(0, 4))); }
+  const order = ORDER[p.order_by ?? "members"] ?? "members desc";
+  return catalogPage(where.join(" and "), params, order, p.page ?? 1, p.limit ?? 24);
 }
 
 export async function searchAnime(p: SearchParams): Promise<Page<Anime>> {
@@ -440,44 +540,36 @@ export async function searchAnime(p: SearchParams): Promise<Page<Anime>> {
     qs.set("order_by", "members");
     qs.set("sort", "desc");
   }
-  return page(await jikan<Raw>(`/anime?${qs}`, p.q ? 6 * HOUR : DAY));
-}
-
-export const SEASONS = ["winter", "spring", "summer", "fall"] as const;
-export type SeasonName = (typeof SEASONS)[number];
-
-export function currentSeason(d = new Date()): { year: number; season: SeasonName } {
-  const m = d.getUTCMonth();
-  return { year: d.getUTCFullYear(), season: m < 3 ? "winter" : m < 6 ? "spring" : m < 9 ? "summer" : "fall" };
+  return pageOr(`/anime?${qs}`, p.q ? 6 * HOUR : DAY, () => searchCatalog(p));
 }
 
 export async function getSeason(year: number, season: SeasonName, pageNo = 1): Promise<Page<Anime>> {
   const cur = currentSeason();
   const ttl = year === cur.year && season === cur.season ? 6 * HOUR : 7 * DAY;
-  return page(await jikanOr(`/seasons/${year}/${season}?page=${pageNo}&sfw=true`, EMPTY, ttl));
+  return pageOr(PATHS.season(year, season, pageNo), ttl, () => catalogPage("year = ? and season = ?", [year, season], "members desc", pageNo, 25));
 }
 
-export const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
-
-export async function getScheduleDay(day: (typeof WEEKDAYS)[number]): Promise<Anime[]> {
-  return list(await jikanOr(`/schedules?filter=${day}&sfw=true&limit=25`, EMPTY, 3 * HOUR));
+export async function getScheduleDay(day: Weekday): Promise<Anime[]> {
+  const jikanDay = day[0].toUpperCase() + day.slice(1) + "s";
+  return listOr(PATHS.schedule(day), 3 * HOUR, () => fromCatalog(`${AIRING} and broadcast_day = ?`, [jikanDay], "members desc", 40));
 }
 
 export async function getGenres(): Promise<{ id: number; name: string; count: number }[]> {
-  const { data } = await jikanOr<{ data: Raw[] }>("/genres/anime", { data: [] }, 7 * DAY);
-  return (data ?? [])
+  const { data } = await jikanOr<{ data: Raw[] }>(PATHS.genres, { data: [] }, 7 * DAY);
+  const got = (data ?? [])
     .filter((g, i, all) => !["Hentai", "Erotica", "Ecchi"].includes(g.name) && all.findIndex((x) => x.name === g.name) === i)
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((g) => ({ id: g.mal_id, name: g.name, count: g.count }));
+    .map((g) => ({ id: g.mal_id as number, name: g.name as string, count: g.count as number }));
+  return got.length ? got : FALLBACK_GENRES.map(([id, name]) => ({ id, name, count: 0 })).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function getRandomId(): Promise<number | null> {
   try {
     const data = JSON.parse(await live("/random/anime?sfw=true"));
-    return isAdult(data.data) ? null : data.data.mal_id;
-  } catch {
-    return null;
-  }
+    if (!isAdult(data.data)) return data.data.mal_id;
+  } catch { /* the catalog instead */ }
+  const row = await (await db()).prepare("select mal_id from catalog where members > 20000 order by random() limit 1").first<{ mal_id: number }>().catch(() => null);
+  return row?.mal_id ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -531,27 +623,26 @@ export async function getWholeSeason(year: number, season: SeasonName, max = 6):
 }
 
 export async function getUpcoming(max = 4): Promise<Anime[]> {
-  const pages = [];
+  const pages: Anime[][] = [];
   for (let p = 1; p <= max; p++) {
-    const pg = page(await jikanOr(`/seasons/upcoming?page=${p}&sfw=true`, EMPTY, 6 * HOUR));
-    pages.push(pg);
+    const pg = await pageOr(PATHS.upcoming(p), 6 * HOUR, () => catalogPage(UPCOMING, [], "members desc", p, 25));
+    pages.push(pg.items);
     if (!pg.hasNext) break;
   }
   const seen = new Set<number>();
-  return pages.flatMap((p) => p.items).filter((a) => !seen.has(a.id) && seen.add(a.id));
+  return pages.flat().filter((a) => !seen.has(a.id) && seen.add(a.id));
 }
 
-export const TOP_LISTS = {
-  airing: { label: "Top airing", path: "/top/anime?filter=airing" },
-  upcoming: { label: "Most anticipated", path: "/top/anime?filter=upcoming" },
-  all: { label: "All time", path: "/top/anime?" },
-  popular: { label: "Most popular", path: "/top/anime?filter=bypopularity" },
-  loved: { label: "Most loved", path: "/top/anime?filter=favorite" },
-  films: { label: "Top films", path: "/top/anime?type=movie" },
-} as const;
-export type TopList = keyof typeof TOP_LISTS;
+const TOP_FALLBACK: Record<TopList, [string, string]> = {
+  airing: [AIRING, "score desc"],
+  upcoming: [UPCOMING, "members desc"],
+  all: ["score is not null", "score desc"],
+  popular: ["", "members desc"],
+  loved: ["", "favorites desc"],
+  films: ["kind = 'Movie' and score is not null", "score desc"],
+};
 
 export async function getTop(list: TopList, pageNo = 1): Promise<Page<Anime>> {
-  const sep = TOP_LISTS[list].path.endsWith("?") ? "" : "&";
-  return page(await jikanOr(`${TOP_LISTS[list].path}${sep}page=${pageNo}&limit=25&sfw=true`, EMPTY, list === "airing" ? 3 * HOUR : DAY));
+  const [where, order] = TOP_FALLBACK[list];
+  return pageOr(PATHS.top(list, pageNo), list === "airing" ? 3 * HOUR : DAY, () => catalogPage(where, [], order, pageNo, 25));
 }
