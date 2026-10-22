@@ -15,7 +15,7 @@ export default function PrivacyPage() {
         </section>
 
         <Section title="Who we are">
-          <p>cupcake is a non-commercial, community project. Access is granted through your kuro account. We are not affiliated with MyAnimeList, AniList, Kitsu, or any streaming provider whose catalog metadata we display.</p>
+          <p>cupcake is a non-commercial, community project. Access is granted through your kuro account. We are not affiliated with the third-party services whose catalog metadata or streams we display.</p>
         </Section>
 
         <Section title="What we collect">
@@ -40,7 +40,7 @@ export default function PrivacyPage() {
         </Section>
 
         <Section title="Where it lives">
-          <p>Your data is stored in a Cloudflare D1 database and served from Cloudflare’s network. Anime artwork and metadata are fetched from third parties (AniList, Kitsu, ani.zip and streaming sources); your requests to those services are subject to their own policies.</p>
+          <p>Your data is stored in a Cloudflare D1 database and served from Cloudflare’s network. Anime artwork, metadata and streams are fetched from third-party sources; your requests to those services are subject to their own policies.</p>
         </Section>
 
         <Section title="Retention">

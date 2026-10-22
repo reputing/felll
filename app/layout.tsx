@@ -15,7 +15,7 @@ const plex = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variabl
 export const metadata: Metadata = {
   title: { default: "cupcake.gg · the watch box", template: "%s · cupcake.gg" },
   description: "A members-only watch box for kuro. Every anime on your list, in one little box.",
-  icons: { icon: "/favicon.png", apple: "/logo.png" },
+  icons: { icon: "/cupcake.png", apple: "/cupcake.png" },
   robots: { index: false, follow: false },
 };
 

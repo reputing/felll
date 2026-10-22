@@ -56,7 +56,7 @@ export default async function Home() {
       {empty ? (
         <div className="mx-auto mt-10 max-w-[560px] rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center">
           <p className="text-2xl font-extrabold tracking-tight text-frost-deep">The listings are napping.</p>
-          <p className="mt-2 text-plum-muted">MyAnimeList isn’t answering this server and the catalog is empty. If you run cupcake, fill it with <code className="rounded bg-cream-tint px-1.5 font-mono text-[12.5px] text-frost-text">npm run sync</code> (see the README), then refresh.</p>
+          <p className="mt-2 text-plum-muted">The catalog is empty right now. If you run cupcake, fill it with <code className="rounded bg-cream-tint px-1.5 font-mono text-[12.5px] text-frost-text">npm run sync</code> (see the README), then refresh.</p>
         </div>
       ) : (
         <div className="mx-auto flex max-w-[1560px] flex-col gap-[22px] px-3 pb-12 pt-[22px] sm:px-5 lg:flex-row lg:items-start">

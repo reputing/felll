@@ -44,7 +44,7 @@ export function Filters({ genres, years }: { genres: string[]; years: number[] }
     <div className="flex flex-col gap-3">
       <div className="relative">
         <Search className="pointer-events-none absolute left-5 top-1/2 size-5 -translate-y-1/2 text-plum-muted" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search every anime on MyAnimeList…" aria-label="Search"
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search every anime…" aria-label="Search"
           className="h-14 w-full rounded-full border-1.5 border-line bg-cream-card pl-14 pr-14 text-[16px] font-semibold outline-none transition focus:border-frost-hot focus:shadow-halo" />
         {pending && <span className="absolute right-5 top-1/2 size-5 -translate-y-1/2 animate-spin rounded-full border-2 border-line border-t-frost-hot" />}
       </div>

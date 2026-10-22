@@ -62,7 +62,7 @@ export default async function Seasonal({ searchParams }: { searchParams: Promise
 
 async function Board({ year, season, upcoming }: { year: number; season: SeasonName; upcoming: boolean }) {
   const list: Anime[] = upcoming ? await getUpcoming() : await getWholeSeason(year, season);
-  if (!list.length) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">No listings for this season yet, or MyAnimeList is having a moment.</p>;
+  if (!list.length) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">No listings for this season yet, or the catalog is having a moment.</p>;
   const items: SeasonItem[] = list.map((a) => {
     const nextAt = nextAiring(a);
     return { ...a, nextAt, nextEp: nextAt ? episodeAt(a, nextAt) : null, premiere: premiereAt(a) };
