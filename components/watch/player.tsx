@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { POPUP, POPUP_ITEM, POPUP_LABEL, POPUP_SEPARATOR } from "@/components/ui/popup";
 import { useBox } from "@/lib/store";
 import { clock, cn } from "@/lib/utils";
+import { WatchParty } from "./watch-party";
 
 export interface Source { id: string | number; label: string; audio: "sub" | "dub" | "raw" }
 export interface Track { id: string | number; language: string; label: string; url: string; is_default: number }
@@ -71,6 +72,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [autoNext, setAutoNext] = usePref("autoNext", true);
   const [autoSkip, setAutoSkip] = usePref("autoSkip", false);
   const [theater, setTheater] = usePref("theater", false);
+  const [preferDub] = usePref("preferDub", false);
   const started = useRef(false);
   const lastSent = useRef(0);
   const ended = useRef(false);
@@ -94,6 +96,13 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     const want = sources.find((s) => s.audio === (dub ? "dub" : "sub") && !failed.has(s.id));
     if (want && want.audio !== current?.audio) setCurrent(want);
   }, [dub]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // honour the "prefer dub" setting once it loads from localStorage
+  useEffect(() => {
+    if (!preferDub) return;
+    const d = sources.find((s) => s.audio === "dub" && !failed.has(s.id));
+    if (d && current?.audio !== "dub") setCurrent(d);
+  }, [preferDub]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fallback = useCallback((src: Source) => {
     setFailed((prev) => {
@@ -323,6 +332,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
           className="absolute left-2 top-2 z-10 grid size-7 place-items-center rounded-full bg-black/60 text-white/90 backdrop-blur transition hover:bg-black/80 hover:text-white">
           <Maximize2 className="size-3.5" />
         </button>
+      )}
+      {!docked && (
+        <div className={cn("absolute right-3 top-3 z-10 transition-opacity duration-300", hidden && "pointer-events-none opacity-0")}>
+          <WatchParty video={video} malId={meta.malId} ep={meta.ep} />
+        </div>
       )}
       <video
         ref={video}

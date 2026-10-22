@@ -45,10 +45,14 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
         "mx-auto flex max-w-[1560px] items-center gap-3 rounded-shell border-1.5 border-line shadow-shell transition-all duration-300 sm:gap-4",
         scrolled
           ? "min-h-[56px] bg-cream-card/55 py-1.5 pl-5 pr-2.5 backdrop-blur-2xl backdrop-saturate-150 sm:pl-6"
-          : "min-h-[72px] bg-cream-card/85 py-2.5 pl-5 pr-2.5 backdrop-blur-xl sm:pl-7",
+          : "min-h-[72px] bg-cream-card/70 py-2.5 pl-5 pr-2.5 backdrop-blur-2xl backdrop-saturate-150 sm:pl-7",
       )}>
-        <Link href="/home" aria-label="cupcake.gg home" className="flex flex-none items-baseline text-[26px] font-extrabold leading-none tracking-[-1.2px] text-frost-brand sm:text-[30px]">
-          cupcake<span className="text-xl font-semibold tracking-[-.5px] text-plum-faint sm:text-2xl">.gg</span>
+        <Link href="/home" aria-label="cupcake.gg home" className="flex flex-none items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/cupcake.png" alt="" width={40} height={40} className="size-9 flex-none drop-shadow-[0_3px_8px_rgb(var(--glow)/.4)] transition-transform duration-300 hover:-rotate-6 hover:scale-105 sm:size-10" />
+          <span className="hidden text-[23px] font-extrabold leading-none tracking-[-.6px] text-frost-brand sm:inline sm:text-[25px]">
+            cupcake<span className="font-bold text-plum-faint">.gg</span>
+          </span>
         </Link>
         <nav aria-label="main" className="ml-1 hidden gap-0 lg:flex">
           {NAV.map((n) => {

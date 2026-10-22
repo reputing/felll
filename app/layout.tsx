@@ -1,11 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Manrope, IBM_Plex_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import { cookies } from "next/headers";
 import { currentUser } from "@/lib/auth";
 import { DEFAULT_SKIN, isSkin } from "@/lib/skins";
 import "./globals.css";
 
-const manrope = Manrope({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--font-manrope", display: "swap" });
+// Plus Jakarta Sans: a clean, modern, professional grotesque — crisper than the
+// old wordmark font while keeping the friendly feel.
+const sans = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--font-sans-src", display: "swap" });
 const plex = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex", display: "swap" });
 
 export const metadata: Metadata = {
@@ -26,7 +28,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const picked = (await cookies()).get("skin")?.value;
   const skin = isSkin(picked) ? picked : ((await currentUser())?.theme ?? DEFAULT_SKIN);
   return (
-    <html lang="en" data-skin={isSkin(skin) ? skin : DEFAULT_SKIN} className={`${manrope.variable} ${plex.variable}`}>
+    <html lang="en" data-skin={isSkin(skin) ? skin : DEFAULT_SKIN} className={`${sans.variable} ${plex.variable}`}>
       <head>
         <link rel="preconnect" href="https://cdn.myanimelist.net" crossOrigin="" />
         <link rel="dns-prefetch" href="https://i.ytimg.com" />
