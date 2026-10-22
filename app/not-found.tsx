@@ -5,7 +5,7 @@ export default function NotFound() {
     <div className="grid min-h-svh place-items-center px-5 text-center">
       <div className="flex flex-col items-center gap-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="" width={72} height={72} className="animate-float rounded-2xl bg-paper p-1" />
+        <img src="/cupcake.png" alt="" width={76} height={76} className="size-[76px] animate-float drop-shadow-[0_6px_14px_rgb(var(--glow)/.4)]" />
         <p className="font-mono text-[13px] text-frost-text">404</p>
         <p className="text-2xl font-extrabold tracking-tight text-frost-deep">This box is empty.</p>
         <p className="text-plum-muted">That page wandered off.</p>
