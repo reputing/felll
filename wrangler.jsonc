@@ -27,6 +27,9 @@
     "NEXT_PUBLIC_SITE_NAME": "cupcake.gg",
     "KURO_URL": "https://kuro.rip",
     "REQUIRE_KURO_PLUS": "0",
+    // The catalog comes from `npm run sync` (AniList/Kitsu), never live Jikan.
+    // This makes any stray live call fail fast instead of hanging on a timeout.
+    "JIKAN_DISABLED": "1",
     // The Anivexa backend ("the bot"). Deploy anivexa-server/ as a Cloudflare
     // Container (npm run anivexa:container:deploy) and point this at its URL.
     "ANIVEXA_API_URL": "https://anivexa-api.matthewsjakael.workers.dev"

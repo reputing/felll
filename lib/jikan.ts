@@ -46,6 +46,17 @@ async function base() {
   }
 }
 
+// Jikan blocks Cloudflare and has been down; the catalog comes from `npm run
+// sync` now. With JIKAN_DISABLED set, live calls fail instantly instead of
+// waiting on a 5s timeout, so pages fall straight to the stored catalog.
+async function jikanOff(): Promise<boolean> {
+  try {
+    return String((await env() as { JIKAN_DISABLED?: string }).JIKAN_DISABLED ?? "") === "1";
+  } catch {
+    return false;
+  }
+}
+
 async function slot() {
   const t = Date.now();
   const wait = Math.max(0, nextSlot - t);
@@ -55,6 +66,7 @@ async function slot() {
 
 /** One live request to Jikan. Exported for the random pick and /api/health. */
 export async function live(path: string, opts: { force?: boolean } = {}): Promise<string> {
+  if (await jikanOff()) throw new JikanError("Jikan is turned off");
   if (!opts.force && Date.now() < downUntil) throw new JikanError(lastJikanError?.message ?? "Jikan is cooling off");
   const url = (await base()) + path;
   const fail = (message: string): never => {

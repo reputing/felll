@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { SaveIcon } from "@/components/icons";
 import { set, useBox } from "@/lib/store";
@@ -21,11 +21,13 @@ const NAV = [
 
 export function SiteHeader({ user, unread }: { user: MenuUser; unread: number }) {
   const path = usePathname();
-  const dub = useBox((s) => s.dub);
   const savedN = useBox((s) => Object.values(s.lib).filter((e) => e.status).length);
+  const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    try { set({ dub: localStorage.getItem("audio") === "dub" }); } catch {}
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") || (e.key === "/" && !typing)) {
@@ -34,17 +36,17 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => { window.removeEventListener("scroll", onScroll); window.removeEventListener("keydown", onKey); };
   }, []);
-
-  const setDub = (v: boolean) => {
-    set({ dub: v });
-    try { localStorage.setItem("audio", v ? "dub" : "sub"); } catch {}
-  };
 
   return (
     <header className="sticky top-0 z-40 bg-gradient-to-b from-cream from-75% to-transparent px-3 pt-2.5 sm:px-5">
-      <div className="mx-auto flex min-h-[72px] max-w-[1560px] items-center gap-3 rounded-shell border-1.5 border-line bg-cream-card/90 py-2.5 pl-5 pr-2.5 shadow-shell backdrop-blur-xl sm:gap-4 sm:pl-7">
+      <div className={cn(
+        "mx-auto flex max-w-[1560px] items-center gap-3 rounded-shell border-1.5 border-line shadow-shell transition-all duration-300 sm:gap-4",
+        scrolled
+          ? "min-h-[56px] bg-cream-card/55 py-1.5 pl-5 pr-2.5 backdrop-blur-2xl backdrop-saturate-150 sm:pl-6"
+          : "min-h-[72px] bg-cream-card/85 py-2.5 pl-5 pr-2.5 backdrop-blur-xl sm:pl-7",
+      )}>
         <Link href="/home" aria-label="cupcake.gg home" className="flex flex-none items-baseline text-[26px] font-extrabold leading-none tracking-[-1.2px] text-frost-brand sm:text-[30px]">
           cupcake<span className="text-xl font-semibold tracking-[-.5px] text-plum-faint sm:text-2xl">.gg</span>
         </Link>
@@ -68,14 +70,6 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
         <button type="button" onClick={() => set({ palette: true })} aria-label="Search" className="grid size-10 place-items-center rounded-full border-1.5 border-line bg-paper md:hidden">
           <Search className="size-[17px]" />
         </button>
-        <div role="group" aria-label="audio language" className="hidden rounded-full border-1.5 border-line bg-cream-tint p-[3px] 2xl:flex">
-          {[false, true].map((v) => (
-            <button key={String(v)} type="button" aria-pressed={dub === v} onClick={() => setDub(v)}
-              className={cn("h-8 rounded-full px-[13px] text-[12.5px] font-extrabold text-plum-muted", dub === v && "bg-paper text-frost-text shadow-[0_2px_6px_-2px_rgb(var(--glow)/.4)]")}>
-              {v ? "Dub" : "Sub"}
-            </button>
-          ))}
-        </div>
         <OnlinePill />
         <Link href="/box" className="hidden h-11 items-center gap-2 px-1.5 font-bold hover:text-frost-text sm:flex">
           <SaveIcon on={savedN > 0} className="size-[17px]" /> <span className="hidden 2xl:inline">Saved</span> <span className="font-mono text-[12.5px] text-frost-text">{pad2(savedN)}</span>

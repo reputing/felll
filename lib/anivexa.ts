@@ -3,9 +3,10 @@
 // MAL/Jikan-keyed, so we map MAL -> AniList first (via ARM). Server-side only;
 // enabled by the ANIVEXA_API_URL var (the deployed anivexa-api worker).
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { background, db, now } from "./db";
 
 export const ANIVEXA_PROVIDERS: { slug: string; name: string }[] = [
-  { slug: "anikoto", name: "Anikoto" },
+  { slug: "anikoto", name: "Cupcake" },
   { slug: "animegg", name: "AnimeGG" },
   { slug: "aniwaves", name: "AniWaves" },
   { slug: "reanime", name: "Reanime" },
@@ -95,8 +96,46 @@ interface RawEpisodeItem {
   number?: number;
 }
 
+// The /episodes call fans out to all 12 providers and is slow (several
+// seconds), so the result is cached in D1 and shared across viewers. A stale
+// copy is served immediately and refreshed in the background.
+const CATALOG_TTL = 6 * 3600;
+
 export async function fetchAnivexaCatalog(anilistId: number): Promise<AnivexaCatalog | null> {
-  const data = await getJson(`/episodes/${anilistId}`);
+  const key = `anivexa:eps:${anilistId}`;
+  let row: { body: string; fetched_at: number } | null = null;
+  try {
+    row = await (await db()).prepare("select body, fetched_at from jikan_cache where key = ?").bind(key).first();
+  } catch {
+    /* no db (e.g. build) */
+  }
+  if (row) {
+    if (now() - row.fetched_at >= CATALOG_TTL) background(refreshAnivexaCatalog(anilistId, key));
+    try {
+      return JSON.parse(row.body) as AnivexaCatalog;
+    } catch {
+      /* fall through to a live fetch */
+    }
+  }
+  return refreshAnivexaCatalog(anilistId, key);
+}
+
+async function refreshAnivexaCatalog(anilistId: number, key: string): Promise<AnivexaCatalog | null> {
+  const catalog = parseAnivexaCatalog(await getJson(`/episodes/${anilistId}`));
+  if (catalog) {
+    try {
+      await (await db())
+        .prepare("insert into jikan_cache (key, body, fetched_at) values (?, ?, ?) on conflict(key) do update set body = excluded.body, fetched_at = excluded.fetched_at")
+        .bind(key, JSON.stringify(catalog), now())
+        .run();
+    } catch {
+      /* best effort */
+    }
+  }
+  return catalog;
+}
+
+function parseAnivexaCatalog(data: unknown | null): AnivexaCatalog | null {
   if (!data || typeof data !== "object") return null;
 
   const providers: AnivexaProviderSummary[] = [];

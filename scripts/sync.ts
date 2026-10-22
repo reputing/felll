@@ -42,8 +42,19 @@ const LOCAL = flag("local");
 const QUICK = flag("quick");
 const FORCE_SOURCE = arg("source"); // "anilist" | "kitsu"
 const TARGET = Number(arg("pages")) || (QUICK ? 300 : 1500); // how many titles to aim for
+// Full show-page caches are only worth it for titles people actually open; the
+// long tail falls back to the catalog row, so cap how many we write.
+const FULL_CACHE_MAX = Number(arg("full")) || 3000;
+// Keep under the upstreams' rate limits on big crawls.
+const SPACING_MS = Number(process.env.SYNC_SPACING_MS) || 300;
 
 let requests = 0;
+let lastReq = 0;
+async function pace() {
+  const wait = lastReq + SPACING_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastReq = Date.now();
+}
 
 // ---------------------------------------------------------------------------
 // A source abstraction: each upstream answers the same abstract list queries
@@ -208,6 +219,7 @@ const anilistSource: Source = {
     if (spec.season) { variables.season = ANI_SEASON[spec.season.season]; variables.seasonYear = spec.season.year; }
     if (spec.format === "movie") variables.format = "MOVIE";
     for (let attempt = 0; attempt < 6; attempt++) {
+      await pace();
       requests++;
       let res: Response | null = null;
       try {
@@ -318,6 +330,7 @@ const kitsuSource: Source = {
     if (spec.season) { qs.set("filter[season]", spec.season.season); qs.set("filter[seasonYear]", String(spec.season.year)); }
     const url = `${KITSU}/anime?${qs.toString().replace(/%5B/gi, "[").replace(/%5D/gi, "]")}`;
     for (let attempt = 0; attempt < 6; attempt++) {
+      await pace();
       requests++;
       let res: Response | null = null;
       try {
@@ -531,7 +544,7 @@ async function main() {
   let n = 0;
   for (const m of everything.values()) {
     catalog(m);
-    cacheFull(m);
+    if (n < FULL_CACHE_MAX) cacheFull(m);
     if (++n % 400 === 0) flush(`titles ${n - 399}-${n}`);
   }
   flush("titles");
