@@ -472,7 +472,6 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         onVolumeChange={(e) => { setVol(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
         onRateChange={(e) => { setSpeed(e.currentTarget.playbackRate); savedSpeed.current = e.currentTarget.playbackRate; try { localStorage.setItem(`speed:${meta.malId}`, String(e.currentTarget.playbackRate)); } catch { /* storage off */ } }}
         onEnded={() => { ended.current = true; report(true); if (autoNext && !stopAfterEp && nextHref) setNextIn((n) => n ?? 5); }}
-        crossOrigin="anonymous"
       >
         {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
       </video>
