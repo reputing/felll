@@ -13,6 +13,7 @@ import { UserMenu, type MenuUser } from "./user-menu";
 const NAV = [
   { href: "/home", label: "Explore" },
   { href: "/browse", label: "Browse" },
+  { href: "/manga", label: "Manga" },
   { href: "/seasonal", label: "Seasonal" },
   { href: "/schedule", label: "Schedule" },
   { href: "/rankings", label: "Rankings" },

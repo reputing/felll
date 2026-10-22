@@ -1,0 +1,189 @@
+"use client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Columns2, Gauge, Loader2, Maximize, Rows3, ScrollText, Square } from "lucide-react";
+import { getChapterPages, getChapters, getManga, type Chapter } from "@/lib/manga";
+import { cn } from "@/lib/utils";
+
+type Mode = "strip" | "single" | "dual";
+
+function usePref<T extends string>(key: string, fallback: T): [T, (v: T) => void] {
+  const [v, setV] = useState<T>(fallback);
+  useEffect(() => { try { const s = localStorage.getItem(key); if (s) setV(s as T); } catch { /* */ } }, [key]);
+  return [v, useCallback((n: T) => { setV(n); try { localStorage.setItem(key, n); } catch { /* */ } }, [key])];
+}
+
+export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId: string }) {
+  const router = useRouter();
+  const [pages, setPages] = useState<string[] | null>(null);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [info, setInfo] = useState<{ title: string; cover: string | null }>({ title: "", cover: null });
+  const [idx, setIdx] = useState(0);
+  const [mode, setMode] = usePref<Mode>("manga:mode", "strip");
+  const [fitH, setFitH] = usePref<"0" | "1">("manga:fitH", "0");
+  const [auto, setAuto] = useState(false);
+  const [speed, setSpeed] = usePref<string>("manga:speed", "2");
+  const scroller = useRef<HTMLDivElement>(null);
+  const resumeTo = useRef<number | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const cur = chapters.find((c) => c.id === chapterId);
+  const pos = chapters.findIndex((c) => c.id === chapterId);
+  const prev = pos > 0 ? chapters[pos - 1] : null;
+  const next = pos >= 0 && pos < chapters.length - 1 ? chapters[pos + 1] : null;
+
+  // Load everything for this chapter.
+  useEffect(() => {
+    setPages(null); setIdx(0);
+    let on = true;
+    getManga(mangaId).then((m) => { if (on && m) setInfo({ title: m.title, cover: m.cover }); }).catch(() => {});
+    getChapters(mangaId).then((c) => { if (on) setChapters(c); }).catch(() => {});
+    getChapterPages(chapterId).then((p) => { if (on) setPages(p); }).catch(() => { if (on) setPages([]); });
+    fetch(`/api/manga-progress?mangaId=${mangaId}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (on && d?.progress?.chapter_id === chapterId) resumeTo.current = d.progress.page;
+    }).catch(() => {});
+    return () => { on = false; };
+  }, [mangaId, chapterId]);
+
+  // Save progress (debounced) whenever the page changes.
+  const save = useCallback((page: number) => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      fetch("/api/manga-progress", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mangaId, chapterId, chapterNum: cur?.chapter ?? "", page, title: info.title, cover: info.cover }) }).catch(() => {});
+    }, 1200);
+  }, [mangaId, chapterId, cur, info]);
+  useEffect(() => { if (pages?.length) save(idx); }, [idx, pages, save]);
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") navigator.sendBeacon?.("/api/manga-progress", new Blob([JSON.stringify({ mangaId, chapterId, chapterNum: cur?.chapter ?? "", page: idx, title: info.title, cover: info.cover })], { type: "application/json" })); };
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [mangaId, chapterId, cur, idx, info]);
+
+  // Strip mode: which page is centred → idx (for progress + the counter).
+  useEffect(() => {
+    if (mode !== "strip" || !pages?.length) return;
+    const root = scroller.current;
+    const io = new IntersectionObserver((ents) => {
+      for (const e of ents) if (e.isIntersecting) { const n = Number((e.target as HTMLElement).dataset.n); if (Number.isFinite(n)) setIdx(n); }
+    }, { root, threshold: 0.5 });
+    root?.querySelectorAll("[data-n]").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [mode, pages]);
+
+  // apply the resume point once pages are in
+  useEffect(() => {
+    if (!pages?.length || resumeTo.current == null) return;
+    const to = Math.min(resumeTo.current, pages.length - 1);
+    resumeTo.current = null;
+    if (mode === "strip") requestAnimationFrame(() => scroller.current?.querySelector(`[data-n="${to}"]`)?.scrollIntoView());
+    else setIdx(to);
+  }, [pages, mode]);
+
+  // auto-scroll (strip)
+  useEffect(() => {
+    if (!auto || mode !== "strip") return;
+    let raf = 0;
+    const step = () => { if (scroller.current) scroller.current.scrollTop += Number(speed); raf = requestAnimationFrame(step); };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [auto, mode, speed]);
+
+  const go = useCallback((d: 1 | -1) => {
+    if (!pages) return;
+    const stepN = mode === "dual" ? 2 : 1;
+    const nx = idx + d * stepN;
+    if (nx < 0) { if (prev) router.push(`/manga/${mangaId}/${prev.id}`); return; }
+    if (nx >= pages.length) { if (next) router.push(`/manga/${mangaId}/${next.id}`); return; }
+    setIdx(nx);
+    scroller.current?.scrollTo({ top: 0 });
+  }, [idx, pages, mode, prev, next, mangaId, router]);
+
+  // keyboard
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest("input,textarea")) return;
+      if (mode !== "strip") {
+        if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); go(1); }
+        if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+      }
+      if (e.key.toLowerCase() === "a") setAuto((a) => !a);
+      if (e.key.toLowerCase() === "f") document.documentElement.requestFullscreen?.().catch(() => {});
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [go, mode]);
+
+  const total = pages?.length ?? 0;
+  const fit = fitH === "1";
+  const btn = "grid size-9 place-items-center rounded-full text-white/85 transition hover:bg-white/15 hover:text-white";
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-[#0b0a0d]">
+      {/* top bar */}
+      <div className="flex flex-none items-center gap-2 border-b border-white/10 bg-black/40 px-3 py-2 backdrop-blur-xl">
+        <Link href={`/manga/${mangaId}`} className={btn} aria-label="Back"><ChevronLeft className="size-5" /></Link>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-extrabold text-white">{info.title || "Reading"}</div>
+          <div className="truncate text-[11px] font-semibold text-white/55">Ch. {cur?.chapter || "?"}{cur?.title ? ` · ${cur.title}` : ""} · {total ? `${Math.min(idx + 1, total)}/${total}` : "…"}</div>
+        </div>
+        <button type="button" onClick={() => setMode(mode === "strip" ? "single" : mode === "single" ? "dual" : "strip")} className={btn} aria-label="Layout" title={mode}>
+          {mode === "strip" ? <ScrollText className="size-5" /> : mode === "single" ? <Square className="size-5" /> : <Columns2 className="size-5" />}
+        </button>
+        <button type="button" onClick={() => setFitH(fit ? "0" : "1")} className={cn(btn, fit && "text-frost")} aria-label="Fit" title={fit ? "Fit height" : "Fit width"}><Rows3 className="size-5" /></button>
+        {mode === "strip" && (
+          <button type="button" onClick={() => setAuto((a) => !a)} className={cn(btn, auto && "text-frost")} aria-label="Auto-scroll" title="Auto-scroll (A)"><Gauge className="size-5" /></button>
+        )}
+        {mode === "strip" && auto && (
+          <input type="range" min={1} max={10} value={speed} onChange={(e) => setSpeed(e.target.value)} className="w-20 accent-[var(--frost)]" aria-label="Scroll speed" />
+        )}
+        <button type="button" onClick={() => document.documentElement.requestFullscreen?.().catch(() => {})} className={cn(btn, "hidden sm:grid")} aria-label="Fullscreen"><Maximize className="size-5" /></button>
+      </div>
+
+      {/* pages */}
+      <div ref={scroller} className="relative flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+        {pages === null ? (
+          <div className="grid h-full place-items-center"><Loader2 className="size-10 animate-spin text-frost" /></div>
+        ) : pages.length === 0 ? (
+          <div className="grid h-full place-items-center p-8 text-center text-[15px] font-bold text-white/80">This chapter has no readable pages here.</div>
+        ) : mode === "strip" ? (
+          <div className="mx-auto flex max-w-[920px] flex-col items-center">
+            {pages.map((src, n) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={n} data-n={n} src={src} alt={`Page ${n + 1}`} loading={n < 2 ? "eager" : "lazy"} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
+            ))}
+            <div className="flex w-full flex-col items-center gap-3 py-10 text-center">
+              {next ? (
+                <Link href={`/manga/${mangaId}/${next.id}`} className="rounded-full bg-frost px-6 py-3 text-[14px] font-extrabold text-frost-ink">Next chapter · {next.chapter} →</Link>
+              ) : (
+                <span className="text-[14px] font-bold text-white/70">You’re all caught up.</span>
+              )}
+            </div>
+          </div>
+        ) : (
+          // paged
+          <div className="relative grid h-full place-items-center">
+            <div className={cn("flex h-full items-center justify-center", mode === "dual" && "gap-1")}>
+              {[idx, ...(mode === "dual" && idx + 1 < pages.length ? [idx + 1] : [])].map((n) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={n} src={pages[n]} alt={`Page ${n + 1}`} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
+              ))}
+            </div>
+            {/* tap zones */}
+            <button type="button" aria-label="Previous page" onClick={() => go(-1)} className="absolute inset-y-0 left-0 w-1/3" />
+            <button type="button" aria-label="Next page" onClick={() => go(1)} className="absolute inset-y-0 right-0 w-2/3" />
+          </div>
+        )}
+      </div>
+
+      {/* paged footer nav */}
+      {pages && pages.length > 0 && mode !== "strip" && (
+        <div className="flex flex-none items-center justify-between gap-3 border-t border-white/10 bg-black/40 px-4 py-2 text-white backdrop-blur-xl">
+          <button type="button" onClick={() => go(-1)} className="flex items-center gap-1 text-[13px] font-bold text-white/80 hover:text-white"><ChevronLeft className="size-4" />{idx === 0 && prev ? "Prev ch." : "Prev"}</button>
+          <span className="font-mono text-[12.5px] text-white/70">{Math.min(idx + 1, total)} / {total}</span>
+          <button type="button" onClick={() => go(1)} className="flex items-center gap-1 text-[13px] font-bold text-white/80 hover:text-white">{idx + 1 >= total && next ? "Next ch." : "Next"}<ChevronRight className="size-4" /></button>
+        </div>
+      )}
+    </div>
+  );
+}
