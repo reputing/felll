@@ -464,22 +464,59 @@ export async function getCachedAnime(ids: number[]): Promise<Map<number, Anime>>
   return out;
 }
 
+// Cast comes from AniList (keyed by MAL id directly), since Jikan is off. The
+// result is cached in D1 and shared, so a show page never waits on it twice.
+const ANILIST_GQL = "https://graphql.anilist.co";
+const ROLE_LABEL: Record<string, string> = { MAIN: "Main", SUPPORTING: "Supporting", BACKGROUND: "Background" };
+
 export async function getCharacters(id: number): Promise<Character[]> {
-  const { data } = await jikanOr<{ data: Raw[] }>(PATHS.characters(id), { data: [] }, 7 * DAY);
-  return (data ?? [])
-    .sort((a, b) => (a.role === b.role ? (b.favorites ?? 0) - (a.favorites ?? 0) : a.role === "Main" ? -1 : 1))
-    .slice(0, 18)
-    .map((c) => {
-      const va = (c.voice_actors ?? []).find((v: Raw) => v.language === "Japanese") ?? c.voice_actors?.[0];
-      return {
-        id: c.character.mal_id,
-        name: c.character.name,
-        image: c.character.images?.webp?.image_url || c.character.images?.jpg?.image_url || null,
-        role: c.role,
-        favorites: c.favorites ?? 0,
-        va: va ? { id: va.person.mal_id, name: va.person.name, image: va.person.images?.jpg?.image_url ?? null } : null,
-      };
+  const key = `anilist:chars:${id}`;
+  let row: { body: string; fetched_at: number } | null = null;
+  try {
+    row = await (await db()).prepare("select body, fetched_at from jikan_cache where key = ?").bind(key).first();
+  } catch { /* no db */ }
+  if (row) {
+    if (now() - row.fetched_at >= 30 * DAY) background(refreshCharacters(id, key));
+    try { return JSON.parse(row.body) as Character[]; } catch { /* refetch */ }
+  }
+  return (await refreshCharacters(id, key)) ?? [];
+}
+
+async function refreshCharacters(malId: number, key: string): Promise<Character[] | null> {
+  const query = `query ($mal: Int) { Media(idMal: $mal, type: ANIME) { characters(sort: [ROLE, FAVOURITES_DESC], perPage: 18) {
+    edges { role node { id name { full } image { large } favourites } voiceActors(language: JAPANESE, sort: RELEVANCE) { id name { full } image { large } } } } } }`;
+  let chars: Character[] | null = null;
+  try {
+    const res = await fetch(ANILIST_GQL, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ query, variables: { mal: malId } }),
+      signal: AbortSignal.timeout(8000),
     });
+    if (res.ok) {
+      const edges = ((await res.json()) as Raw)?.data?.Media?.characters?.edges ?? [];
+      chars = (edges as Raw[]).map((e) => {
+        const va = e.voiceActors?.[0];
+        return {
+          id: e.node?.id as number,
+          name: (e.node?.name?.full ?? "") as string,
+          image: (e.node?.image?.large ?? null) as string | null,
+          role: ROLE_LABEL[e.role] ?? "Supporting",
+          favorites: (e.node?.favourites ?? 0) as number,
+          va: va ? { id: va.id as number, name: (va.name?.full ?? "") as string, image: (va.image?.large ?? null) as string | null } : null,
+        };
+      });
+    }
+  } catch { /* leave null */ }
+  if (chars?.length) {
+    try {
+      await (await db())
+        .prepare("insert into jikan_cache (key, body, fetched_at) values (?, ?, ?) on conflict(key) do update set body = excluded.body, fetched_at = excluded.fetched_at")
+        .bind(key, JSON.stringify(chars), now())
+        .run();
+    } catch { /* best effort */ }
+  }
+  return chars;
 }
 
 export async function getEpisodeList(id: number, pageNo = 1): Promise<Page<EpisodeInfo>> {

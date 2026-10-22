@@ -1,4 +1,5 @@
 import { anivexaProxyPath } from "@/lib/anivexa";
+import { currentUser } from "@/lib/auth";
 
 // Streams an upstream HLS playlist/segment through our own origin, applying the
 // headers (Referer, etc.) providers require. m3u8 playlists are rewritten so
@@ -25,6 +26,10 @@ function isBlockedHost(host: string): boolean {
 }
 
 export async function GET(req: Request) {
+  // Members only: the player is same-origin so the session cookie rides along,
+  // but this keeps the proxy from being used as an open relay by anyone.
+  if (!(await currentUser())) return new Response("Sign in first", { status: 401 });
+
   const { searchParams, origin } = new URL(req.url);
   const target = searchParams.get("u");
   if (!target) return new Response("Missing url", { status: 400 });
@@ -42,7 +47,14 @@ export async function GET(req: Request) {
 
   let headers: Record<string, string> = {};
   try {
-    headers = JSON.parse(searchParams.get("h") ?? "{}");
+    const parsed = JSON.parse(searchParams.get("h") ?? "{}");
+    // Only string values; drop hop-by-hop / identity headers a caller shouldn't set.
+    const banned = new Set(["host", "cookie", "connection", "content-length", "transfer-encoding"]);
+    if (parsed && typeof parsed === "object") {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string" && !banned.has(k.toLowerCase())) headers[k] = v;
+      }
+    }
   } catch {
     headers = {};
   }
