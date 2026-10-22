@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "felll",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "afa6cc67-8758-46a9-a29f-0ed6165a34b5",
       "migrations_dir": "migrations"
     }
   ],
