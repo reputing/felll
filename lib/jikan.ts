@@ -510,6 +510,16 @@ export async function getRecommendations(id: number) {
   }));
 }
 
+/** Similar titles straight from the local catalog (shared genres), for when the
+ *  live Jikan recommendations are unavailable. Ordered by popularity. */
+export async function getSimilar(a: Pick<Anime, "id" | "genres">, limit = 12): Promise<Anime[]> {
+  const genres = a.genres.slice(0, 4);
+  if (!genres.length) return [];
+  const where = `mal_id != ? and (${genres.map(() => "genres like ?").join(" or ")})`;
+  const params = [a.id, ...genres.map((g) => `%|${g}|%`)];
+  return fromCatalog(where, params, "members desc", limit, 0);
+}
+
 export async function getStatistics(id: number) {
   const { data } = await jikanOr<{ data: Raw }>(PATHS.statistics(id), { data: null }, DAY);
   if (!data) return null;
