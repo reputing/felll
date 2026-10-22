@@ -67,6 +67,7 @@ interface Spec {
   sort: Sort;
   status?: Status;
   season?: { year: number; season: SeasonName };
+  year?: number; // a whole year (for the deep, long-tail crawl)
   format?: "movie";
   page: number;
   perPage: number;
@@ -217,6 +218,7 @@ const anilistSource: Source = {
     const variables: Record<string, unknown> = { page: spec.page, perPage: Math.min(spec.perPage, 50), sort: [ANI_SORT[spec.sort]] };
     if (spec.status) variables.status = ANI_STATUS[spec.status];
     if (spec.season) { variables.season = ANI_SEASON[spec.season.season]; variables.seasonYear = spec.season.year; }
+    if (spec.year) variables.seasonYear = spec.year;
     if (spec.format === "movie") variables.format = "MOVIE";
     for (let attempt = 0; attempt < 6; attempt++) {
       await pace();
@@ -328,6 +330,7 @@ const kitsuSource: Source = {
     if (spec.status) qs.set("filter[status]", KITSU_STATUS[spec.status]);
     if (spec.format === "movie") qs.set("filter[subtype]", "movie");
     if (spec.season) { qs.set("filter[season]", spec.season.season); qs.set("filter[seasonYear]", String(spec.season.year)); }
+    if (spec.year) qs.set("filter[seasonYear]", String(spec.year));
     const url = `${KITSU}/anime?${qs.toString().replace(/%5B/gi, "[").replace(/%5D/gi, "]")}`;
     for (let attempt = 0; attempt < 6; attempt++) {
       await pace();
@@ -525,6 +528,22 @@ async function main() {
     const r = await source.query({ sort: "popular", page: p, perPage: per });
     collect(r.items);
     if (!r.items.length || !r.hasNext) break;
+  }
+
+  // Popularity pagination caps out (~5k on AniList), so for the long tail crawl
+  // year by year — each year is its own result space — newest first.
+  if (everything.size < TARGET) {
+    const thisYear = new Date().getUTCFullYear();
+    console.log(`Deep crawl: year by year to reach ${TARGET}…`);
+    for (let y = thisYear + 1; y >= 1960 && everything.size < TARGET; y--) {
+      const before = everything.size;
+      for (let p = 1; p <= 12; p++) {
+        const r = await source.query({ sort: "popular", year: y, page: p, perPage: per });
+        collect(r.items);
+        if (!r.items.length || !r.hasNext) break;
+      }
+      if (everything.size > before && everything.size % 1000 < (everything.size - before)) console.log(`  …${everything.size} titles (through ${y})`);
+    }
   }
 
   // Genres — from everything we gathered, with MAL ids where we know them.
