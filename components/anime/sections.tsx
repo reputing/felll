@@ -63,7 +63,7 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
         </div>
       )}
 
-      <ol className="grid max-h-[560px] gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
+      <ol className="scrollbar-none grid max-h-[560px] gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
         {numbers.map((n) => {
           const info = known.find((k) => k.number === n);
           const audio = have.get(n);

@@ -2,13 +2,13 @@
 import type Hls from "hls.js";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import {
-  Captions, Check, ChevronRight, FastForward, Loader2, Maximize, Minimize, Pause, PictureInPicture2, Play,
+  Captions, Check, ChevronRight, FastForward, Loader2, Maximize, Maximize2, Minimize, Pause, PictureInPicture2, Play,
   RectangleHorizontal, Settings, SkipBack, SkipForward, Volume1, Volume2, VolumeX,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { POPUP, POPUP_ITEM, POPUP_LABEL, POPUP_SEPARATOR } from "@/components/ui/popup";
-import { setMini, useBox } from "@/lib/store";
+import { useBox } from "@/lib/store";
 import { clock, cn } from "@/lib/utils";
 
 export interface Source { id: string | number; label: string; audio: "sub" | "dub" | "raw" }
@@ -41,6 +41,7 @@ const AUDIO = { sub: "Sub", dub: "Dub", raw: "Raw" };
 export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHref, startAt, meta, poster }: Props) {
   const router = useRouter();
   const box = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const hls = useRef<Hls | null>(null);
   const dub = useBox((s) => s.dub);
@@ -73,6 +74,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const started = useRef(false);
   const lastSent = useRef(0);
   const ended = useRef(false);
+  const engaged = useRef(false); // has the viewer started playback at least once
+  const [docked, setDocked] = useState(false); // scrolled past → corner mini
 
   // Effective skip markers: a provider's own markers (Anivexa) override the
   // vault's stored ones for the current source.
@@ -142,6 +145,20 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
 
   useEffect(() => () => hls.current?.destroy(), []);
 
+  // Dock to a corner mini once the player scrolls up out of view (after the
+  // viewer has started it). Scrolling back to it restores the full player. Same
+  // <video>, so playback never skips.
+  useEffect(() => {
+    const el = anchor.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([e]) => setDocked(engaged.current && !e.isIntersecting && e.boundingClientRect.top < 0),
+      { threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   // Hide servers that won't play. Local vault rows are known-ready; only the
   // external (Anivexa) servers need checking, and the resolve is cached upstream
   // so this stays cheap. Runs in the background, a few at a time, after load.
@@ -164,23 +181,6 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     return () => ac.abort();
   }, [sources]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep the store's "now playing" in sync so the mini-player can take over when
-  // the watch page unmounts. On unmount we hand off the live position; if the
-  // episode had ended, we clear it instead.
-  useEffect(() => {
-    setMini({
-      sourceId: current?.id ?? sources[0].id, malId: meta.malId, ep: meta.ep, title: meta.title,
-      image: meta.image, episodes: meta.episodes, format: meta.format,
-      href: `/watch/${meta.malId}/${meta.ep}`, position: startAt, paused: true,
-    });
-    return () => {
-      const v = video.current;
-      if (ended.current) setMini(null);
-      else if (v) setMini({ position: v.currentTime || startAt, paused: v.paused });
-    };
-  }, [meta.malId, meta.ep]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => { if (current) setMini({ sourceId: current.id }); }, [current]);
 
   const report = useCallback((force = false) => {
     const v = video.current;
@@ -313,8 +313,17 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const bar = "grid size-10 place-items-center rounded-full text-white/90 transition hover:bg-white/15 hover:text-white";
 
   return (
+    <div ref={anchor} className="relative w-full">
+      {docked && !full && <div aria-hidden className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-night" />}
     <div ref={box} onMouseMove={wake} onMouseLeave={() => playing && setIdle(true)}
-      className={cn("group/player relative aspect-video w-full overflow-hidden rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] select-none", full && "rounded-none border-0", hidden && "cursor-none")}>
+      className={cn("group/player relative aspect-video w-full overflow-hidden rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] select-none", full && "rounded-none border-0", hidden && "cursor-none", docked && !full && "fixed bottom-4 right-4 z-40 w-[min(384px,calc(100vw-1.5rem))] rounded-2xl shadow-[0_24px_48px_-20px_rgba(0,0,0,.8)] ring-1 ring-black/50 animate-in fade-in slide-in-from-bottom-4")}>
+      {docked && !full && (
+        <button type="button" onClick={() => anchor.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+          aria-label="Back to full player"
+          className="absolute left-2 top-2 z-10 grid size-7 place-items-center rounded-full bg-black/60 text-white/90 backdrop-blur transition hover:bg-black/80 hover:text-white">
+          <Maximize2 className="size-3.5" />
+        </button>
+      )}
       <video
         ref={video}
         playsInline
@@ -322,8 +331,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         className="size-full"
         onClick={toggle}
         onDoubleClick={fullscreen}
-        onPlay={() => { setPlaying(true); ended.current = false; setMini({ paused: false }); wake(); }}
-        onPause={() => { setPlaying(false); setIdle(false); report(true); setMini({ paused: true }); }}
+        onPlay={() => { setPlaying(true); ended.current = false; engaged.current = true; wake(); }}
+        onPause={() => { setPlaying(false); setIdle(false); report(true); }}
         onWaiting={() => setLoading(true)}
         onPlaying={() => setLoading(false)}
         onCanPlay={() => setLoading(false)}
@@ -332,7 +341,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         onTimeUpdate={onTime}
         onVolumeChange={(e) => { setVol(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
         onRateChange={(e) => setSpeed(e.currentTarget.playbackRate)}
-        onEnded={() => { ended.current = true; report(true); setMini(null); if (autoNext && nextHref) setNextIn((n) => n ?? 5); }}
+        onEnded={() => { ended.current = true; report(true); if (autoNext && nextHref) setNextIn((n) => n ?? 5); }}
         crossOrigin="anonymous"
       >
         {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
@@ -450,6 +459,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
           <button type="button" className={bar} onClick={fullscreen} aria-label="Fullscreen">{full ? <Minimize className="size-5" /> : <Maximize className="size-5" />}</button>
         </div>
       </div>
+    </div>
     </div>
   );
 }

@@ -18,20 +18,6 @@ export interface Entry {
   progress: number;
 }
 
-/** What's playing right now, so the mini-player can keep it going off-page. */
-export interface NowPlaying {
-  sourceId: string | number;
-  malId: number;
-  ep: number;
-  title: string;
-  image: string | null;
-  episodes: number | null;
-  format: string;
-  href: string;
-  position: number;
-  paused: boolean;
-}
-
 type State = {
   q: string;
   fmt: "all" | Group;
@@ -45,12 +31,11 @@ type State = {
   toast: { id: number; text: string } | null;
   palette: boolean;
   seeded: boolean;
-  mini: NowPlaying | null;
 };
 
 let state: State = {
   q: "", fmt: "all", genres: [], sort: "rec", savedOnly: false, sel: null, dub: false, limit: 12,
-  lib: {}, toast: null, palette: false, seeded: false, mini: null,
+  lib: {}, toast: null, palette: false, seeded: false,
 };
 const SERVER = state;
 const subs = new Set<() => void>();
@@ -68,12 +53,6 @@ export function useBox<T>(pick: (s: State) => T): T {
     () => pick(state),
     () => pick(SERVER),
   );
-}
-
-/** Publish/refresh what's playing (from the inline player). */
-export function setMini(patch: Partial<NowPlaying> | null) {
-  if (patch === null) { set({ mini: null }); return; }
-  set((s) => ({ mini: s.mini ? { ...s.mini, ...patch } : (patch as NowPlaying) }));
 }
 
 let toastId = 0;

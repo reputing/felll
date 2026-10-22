@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ChevronLeft, ChevronRight, Clapperboard, Play } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getAnime, getEpisodeList, getRecommendations, nextAiring, episodeAt } from "@/lib/jikan";
+import { getAnime, getEpisodeList, getRecommendations, getSimilar, nextAiring, episodeAt } from "@/lib/jikan";
 import { anivexaEnabled, fetchAnivexaCatalog, malToAnilist } from "@/lib/anivexa";
 import { fetchAnizipEpisodes } from "@/lib/anizip";
 import { refOf } from "@/lib/anime-ref";
@@ -68,11 +68,17 @@ export default async function WatchPage({ params, searchParams }: Props) {
   // summaries. Subtitles for external streams arrive with the stream at play time.
   const anilistId = await malToAnilist(id);
   const enabled = anilistId ? await anivexaEnabled() : false;
-  const [catalog, anizip, recs] = await Promise.all([
+  const [catalog, anizip, recs, similar] = await Promise.all([
     enabled && anilistId ? fetchAnivexaCatalog(anilistId) : Promise.resolve(null),
     fetchAnizipEpisodes(anilistId),
     getRecommendations(id).catch(() => []),
+    getSimilar(a).catch(() => []),
   ]);
+  // Live Jikan recommendations when we have them, else similar titles from the
+  // local catalog (Jikan is often disabled, which left this row empty).
+  const suggestions = recs.length
+    ? recs.map((r) => ({ id: r.id, title: r.title, image: r.image }))
+    : similar.map((s) => ({ id: s.id, title: s.title, image: s.poster }));
   const anivexaSources: Source[] = [];
   let anivexaEps = new Set<number>();
   if (catalog && anilistId) {
@@ -185,8 +191,8 @@ export default async function WatchPage({ params, searchParams }: Props) {
             )}
           </div>
 
-          {recs.length > 0 && (
-            <Shelf eyebrow="If you’re enjoying this" title="You might also like" items={recs.map((r) => ({ id: r.id, title: r.title, image: r.image }))} />
+          {suggestions.length > 0 && (
+            <Shelf eyebrow="If you’re enjoying this" title="You might also like" items={suggestions} />
           )}
 
           <Comments malId={id} episode={ep} title={a.title} image={a.posterSm} heading={`Episode ${ep} talk`} />
@@ -197,7 +203,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
             <h2 className="font-extrabold">Episodes</h2>
             <span className="rounded-full bg-cream-tint px-2.5 py-0.5 font-mono text-[12px] text-plum-muted">{streamableSet.size}/{total}</span>
           </div>
-          <ol className="flex-1 overflow-y-auto p-2">
+          <ol className="scrollbar-none flex-1 overflow-y-auto p-2">
             {numbers.map((n) => {
               const meta = list.items.find((e) => e.number === n);
               const art = anizip[n];

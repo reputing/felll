@@ -5,7 +5,6 @@ import { SiteHeader } from "@/components/shell/site-header";
 import { SiteFooter } from "@/components/shell/site-footer";
 import { PresenceBeacon } from "@/components/shell/presence";
 import { CommandPalette } from "@/components/shell/command-palette";
-import { MiniPlayer } from "@/components/watch/mini-player";
 import { StoreSeed } from "@/components/store-seed";
 import { SpotlightTracker } from "@/components/spotlight";
 import { Toaster } from "@/components/toaster";
@@ -35,7 +34,6 @@ export default async function MembersLayout({ children }: { children: React.Reac
       <PresenceBeacon />
       <CommandPalette />
       <SpotlightTracker />
-      <MiniPlayer />
       <Toaster />
     </div>
   );
