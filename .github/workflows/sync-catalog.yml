@@ -7,11 +7,18 @@ on:
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
+    inputs:
+      pages:
+        description: "How many titles to sync (the scheduled run uses 1500)"
+        default: "1500"
+        required: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # A big crawl (25k) paces itself under the upstreams' rate limits, so give it
+    # room; the scheduled 1500-title run finishes well inside this.
+    timeout-minutes: 350
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -22,4 +29,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run sync
+      # Scheduled runs send no inputs, so fall back to 1500.
+      - run: npm run sync -- --pages ${{ github.event.inputs.pages || '1500' }}
