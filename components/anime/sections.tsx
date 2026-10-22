@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Play } from "lucide-react";
 import { all } from "@/lib/db";
 import { getCharacters, getEpisodeList, getRecommendations, getStatistics, nextAiring, episodeAt, type AnimeFull } from "@/lib/jikan";
+import { malToAnilist } from "@/lib/anivexa";
+import { fetchAnizipEpisodes } from "@/lib/anizip";
 import { Countdown, LocalTime } from "@/components/countdown";
 import { Poster } from "@/components/poster";
 import { Shelf } from "@/components/shelf";
@@ -11,16 +13,19 @@ export const card = "rounded-box border-1.5 border-line bg-cream-card p-5 sm:p-6
 
 /** Episode list with air dates, filler/recap flags, what's in the vault, and the drop dates still to come. */
 export async function Episodes({ a, progress }: { a: AnimeFull; progress: number }) {
-  const [list, vault] = await Promise.all([
+  const anilistId = await malToAnilist(a.id);
+  const [list, vault, anizip] = await Promise.all([
     getEpisodeList(a.id),
     all<{ number: number; audio: string }>(
       `select e.number, group_concat(distinct s.audio) as audio from episodes e
        join video_sources s on s.episode_id = e.id and s.status = 'ready' where e.mal_id = ? group by e.number`,
       a.id,
     ),
+    fetchAnizipEpisodes(anilistId),
   ]);
   const have = new Map(vault.map((v) => [v.number, v.audio]));
   const known = list.items;
+  const anizipNums = Object.keys(anizip).map(Number).filter((n) => n > 0);
   // upcoming drops, from the weekly broadcast slot. Jikan's own air dates win
   // over the estimate: the next drop is the one after the last aired episode.
   const upcoming: { n: number; at: number }[] = [];
@@ -34,8 +39,10 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
       at += 7 * 86400;
     }
   }
-  const total = Math.max(a.episodes ?? 0, known.length, ...[...have.keys()]);
-  const numbers = known.length ? known.map((k) => k.number) : Array.from({ length: total }, (_, i) => i + 1);
+  const total = Math.max(a.episodes ?? 0, known.length, anizipNums.length ? Math.max(...anizipNums) : 0, ...[...have.keys()]);
+  const allNumbers = known.length ? known.map((k) => k.number) : Array.from({ length: total }, (_, i) => i + 1);
+  const numbers = allNumbers.slice(0, 120);
+  const more = allNumbers.length - numbers.length;
   if (!numbers.length && !upcoming.length) return null;
   const film = a.group === "film";
 
@@ -66,16 +73,26 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
       <ol className="scrollbar-none grid max-h-[560px] gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
         {numbers.map((n) => {
           const info = known.find((k) => k.number === n);
+          const art = anizip[n];
           const audio = have.get(n);
           const watched = n <= progress;
           return (
             <li key={n}>
-              <Link href={`/watch/${a.id}/${n}`} className={cn("group grid grid-cols-[44px_1fr_auto] items-center gap-3 rounded-2xl border-1.5 border-line-soft bg-paper p-2 pr-3 transition hover:border-frost-hot", watched && "opacity-70")}>
-                <span className={cn("grid h-11 place-items-center rounded-xl font-mono text-[14px]", audio ? "bg-frost text-frost-ink" : "bg-cream-tint text-plum-muted")}>
-                  {audio ? <Play className="size-4" fill="currentColor" /> : String(n).padStart(2, "0")}
-                </span>
+              <Link href={`/watch/${a.id}/${n}`} className={cn("group grid items-center gap-3 rounded-2xl border-1.5 border-line-soft bg-paper p-2 pr-3 transition hover:border-frost-hot", art?.image ? "grid-cols-[72px_1fr_auto]" : "grid-cols-[44px_1fr_auto]", watched && "opacity-70")}>
+                {art?.image ? (
+                  <span className="relative h-11 w-[72px] flex-none overflow-hidden rounded-lg bg-night">
+                    <Poster src={art.image} className={cn("size-full transition group-hover:scale-105", watched && "saturate-[.6]")} />
+                    <span className="absolute inset-0 grid place-items-center bg-black/35 font-mono text-[11px] font-bold text-white">
+                      {audio ? <Play className="size-3.5" fill="currentColor" /> : String(n).padStart(2, "0")}
+                    </span>
+                  </span>
+                ) : (
+                  <span className={cn("grid h-11 place-items-center rounded-xl font-mono text-[14px]", audio ? "bg-frost text-frost-ink" : "bg-cream-tint text-plum-muted")}>
+                    {audio ? <Play className="size-4" fill="currentColor" /> : String(n).padStart(2, "0")}
+                  </span>
+                )}
                 <span className="min-w-0">
-                  <span className="block truncate text-[13.5px] font-extrabold">{film ? a.title : info?.title ?? `Episode ${n}`}</span>
+                  <span className="block truncate text-[13.5px] font-extrabold">{film ? a.title : art?.title ?? info?.title ?? `Episode ${n}`}</span>
                   <span className="flex flex-wrap gap-x-2 text-[11.5px] font-semibold text-plum-muted">
                     <span>EP {n}</span>
                     {info?.aired && <span>{new Date(info.aired).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" })}</span>}
@@ -90,6 +107,7 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
           );
         })}
       </ol>
+      {more > 0 && <p className="mt-3 text-center text-[12.5px] font-semibold text-plum-muted">+{more} more episode{more === 1 ? "" : "s"}</p>}
     </section>
   );
 }

@@ -6,6 +6,7 @@ import { all, db, first } from "@/lib/db";
 import { getCachedAnime } from "@/lib/jikan";
 import { memberStats } from "@/lib/stats";
 import { computeBadges } from "@/lib/badges";
+import { BadgeIcon } from "@/components/badge-icon";
 import { ago, cn } from "@/lib/utils";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
@@ -133,8 +134,13 @@ export default async function Profile({ params }: Props) {
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
           {badges.map((b) => (
-            <div key={b.key} title={b.earned ? b.desc : `Locked · ${b.desc}`} className={cn("flex items-center gap-2.5 rounded-2xl border-1.5 p-2.5 transition", b.earned ? "border-line bg-paper" : "border-dashed border-line-soft opacity-40 grayscale")}>
-              <span className="grid size-9 flex-none place-items-center rounded-xl bg-cream-tint text-[18px]">{b.icon}</span>
+            <div key={b.key} title={b.earned ? b.desc : `Locked · ${b.desc}`} className={cn("flex items-center gap-3 rounded-2xl border-1.5 p-2.5 transition", b.earned ? "border-line bg-paper" : "border-dashed border-line-soft opacity-45")}>
+              <span
+                className={cn("grid size-10 flex-none place-items-center rounded-full border-1.5", !b.earned && "border-line-soft text-plum-faint")}
+                style={b.earned ? { background: `color-mix(in srgb, ${accent} 88%, white)`, borderColor: accent, color: "#17101e" } : undefined}
+              >
+                <BadgeIcon badge={b.key} className="size-[19px]" />
+              </span>
               <span className="min-w-0">
                 <span className="block truncate text-[13px] font-extrabold">{b.label}</span>
                 <span className="block truncate text-[11px] font-semibold text-plum-muted">{b.desc}</span>

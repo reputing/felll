@@ -135,7 +135,7 @@ const ANI_MEDIA = `
   idMal title { romaji english native } synonyms format status description(asHtml: false)
   startDate { year month day } endDate { year month day } season seasonYear episodes duration
   source averageScore popularity favourites genres isAdult coverImage { extraLarge large medium }
-  trailer { id site } studios(isMain: false) { nodes { name isAnimationStudio } }
+  trailer { id site } studios { nodes { name isAnimationStudio } }
   nextAiringEpisode { airingAt episode } rankings { rank type allTime }`;
 const ANI_QUERY = `
   query ($page: Int, $perPage: Int, $sort: [MediaSort], $season: MediaSeason, $seasonYear: Int, $status: MediaStatus, $format: MediaFormat) {

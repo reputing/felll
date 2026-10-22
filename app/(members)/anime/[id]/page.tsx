@@ -14,6 +14,8 @@ import { Poster } from "@/components/poster";
 import { Countdown } from "@/components/countdown";
 import { TrailerButton } from "@/components/trailer";
 import { LibraryControls } from "@/components/anime/library-controls";
+import { FollowShow } from "@/components/anime/follow-show";
+import { QueueButton } from "@/components/queue/queue-button";
 import { RatingPicker } from "@/components/anime/rating";
 import { Comments } from "@/components/comments/comments";
 import { ShareButton } from "@/components/share";
@@ -43,6 +45,10 @@ export default async function AnimePage({ params, searchParams }: Props) {
   ]);
   if (!a) notFound();
   const { surprise } = await searchParams;
+
+  // Follow state for airing shows (own query so a lagging migration can't break the page).
+  let following = false;
+  try { following = !!(await d.prepare("select 1 from show_follows where user_id = ? and mal_id = ?").bind(me.id, id).first()); } catch { /* table not ready */ }
 
   const c = community.results[0] as { avg: number | null; n: number; saves: number };
   const live = Number((watchingNow.results[0] as { n: number }).n);
@@ -116,6 +122,8 @@ export default async function AnimePage({ params, searchParams }: Props) {
                   <Button size="lg" variant="night"><Play className="size-4" />Trailer</Button>
                 </TrailerButton>
               )}
+              {a.airing && <FollowShow malId={a.id} initial={following} />}
+              <QueueButton item={{ id: a.id, title: a.title, image: a.poster }} />
               <ShareButton path={`/anime/${a.id}`} title={a.title} />
             </div>
           </div>

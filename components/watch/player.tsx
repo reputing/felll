@@ -3,12 +3,13 @@ import type Hls from "hls.js";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import {
   Captions, Check, ChevronRight, FastForward, Loader2, Maximize, Maximize2, Minimize, Pause, PictureInPicture2, Play,
-  RectangleHorizontal, Settings, SkipBack, SkipForward, Volume1, Volume2, VolumeX,
+  RectangleHorizontal, Settings, SkipBack, SkipForward, Smile, Volume1, Volume2, VolumeX,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { POPUP, POPUP_ITEM, POPUP_LABEL, POPUP_SEPARATOR } from "@/components/ui/popup";
 import { useBox } from "@/lib/store";
+import { REACTIONS } from "@/lib/reactions";
 import { clock, cn } from "@/lib/utils";
 import { WatchParty } from "./watch-party";
 
@@ -73,6 +74,12 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [sleepMin, setSleepMin] = useState<number | null>(null);
   // This show's remembered playback speed, applied when a source loads.
   const savedSpeed = useRef<number | null>(null);
+  // Crowd-sourced skip markers (fallback when no provider/vault markers) and
+  // timeline "moment" reactions for this episode.
+  const [crowdIntro, setCrowdIntro] = useState<{ start: number; end: number } | null>(null);
+  const [crowdOutro, setCrowdOutro] = useState<{ start: number; end: number } | null>(null);
+  const [moments, setMoments] = useState<{ at: number; emoji: string }[]>([]);
+  const [reactOpen, setReactOpen] = useState(false);
   const [autoNext, setAutoNext] = usePref("autoNext", true);
   const [autoSkip, setAutoSkip] = usePref("autoSkip", false);
   const [theater, setTheater] = usePref("theater", false);
@@ -85,9 +92,9 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
 
   // Effective skip markers: a provider's own markers (Anivexa) override the
   // vault's stored ones for the current source.
-  const introStart = streamIntro?.start ?? intro.start;
-  const introEnd = streamIntro?.end ?? intro.end;
-  const outroStartEff = streamOutro?.start ?? outroStart;
+  const introStart = streamIntro?.start ?? intro.start ?? crowdIntro?.start ?? null;
+  const introEnd = streamIntro?.end ?? intro.end ?? crowdIntro?.end ?? null;
+  const outroStartEff = streamOutro?.start ?? outroStart ?? crowdOutro?.start ?? null;
 
   useEffect(() => {
     if (theater) document.documentElement.dataset.theater = "1";
@@ -188,6 +195,39 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   }, [current, fallback, startAt]);
 
   useEffect(() => () => hls.current?.destroy(), []);
+
+  // Crowd skip markers + timeline moments for this episode.
+  useEffect(() => {
+    let on = true;
+    setCrowdIntro(null); setCrowdOutro(null); setMoments([]);
+    fetch(`/api/skip?malId=${meta.malId}&ep=${meta.ep}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (on && d) { setCrowdIntro(d.intro ?? null); setCrowdOutro(d.outro ?? null); } }).catch(() => {});
+    fetch(`/api/moments?malId=${meta.malId}&ep=${meta.ep}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (on && Array.isArray(d?.moments)) setMoments(d.moments.slice(0, 80)); }).catch(() => {});
+    return () => { on = false; };
+  }, [meta.malId, meta.ep]);
+
+  // Mark where the intro ends / outro starts, for everyone (crowd-sourced).
+  const markSkip = useCallback((kind: "intro" | "outro") => {
+    const v = video.current;
+    if (!v || !v.duration) return;
+    const t = Math.floor(v.currentTime);
+    const start = kind === "intro" ? 0 : t;
+    const end = kind === "intro" ? t : Math.floor(v.duration);
+    if (end <= start) return;
+    setFlash(kind === "intro" ? "Marked intro end" : "Marked outro start");
+    fetch("/api/skip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ malId: meta.malId, ep: meta.ep, kind, start, end }) })
+      .then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) { setCrowdIntro(d.intro ?? null); setCrowdOutro(d.outro ?? null); } }).catch(() => {});
+  }, [meta.malId, meta.ep]);
+
+  // Drop an emoji on the timeline at the current second.
+  const react = useCallback((emoji: string) => {
+    const v = video.current;
+    if (!v) return;
+    const at = Math.floor(v.currentTime);
+    setMoments((m) => [...m, { at, emoji }]);
+    setReactOpen(false);
+    setFlash(emoji);
+    fetch("/api/moments", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ malId: meta.malId, ep: meta.ep, at, emoji }) }).catch(() => {});
+  }, [meta.malId, meta.ep]);
 
   // Dock to a corner mini once the player scrolls up out of view (after the
   // viewer has started it). Scrolling back to it restores the full player. Same
@@ -481,6 +521,9 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
             <div className="absolute inset-y-0 left-0 bg-frost" style={{ width: `${pct}%` }} />
           </div>
           <div className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-frost shadow-[0_0_0_4px_rgb(var(--glow)/.35)] opacity-0 transition group-hover/seek:opacity-100" style={{ left: `${pct}%` }} />
+          {dur > 0 && moments.map((m, i) => (
+            <span key={i} className="pointer-events-none absolute top-0 -translate-x-1/2 text-[10px] leading-none opacity-80" style={{ left: `${Math.min(100, (m.at / dur) * 100)}%` }}>{m.emoji}</span>
+          ))}
           {hover && dur > 0 && <div className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-lg bg-black/80 px-2 py-1 font-mono text-[11.5px] text-white" style={{ left: `${hover.x}%` }}>{clock(hover.t)}</div>}
         </div>
         <div className="flex items-center gap-1">
@@ -495,6 +538,14 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
           </div>
           <span className="ml-2 font-mono text-[12.5px] text-white/85 tabular-nums">{clock(t)} <span className="text-white/45">/ {clock(dur)}</span></span>
           <span className="flex-1" />
+          <div className="relative">
+            <button type="button" className={cn(bar, reactOpen && "text-frost")} onClick={() => setReactOpen((o) => !o)} aria-label="React" aria-expanded={reactOpen}><Smile className="size-5" /></button>
+            {reactOpen && (
+              <div className="absolute bottom-12 right-0 flex gap-1 rounded-full border-1.5 border-night-line bg-night/95 px-2 py-1.5 shadow-[0_12px_28px_-12px_rgba(0,0,0,.8)] backdrop-blur animate-in fade-in slide-in-from-bottom-2">
+                {REACTIONS.map((e) => <button key={e} type="button" onClick={() => react(e)} className="grid size-8 place-items-center rounded-full text-[18px] transition hover:scale-125 hover:bg-white/10">{e}</button>)}
+              </div>
+            )}
+          </div>
           {subs.length > 0 && (
             <button type="button" className={cn(bar, caption && "text-frost")} onClick={() => setCaption((c) => (c ? null : (subs.find((s) => s.is_default) ?? subs[0])?.id ?? null))} aria-label="Captions" aria-pressed={!!caption}>
               <Captions className="size-5" />
@@ -540,6 +591,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
                   ))}
                   <button type="button" onClick={() => setSleepMin(null)} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", sleepMin == null ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>Off</button>
                 </div>
+                <Menu.Separator className={POPUP_SEPARATOR} />
+                <div className={POPUP_LABEL}>Skip markers · help everyone</div>
+                <Menu.Item className={POPUP_ITEM} onSelect={(e) => { e.preventDefault(); markSkip("intro"); }}><span className="flex-1">Mark intro ends here</span></Menu.Item>
+                <Menu.Item className={POPUP_ITEM} onSelect={(e) => { e.preventDefault(); markSkip("outro"); }}><span className="flex-1">Mark outro starts here</span></Menu.Item>
               </Menu.Content>
             </Menu.Portal>
           </Menu.Root>

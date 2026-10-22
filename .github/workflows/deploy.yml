@@ -36,4 +36,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Apply any new D1 migrations before the new code goes live (idempotent —
+      # wrangler skips migrations already recorded in the d1_migrations table).
+      - run: npx wrangler d1 migrations apply felll --remote
       - run: npm run deploy

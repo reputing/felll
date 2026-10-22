@@ -4,6 +4,7 @@ import { all } from "@/lib/db";
 import { episodeAt, getCatalogCount, getCatalogTop, getForYou, getHome, nextAiring } from "@/lib/jikan";
 import { Hero } from "@/components/home/hero";
 import { KeepWatching, type Resume } from "@/components/home/keep-watching";
+import { QueueRail } from "@/components/queue/queue-rail";
 import { Catalog } from "@/components/home/catalog";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
 import { CloserLook } from "@/components/home/closer-look";
@@ -64,6 +65,7 @@ export default async function Home() {
           <main className="flex min-w-0 flex-1 flex-col gap-[30px]">
             <Hero items={trending.slice(0, 5)} />
             <KeepWatching items={resume} />
+            <QueueRail />
             <Catalog pool={pool} total={total} />
             <Suspense fallback={<ShelfSkeleton />}>
               <ForYou userId={me.id} />

@@ -74,7 +74,7 @@ export default async function Portal({ searchParams }: Props) {
               Every anime on your list, in one little box.
             </h1>
             <p className="mt-4 max-w-[46ch] text-pretty text-[15px] leading-relaxed text-night-muted">
-              Watch, rate, keep track and talk about it with the rest of kuro. The door opens with your kuro account.
+              Pick up where you left off, keep up with what&apos;s airing, and watch it together with the rest of kuro. Sign in with your kuro account to come in.
             </p>
           </div>
           <ul className="grid grid-cols-2 gap-2">
