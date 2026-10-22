@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { requireMember } from "@/lib/auth";
 import { all } from "@/lib/db";
-import { episodeAt, getHome, getRecommendations, nextAiring } from "@/lib/jikan";
+import { episodeAt, getCatalogCount, getCatalogTop, getHome, getRecommendations, nextAiring } from "@/lib/jikan";
 import { Hero } from "@/components/home/hero";
 import { KeepWatching, type Resume } from "@/components/home/keep-watching";
 import { Catalog } from "@/components/home/catalog";
@@ -16,8 +16,10 @@ export const metadata = { title: "Explore" };
 
 export default async function Home() {
   const me = await requireMember();
-  const [{ trending, season, top, popular }, resume, local] = await Promise.all([
+  const [{ trending, season, top, popular }, catalogTop, catalogCount, resume, local] = await Promise.all([
     getHome(),
+    getCatalogTop(300),
+    getCatalogCount(),
     all<Resume>(
       `select mal_id, episode, position, duration, title, image from watch_progress w
        where user_id = ? and updated_at = (select max(updated_at) from watch_progress where user_id = w.user_id and mal_id = w.mal_id)
@@ -30,8 +32,11 @@ export default async function Home() {
     ),
   ]);
 
+  // The curated rows give the hero and the airing/season flavour; the catalog
+  // slice fills the box out to hundreds so Explore reflects the real library.
   const seen = new Set<number>();
-  const pool = [...trending, ...season, ...popular, ...top].filter((m) => !seen.has(m.id) && seen.add(m.id));
+  const pool = [...trending, ...season, ...popular, ...top, ...catalogTop].filter((m) => !seen.has(m.id) && seen.add(m.id));
+  const total = Math.max(catalogCount, pool.length);
   const since = Date.now() - 86400_000;
   const slots: Slot[] = [...trending, ...season]
     .filter((a, i, arr) => arr.findIndex((b) => b.id === a.id) === i)
@@ -55,11 +60,11 @@ export default async function Home() {
         </div>
       ) : (
         <div className="mx-auto flex max-w-[1560px] flex-col gap-[22px] px-3 pb-12 pt-[22px] sm:px-5 lg:flex-row lg:items-start">
-          <LibrarySidebar pool={pool} className="hidden lg:sticky lg:top-[100px] lg:block lg:w-[250px] lg:flex-none" />
+          <LibrarySidebar pool={pool} total={total} className="hidden lg:sticky lg:top-[100px] lg:block lg:w-[250px] lg:flex-none" />
           <main className="flex min-w-0 flex-1 flex-col gap-[30px]">
             <Hero items={trending.slice(0, 5)} />
             <KeepWatching items={resume} />
-            <Catalog pool={pool} />
+            <Catalog pool={pool} total={total} />
             <Suspense fallback={<ShelfSkeleton />}>
               <BecauseYouLiked userId={me.id} />
             </Suspense>

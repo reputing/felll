@@ -15,7 +15,7 @@ const LIB: { v: "all" | Group; label: string; Icon: typeof Tv }[] = [
 ];
 const row = "grid w-full items-center gap-3 rounded-[14px] px-3 text-left font-semibold transition-colors hover:bg-cream-tint";
 
-export function LibrarySidebar({ pool, className }: { pool: Anime[]; className?: string }) {
+export function LibrarySidebar({ pool, total, className }: { pool: Anime[]; total?: number; className?: string }) {
   const fmt = useBox((s) => s.fmt), active = useBox((s) => s.genres), savedOnly = useBox((s) => s.savedOnly);
   const savedN = useBox((s) => pool.filter((m) => s.lib[m.id]?.status).length);
 
@@ -61,6 +61,10 @@ export function LibrarySidebar({ pool, className }: { pool: Anime[]; className?:
         <a href="/api/random" className={cn(row, "h-11 grid-cols-[22px_1fr]")}>
           <Dice5 className="size-[18px]" strokeWidth={2} /><span>Surprise me</span>
         </a>
+        <Link href="/browse" className={cn(row, "h-11 grid-cols-[22px_1fr_auto] text-frost-text")}>
+          <LayoutGrid className="size-[18px]" strokeWidth={2} /><span>Browse all anime</span>
+          {total != null && <span className="font-mono text-xs text-plum-muted">{total.toLocaleString()}</span>}
+        </Link>
       </div>
     </aside>
   );

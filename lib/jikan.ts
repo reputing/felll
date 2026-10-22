@@ -358,6 +358,21 @@ async function catalogPage(where: string, params: unknown[], order: string, page
   return { items: items.slice(0, size), hasNext: items.length > size, lastPage: Math.max(1, Math.ceil(total / size)), total };
 }
 
+/** The most popular titles straight from the local catalog — the Explore box's pool. */
+export async function getCatalogTop(limit = 300): Promise<Anime[]> {
+  return fromCatalog("", [], "members desc", limit, 0);
+}
+
+/** How many titles the catalog holds, for the "browse all N" links. */
+export async function getCatalogCount(): Promise<number> {
+  try {
+    const r = await (await db()).prepare("select count(*) as n from catalog").first<{ n: number }>();
+    return Number(r?.n ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
 /** A Jikan list, or the same list from the catalog when Jikan (and its cache) can't answer. */
 async function listOr(path: string, ttl: number, fallback: () => Promise<Anime[]>): Promise<Anime[]> {
   try {

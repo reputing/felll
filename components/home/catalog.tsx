@@ -1,5 +1,6 @@
 "use client";
-import { X } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PosterCard } from "@/components/poster-card";
@@ -10,7 +11,7 @@ import { cn, pad2 } from "@/lib/utils";
 
 const PILLS = [{ v: "all", label: "All titles" }, { v: "tv", label: "TV series" }, { v: "film", label: "Films" }] as const;
 
-export function Catalog({ pool }: { pool: Anime[] }) {
+export function Catalog({ pool, total }: { pool: Anime[]; total?: number }) {
   const { list, selected } = useCatalog(pool);
   const fmt = useBox((s) => s.fmt), sort = useBox((s) => s.sort), genres = useBox((s) => s.genres);
   const q = useBox((s) => s.q), savedOnly = useBox((s) => s.savedOnly), limit = useBox((s) => s.limit);
@@ -84,6 +85,13 @@ export function Catalog({ pool }: { pool: Anime[] }) {
         <Button variant="outline" className="self-center bg-cream-card" onClick={() => set((s) => ({ limit: s.limit + 12 }))}>
           Show more · {list.length - limit} left
         </Button>
+      )}
+      {total != null && total > pool.length && (
+        <Link href={q.trim() ? `/browse?q=${encodeURIComponent(q.trim())}` : "/browse"}
+          className="group flex items-center justify-center gap-1.5 self-center rounded-full border-1.5 border-line bg-cream-card px-5 py-2.5 text-[13.5px] font-bold text-frost-text hover:border-frost-hot">
+          Browse all {total.toLocaleString()} titles
+          <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" strokeWidth={2.4} />
+        </Link>
       )}
     </section>
   );
