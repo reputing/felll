@@ -244,14 +244,26 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setFlash(s > 0 ? `+${s}s` : `${s}s`);
   }, []);
   const fullscreen = useCallback(() => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else box.current?.requestFullscreen?.();
+    const el = box.current as (HTMLDivElement & { webkitRequestFullscreen?: () => void }) | null;
+    const v = video.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
+    const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void };
+    if (doc.fullscreenElement || doc.webkitFullscreenElement) {
+      (doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.());
+      return;
+    }
+    // Desktop/Android: fullscreen the whole player so our controls come along.
+    if (el?.requestFullscreen) { el.requestFullscreen().catch(() => {}); return; }
+    if (el?.webkitRequestFullscreen) { el.webkitRequestFullscreen(); return; }
+    // iOS Safari only lets the <video> itself go fullscreen (native controls).
+    if (v?.webkitEnterFullscreen) { v.webkitEnterFullscreen(); return; }
   }, []);
 
   useEffect(() => {
-    const onFs = () => setFull(!!document.fullscreenElement);
+    const doc = document as Document & { webkitFullscreenElement?: Element };
+    const onFs = () => setFull(!!(doc.fullscreenElement || doc.webkitFullscreenElement));
     document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    document.addEventListener("webkitfullscreenchange", onFs);
+    return () => { document.removeEventListener("fullscreenchange", onFs); document.removeEventListener("webkitfullscreenchange", onFs); };
   }, []);
 
   useEffect(() => {
