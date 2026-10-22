@@ -5,7 +5,8 @@ import { requireMember } from "@/lib/auth";
 import { all, db, first } from "@/lib/db";
 import { getCachedAnime } from "@/lib/jikan";
 import { memberStats } from "@/lib/stats";
-import { ago } from "@/lib/utils";
+import { computeBadges } from "@/lib/badges";
+import { ago, cn } from "@/lib/utils";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { Poster } from "@/components/poster";
@@ -55,6 +56,8 @@ export default async function Profile({ params }: Props) {
   const gMax = genres[0]?.[1] ?? 1;
 
   const accent = u.accent;
+  const badges = computeBadges(stats);
+  const earnedBadges = badges.filter((b) => b.earned).length;
   const tiles = [
     { k: "Completed", v: stats.completed },
     { k: "Episodes", v: stats.episodes },
@@ -119,6 +122,24 @@ export default async function Profile({ params }: Props) {
           </div>
         ))}
       </dl>
+
+      <section className="rounded-box border-1.5 border-line bg-cream-card p-5">
+        <div className="flex items-end justify-between">
+          <div><div className="eyebrow">Achievements</div><h2 className="mt-1 text-xl font-extrabold tracking-[-.6px]">Badges</h2></div>
+          <span className="font-mono text-[13px] text-plum-muted">{earnedBadges}/{badges.length}</span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+          {badges.map((b) => (
+            <div key={b.key} title={b.desc} className={cn("flex items-center gap-2.5 rounded-2xl border-1.5 p-2.5", b.earned ? "border-line bg-paper" : "border-dashed border-line-soft opacity-45")}>
+              <span className="grid size-9 flex-none place-items-center rounded-xl bg-cream-tint text-[18px]">{b.earned ? b.icon : "🔒"}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] font-extrabold">{b.label}</span>
+                <span className="block truncate text-[11px] font-semibold text-plum-muted">{b.desc}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px] lg:items-start">
         <div className="flex min-w-0 flex-col gap-6">

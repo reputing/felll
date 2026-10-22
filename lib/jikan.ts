@@ -375,6 +375,45 @@ export async function getCatalogTop(limit = 300): Promise<Anime[]> {
   return fromCatalog("", [], "members desc", limit, 0);
 }
 
+/**
+ * "For you" rails, built entirely from the member's own library (no external
+ * API — works with Jikan off). Weights the genres of the shows they favourited,
+ * rated highly, or watched, then pulls the best catalog titles in those genres
+ * they haven't added yet.
+ */
+export async function getForYou(userId: string): Promise<{ eyebrow: string; title: string; items: { id: number; title: string; image: string | null }[] }[]> {
+  type LibRow = { mal_id: number; status: string | null; score: number | null; favorite: number; genres: string | null };
+  let lib: LibRow[] = [];
+  try {
+    const { results } = await (await db())
+      .prepare("select l.mal_id, l.status, l.score, l.favorite, c.genres from library l join catalog c on c.mal_id = l.mal_id where l.user_id = ?")
+      .bind(userId)
+      .all<LibRow>();
+    lib = results;
+  } catch {
+    return [];
+  }
+  if (!lib.length) return [];
+
+  const seen = new Set<number>(lib.map((r) => r.mal_id));
+  const weight = new Map<string, number>();
+  for (const r of lib) {
+    const w = (r.favorite ? 3 : 0) + (r.score && r.score >= 8 ? 2 : r.score && r.score >= 6 ? 1 : 0) + (r.status === "completed" || r.status === "watching" ? 1 : 0);
+    if (!w) continue;
+    for (const g of String(r.genres ?? "").split("|").filter(Boolean)) weight.set(g, (weight.get(g) ?? 0) + w);
+  }
+  const top = [...weight.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([g]) => g);
+  const rails: { eyebrow: string; title: string; items: { id: number; title: string; image: string | null }[] }[] = [];
+  for (const g of top) {
+    const picks = (await fromCatalog("genres like ? and score is not null", [`%|${g}|%`], "score desc", 40))
+      .filter((a) => !seen.has(a.id))
+      .slice(0, 12);
+    picks.forEach((a) => seen.add(a.id)); // don't repeat across rails
+    if (picks.length >= 4) rails.push({ eyebrow: "For you", title: `Because you like ${g}`, items: picks.map((a) => ({ id: a.id, title: a.title, image: a.poster })) });
+  }
+  return rails;
+}
+
 /** How many titles the catalog holds, for the "browse all N" links. */
 export async function getCatalogCount(): Promise<number> {
   try {

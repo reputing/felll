@@ -69,6 +69,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
   const [nextIn, setNextIn] = useState<number | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [stopAfterEp, setStopAfterEp] = useState(false);
+  const [sleepMin, setSleepMin] = useState<number | null>(null);
+  // This show's remembered playback speed, applied when a source loads.
+  const savedSpeed = useRef<number | null>(null);
   const [autoNext, setAutoNext] = usePref("autoNext", true);
   const [autoSkip, setAutoSkip] = usePref("autoSkip", false);
   const [theater, setTheater] = usePref("theater", false);
@@ -103,6 +107,29 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     const d = sources.find((s) => s.audio === "dub" && !failed.has(s.id));
     if (d && current?.audio !== "dub") setCurrent(d);
   }, [preferDub]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Per-show memory: the audio track and speed you last used on THIS show win
+  // over the global defaults.
+  useEffect(() => {
+    try {
+      savedSpeed.current = Number(localStorage.getItem(`speed:${meta.malId}`)) || null;
+      const a = localStorage.getItem(`audio:${meta.malId}`);
+      if (a) { const want = sources.find((s) => s.audio === a && !failed.has(s.id)); if (want) setCurrent(want); }
+    } catch { /* storage off */ }
+  }, [meta.malId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pick a server AND remember this show's audio preference.
+  const pick = useCallback((s: Source) => {
+    setCurrent(s);
+    try { localStorage.setItem(`audio:${meta.malId}`, s.audio); } catch { /* storage off */ }
+  }, [meta.malId]);
+
+  // Sleep timer: pause after N minutes.
+  useEffect(() => {
+    if (sleepMin == null) return;
+    const id = setTimeout(() => { video.current?.pause(); setFlash("Sleep timer — paused"); setSleepMin(null); }, sleepMin * 60_000);
+    return () => clearTimeout(id);
+  }, [sleepMin]);
 
   const fallback = useCallback((src: Source) => {
     setFailed((prev) => {
@@ -145,8 +172,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         h.loadSource(url);
         h.attachMedia(v);
       }
-      const seek = () => { if (resumeAt > 5 && Math.abs(v.currentTime - resumeAt) > 2) v.currentTime = resumeAt; };
-      v.addEventListener("loadedmetadata", seek, { once: true });
+      const onMeta = () => {
+        if (resumeAt > 5 && Math.abs(v.currentTime - resumeAt) > 2) v.currentTime = resumeAt;
+        if (savedSpeed.current && savedSpeed.current !== 1) v.playbackRate = savedSpeed.current;
+      };
+      v.addEventListener("loadedmetadata", onMeta, { once: true });
       v.play().catch(() => {});
     })().catch(() => fallback(current));
     return () => { cancelled = true; };
@@ -321,7 +351,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       v.currentTime = introEnd;
       setFlash("Skipped intro");
     }
-    if (autoNext && nextHref && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
+    if (autoNext && !stopAfterEp && nextHref && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
   };
 
   if (!sources.length) return null;
@@ -371,8 +401,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         onDurationChange={(e) => setDur(e.currentTarget.duration)}
         onTimeUpdate={onTime}
         onVolumeChange={(e) => { setVol(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
-        onRateChange={(e) => setSpeed(e.currentTarget.playbackRate)}
-        onEnded={() => { ended.current = true; report(true); if (autoNext && nextHref) setNextIn((n) => n ?? 5); }}
+        onRateChange={(e) => { setSpeed(e.currentTarget.playbackRate); savedSpeed.current = e.currentTarget.playbackRate; try { localStorage.setItem(`speed:${meta.malId}`, String(e.currentTarget.playbackRate)); } catch { /* storage off */ } }}
+        onEnded={() => { ended.current = true; report(true); if (autoNext && !stopAfterEp && nextHref) setNextIn((n) => n ?? 5); }}
         crossOrigin="anonymous"
       >
         {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
@@ -457,7 +487,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
               <Menu.Content side="top" align="end" sideOffset={10} className={cn(POPUP, "max-h-[60vh] w-[250px] overflow-y-auto")}>
                 <div className={POPUP_LABEL}>Server</div>
                 {sources.filter((s) => s.id === current?.id || (!dead.has(s.id) && !failed.has(s.id))).map((s) => (
-                  <Menu.Item key={s.id} disabled={failed.has(s.id)} className={POPUP_ITEM} onSelect={() => setCurrent(s)}>
+                  <Menu.Item key={s.id} disabled={failed.has(s.id)} className={POPUP_ITEM} onSelect={() => pick(s)}>
                     <span className="w-9 text-[10.5px] font-extrabold uppercase text-plum-muted">{AUDIO[s.audio]}</span>
                     <span className="flex-1">{s.label}</span>{current?.id === s.id && <Check className="size-4" strokeWidth={3} />}
                   </Menu.Item>
@@ -482,6 +512,15 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
                 <Menu.Separator className={POPUP_SEPARATOR} />
                 <Menu.CheckboxItem checked={autoNext} onCheckedChange={setAutoNext} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Auto-next</span><Toggle on={autoNext} /></Menu.CheckboxItem>
                 <Menu.CheckboxItem checked={autoSkip} onCheckedChange={setAutoSkip} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Auto-skip intro</span><Toggle on={autoSkip} /></Menu.CheckboxItem>
+                <Menu.CheckboxItem checked={stopAfterEp} onCheckedChange={setStopAfterEp} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Stop after this episode</span><Toggle on={stopAfterEp} /></Menu.CheckboxItem>
+                <Menu.Separator className={POPUP_SEPARATOR} />
+                <div className={POPUP_LABEL}>Sleep timer{sleepMin ? ` · ${sleepMin}m` : ""}</div>
+                <div className="grid grid-cols-4 gap-1 px-2 pb-2">
+                  {[15, 30, 60].map((m) => (
+                    <button key={m} type="button" onClick={() => setSleepMin((cur) => (cur === m ? null : m))} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", sleepMin === m ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>{m}m</button>
+                  ))}
+                  <button type="button" onClick={() => setSleepMin(null)} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", sleepMin == null ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>Off</button>
+                </div>
               </Menu.Content>
             </Menu.Portal>
           </Menu.Root>

@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { requireMember } from "@/lib/auth";
 import { all } from "@/lib/db";
-import { episodeAt, getCatalogCount, getCatalogTop, getHome, getRecommendations, nextAiring } from "@/lib/jikan";
+import { episodeAt, getCatalogCount, getCatalogTop, getForYou, getHome, nextAiring } from "@/lib/jikan";
 import { Hero } from "@/components/home/hero";
 import { KeepWatching, type Resume } from "@/components/home/keep-watching";
 import { Catalog } from "@/components/home/catalog";
@@ -66,7 +66,7 @@ export default async function Home() {
             <KeepWatching items={resume} />
             <Catalog pool={pool} total={total} />
             <Suspense fallback={<ShelfSkeleton />}>
-              <BecauseYouLiked userId={me.id} />
+              <ForYou userId={me.id} />
             </Suspense>
             <FreshSchedule items={slots} />
           </main>
@@ -81,16 +81,16 @@ export default async function Home() {
   );
 }
 
-/** Recommendations from the show you most recently loved. Streams in after the page. */
-async function BecauseYouLiked({ userId }: { userId: string }) {
-  const [seed] = await all<{ mal_id: number; title: string }>(
-    `select mal_id, title from library where user_id = ? and (favorite = 1 or score >= 8 or status in ('completed','watching'))
-     order by favorite desc, score desc, updated_at desc limit 1`,
-    userId,
+/** "For you" rails, built from the member's own library. Streams in after the page. */
+async function ForYou({ userId }: { userId: string }) {
+  const rails = await getForYou(userId);
+  if (!rails.length) return null;
+  return (
+    <>
+      {rails.map((r) => (
+        <Shelf key={r.title} eyebrow={r.eyebrow} title={r.title} items={r.items} />
+      ))}
+    </>
   );
-  if (!seed) return null;
-  const recs = await getRecommendations(seed.mal_id);
-  if (!recs.length) return null;
-  return <Shelf title={`Because you liked ${seed.title}`} eyebrow="Picked for you" items={recs.map((r) => ({ id: r.id, title: r.title, image: r.image, note: `${r.votes} recommend` }))} />;
 }
 
