@@ -2,6 +2,7 @@ import { requireMember } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { PageHead } from "@/components/page-head";
 import { ProfileEditor } from "@/components/settings/editor";
+import { PlaybackSettings } from "@/components/settings/playback";
 
 export const metadata = { title: "Customize" };
 
@@ -23,6 +24,7 @@ export default async function Settings() {
           accent: me.accent, theme: me.theme, status_text: me.status_text, showcase, private_lists: !!me.private_lists, is_plus: !!me.is_plus,
         }}
       />
+      <PlaybackSettings />
     </div>
   );
 }

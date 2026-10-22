@@ -5,19 +5,19 @@
    Skins: cupcake (default), midnight, matcha, lilac. Set on <html data-skin>. */
 
 :root {
-  --cream: #fcf0f4;
-  --cream-card: #fffafb;
-  --cream-tint: #fdeef3;
-  --cream-blush: #fde4ed;
-  --paper: #ffffff;
-  --line: #f2cad7;
-  --line-soft: #f7dde6;
-  --line-hot: #f2b3c9;
-  --frost: #f28cb3;
-  --frost-hot: #e8679a;
-  --frost-text: #c23d74;
-  --frost-deep: #9e2b5c;
-  --frost-brand: #d4457f;
+  --cream: #fde7f0;
+  --cream-card: #fff4f9;
+  --cream-tint: #fde2ee;
+  --cream-blush: #fcd4e6;
+  --paper: #fffafc;
+  --line: #f6bcd3;
+  --line-soft: #f9d0e0;
+  --line-hot: #f2a5c2;
+  --frost: #f576a7;
+  --frost-hot: #ec4e8d;
+  --frost-text: #c0346e;
+  --frost-deep: #99245a;
+  --frost-brand: #df3c7c;
   --frost-ink: #3b0f24;
   --plum: #3b1a2c;
   --plum-body: #5c3447;
@@ -155,7 +155,7 @@
   --color-sprinkle-peach: #ef8a5c;
   --color-sprinkle-star: #d99a2b;
 
-  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-sans-src), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex), ui-monospace, monospace;
 
   --radius-box: 1.75rem;

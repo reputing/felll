@@ -1,7 +1,7 @@
 // One look for everything that floats: menus, selects, dialogs, the palette,
 // tooltips. Change it here and every popup follows the active skin.
 export const POPUP =
-  "z-50 rounded-3xl border-1.5 border-line bg-cream-card/95 p-2 text-plum shadow-shell backdrop-blur-xl outline-none " +
+  "z-50 rounded-3xl border-1.5 border-line/80 bg-cream-card/80 p-2 text-plum shadow-shell backdrop-blur-2xl backdrop-saturate-150 outline-none " +
   "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 " +
   "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95";
 

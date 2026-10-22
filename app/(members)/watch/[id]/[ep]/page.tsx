@@ -18,6 +18,7 @@ import { TrailerButton } from "@/components/trailer";
 import { Comments } from "@/components/comments/comments";
 import { LibraryControls } from "@/components/anime/library-controls";
 import { Player, type Source, type Track } from "@/components/watch/player";
+import { EpisodeRail, type EpisodeEntry } from "@/components/watch/episode-rail";
 import { Reactions, RequestButton, WatchBeacon } from "@/components/watch/bits";
 
 type Props = { params: Promise<{ id: string; ep: string }>; searchParams: Promise<{ t?: string }> };
@@ -111,6 +112,20 @@ export default async function WatchPage({ params, searchParams }: Props) {
   const vaultSet = new Map(inVault.map((e) => [e.number, e.audio]));
   const streamableSet = new Set<number>([...vaultSet.keys(), ...anivexaEps]);
   const numbers = Array.from({ length: Math.max(total, extMax, ...inVault.map((e) => e.number)) }, (_, i) => i + 1);
+  const episodeEntries: EpisodeEntry[] = numbers.map((n) => {
+    const meta = list.items.find((e) => e.number === n);
+    const art = anizip[n];
+    const audio = vaultSet.get(n) ?? null;
+    return {
+      n,
+      title: art?.title ?? meta?.title ?? `Episode ${n}`,
+      overview: art?.overview ?? null,
+      image: art?.image ?? null,
+      audio,
+      streamable: !!audio || anivexaEps.has(n),
+      filler: !!meta?.filler,
+    };
+  });
   const next = nextAiring(a);
   const nextEp = next ? episodeAt(a, next) : null;
   // trust Jikan's own air dates over the weekly-slot estimate
@@ -198,47 +213,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
           <Comments malId={id} episode={ep} title={a.title} image={a.posterSm} heading={`Episode ${ep} talk`} />
         </div>
 
-        <aside className="watch-side flex max-h-[calc(100svh-120px)] flex-col overflow-hidden rounded-box border-1.5 border-line bg-cream-card lg:sticky lg:top-[100px]">
-          <div className="flex items-center justify-between border-b-1.5 border-line-soft px-4 py-3.5">
-            <h2 className="font-extrabold">Episodes</h2>
-            <span className="rounded-full bg-cream-tint px-2.5 py-0.5 font-mono text-[12px] text-plum-muted">{streamableSet.size}/{total}</span>
-          </div>
-          <ol className="scrollbar-none flex-1 overflow-y-auto p-2">
-            {numbers.map((n) => {
-              const meta = list.items.find((e) => e.number === n);
-              const art = anizip[n];
-              const audio = vaultSet.get(n);
-              const streamable = !!audio || anivexaEps.has(n);
-              const on = n === ep;
-              const title = art?.title ?? meta?.title ?? `Episode ${n}`;
-              const sub = `${audio ? audio.replace(",", " · ").toUpperCase() : anivexaEps.has(n) ? "Stream" : "Not uploaded"}${meta?.filler ? " · filler" : ""}`;
-              return (
-                <li key={n}>
-                  <Link href={`/watch/${id}/${n}`} aria-current={on ? "page" : undefined} scroll={false}
-                    className={cn("flex items-start gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep")}>
-                    {art?.image ? (
-                      <span className="relative aspect-video w-[92px] flex-none overflow-hidden rounded-xl bg-night">
-                        <Poster src={art.image} className={cn("size-full transition", !streamable && "opacity-60 saturate-50")} />
-                        <span className="absolute left-1 top-1 grid min-w-5 place-items-center rounded-md bg-black/70 px-1 font-mono text-[10.5px] font-bold text-white">
-                          {on ? <Play className="size-3" fill="currentColor" /> : String(n).padStart(2, "0")}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className={cn("grid size-10 flex-none place-items-center rounded-xl font-mono text-[13px]", on ? "bg-frost text-frost-ink" : streamable ? "bg-paper text-frost-text" : "bg-cream-tint text-plum-faint")}>
-                        {on ? <Play className="size-4" fill="currentColor" /> : String(n).padStart(2, "0")}
-                      </span>
-                    )}
-                    <span className="min-w-0 flex-1 py-0.5">
-                      <span className="block truncate font-bold">{title}</span>
-                      {art?.overview && <span className="mt-0.5 line-clamp-2 text-[11px] font-medium leading-snug text-plum-muted">{art.overview}</span>}
-                      <span className="mt-0.5 block text-[11px] font-semibold text-plum-muted">{sub}</span>
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ol>
-        </aside>
+        <EpisodeRail id={id} current={ep} total={total} streamableCount={streamableSet.size} episodes={episodeEntries} />
       </div>
     </div>
   );
