@@ -320,25 +320,49 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   }, []);
   const fullscreen = useCallback(() => {
     const el = box.current as (HTMLDivElement & { webkitRequestFullscreen?: () => void }) | null;
-    const v = video.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
+    const v = video.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void; webkitExitFullscreen?: () => void; webkitDisplayingFullscreen?: boolean }) | null;
     const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void };
+    const orient = (screen as Screen & { orientation?: { lock?: (o: string) => Promise<void>; unlock?: () => void } }).orientation;
+    // already fullscreen → leave (and let the phone rotate back)
     if (doc.fullscreenElement || doc.webkitFullscreenElement) {
-      (doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.());
+      doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.();
+      try { orient?.unlock?.(); } catch { /* desktop */ }
       return;
     }
-    // Desktop/Android: fullscreen the whole player so our controls come along.
-    if (el?.requestFullscreen) { el.requestFullscreen().catch(() => {}); return; }
+    if (v?.webkitDisplayingFullscreen) { v.webkitExitFullscreen?.(); return; }
+    // Desktop / Android / iPad: fullscreen the whole player so our controls come
+    // along, then turn the phone to landscape so the video actually fills.
+    if (el?.requestFullscreen) {
+      el.requestFullscreen()
+        .then(() => { try { orient?.lock?.("landscape").catch(() => {}); } catch { /* unsupported */ } })
+        .catch(() => { if (v?.webkitEnterFullscreen) v.webkitEnterFullscreen(); });
+      return;
+    }
     if (el?.webkitRequestFullscreen) { el.webkitRequestFullscreen(); return; }
-    // iOS Safari only lets the <video> itself go fullscreen (native controls).
+    // iPhone Safari: only the <video> itself can go fullscreen (native controls).
     if (v?.webkitEnterFullscreen) { v.webkitEnterFullscreen(); return; }
   }, []);
 
   useEffect(() => {
     const doc = document as Document & { webkitFullscreenElement?: Element };
-    const onFs = () => setFull(!!(doc.fullscreenElement || doc.webkitFullscreenElement));
+    const orient = (screen as Screen & { orientation?: { unlock?: () => void } }).orientation;
+    const onFs = () => {
+      const f = !!(doc.fullscreenElement || doc.webkitFullscreenElement);
+      setFull(f);
+      if (!f) try { orient?.unlock?.(); } catch { /* desktop */ }
+    };
+    const v = video.current;
+    const onVid = () => setFull(!!(v as (HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }) | null)?.webkitDisplayingFullscreen);
     document.addEventListener("fullscreenchange", onFs);
     document.addEventListener("webkitfullscreenchange", onFs);
-    return () => { document.removeEventListener("fullscreenchange", onFs); document.removeEventListener("webkitfullscreenchange", onFs); };
+    v?.addEventListener("webkitbeginfullscreen", onVid);
+    v?.addEventListener("webkitendfullscreen", onVid);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFs);
+      document.removeEventListener("webkitfullscreenchange", onFs);
+      v?.removeEventListener("webkitbeginfullscreen", onVid);
+      v?.removeEventListener("webkitendfullscreen", onVid);
+    };
   }, []);
 
   useEffect(() => {
@@ -434,7 +458,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         ref={video}
         playsInline
         poster={poster ?? undefined}
-        className="size-full"
+        className="size-full bg-black object-contain"
         onClick={toggle}
         onDoubleClick={fullscreen}
         onPlay={() => { setPlaying(true); ended.current = false; engaged.current = true; wake(); }}
