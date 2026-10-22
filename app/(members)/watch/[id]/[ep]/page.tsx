@@ -51,8 +51,6 @@ export default async function WatchPage({ params, searchParams }: Props) {
     ]),
   ]);
   if (!a) notFound();
-  const total = a.episodes ?? Math.max(list.items.length, ep);
-  if (a.episodes && ep > a.episodes) notFound();
 
   const inVault = vault.results as (EpRow & { audio: string })[];
   const here = inVault.find((e) => e.number === ep);
@@ -83,6 +81,12 @@ export default async function WatchPage({ params, searchParams }: Props) {
   }
   const allSources: Source[] = [...sources, ...anivexaSources];
 
+  // Episode count spans the self-hosted vault and Anivexa, so ongoing shows
+  // (episodes = null, e.g. One Piece) list every streamable episode — not one.
+  const extMax = anivexaEps.size ? Math.max(...anivexaEps) : 0;
+  const total = Math.max(a.episodes ?? 0, list.items.length, extMax, ep);
+  if (a.episodes && ep > Math.max(a.episodes, extMax)) notFound();
+
   const sp = await searchParams;
   // resume where you left off, unless you'd basically finished: then from the top
   const saved = resume.results[0] as { position: number; duration: number } | undefined;
@@ -94,7 +98,8 @@ export default async function WatchPage({ params, searchParams }: Props) {
   const others = watchers.results as { handle: string; avatar_url: string | null; accent: string }[];
   const request = req.results[0] as { votes: number; voted: number } | undefined;
   const vaultSet = new Map(inVault.map((e) => [e.number, e.audio]));
-  const numbers = Array.from({ length: Math.max(total, ...inVault.map((e) => e.number)) }, (_, i) => i + 1);
+  const streamableSet = new Set<number>([...vaultSet.keys(), ...anivexaEps]);
+  const numbers = Array.from({ length: Math.max(total, extMax, ...inVault.map((e) => e.number)) }, (_, i) => i + 1);
   const next = nextAiring(a);
   const nextEp = next ? episodeAt(a, next) : null;
   // trust Jikan's own air dates over the weekly-slot estimate
@@ -180,7 +185,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
         <aside className="watch-side flex max-h-[calc(100svh-120px)] flex-col overflow-hidden rounded-box border-1.5 border-line bg-cream-card lg:sticky lg:top-[100px]">
           <div className="flex items-center justify-between border-b-1.5 border-line-soft px-4 py-3.5">
             <h2 className="font-extrabold">Episodes</h2>
-            <span className="rounded-full bg-cream-tint px-2.5 py-0.5 font-mono text-[12px] text-plum-muted">{vaultSet.size}/{total}</span>
+            <span className="rounded-full bg-cream-tint px-2.5 py-0.5 font-mono text-[12px] text-plum-muted">{streamableSet.size}/{total}</span>
           </div>
           <ol className="flex-1 overflow-y-auto p-2">
             {numbers.map((n) => {

@@ -1,0 +1,39 @@
+# Builds and deploys the site (OpenNext → Cloudflare Workers) from CI, so the
+# live cupcake.gg updates without anyone running `npm run deploy` locally.
+#
+# Uses the same account secrets as the catalog sync:
+#   CLOUDFLARE_ACCOUNT_ID  — your Cloudflare account id
+#   CLOUDFLARE_API_TOKEN   — a token that can deploy Workers. The sync token only
+#                            needs "D1: Edit"; deploying also needs
+#                            "Workers Scripts: Edit" (and, for the cupcake.gg
+#                            custom domain, "Workers Routes: Edit"). If the deploy
+#                            fails with a permissions error, widen this token.
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/sweet-bell-gpo325]
+    paths-ignore:
+      - ".github/workflows/sync-catalog.yml"
+      - "scripts/**"
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run deploy
