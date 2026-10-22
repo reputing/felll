@@ -5,19 +5,21 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { background, db, now } from "./db";
 
+// The primary server keeps the brand (Cupcake); every other upstream is
+// anonymised behind a Greek-god alias so the real provider isn't exposed.
 export const ANIVEXA_PROVIDERS: { slug: string; name: string }[] = [
   { slug: "anikoto", name: "Cupcake" },
-  { slug: "animegg", name: "AnimeGG" },
-  { slug: "aniwaves", name: "AniWaves" },
-  { slug: "reanime", name: "Reanime" },
-  { slug: "kaa", name: "KickAssAnime" },
-  { slug: "senshi", name: "Senshi" },
-  { slug: "mkissa", name: "MKissa" },
-  { slug: "anipm", name: "Ani.pm" },
-  { slug: "animenosub", name: "AnimeNoSub" },
-  { slug: "anizone", name: "AniZone" },
-  { slug: "animeonsen", name: "AnimeOnsen" },
-  { slug: "animedunya", name: "AnimeDunya" },
+  { slug: "animegg", name: "Zeus" },
+  { slug: "aniwaves", name: "Poseidon" },
+  { slug: "reanime", name: "Hades" },
+  { slug: "kaa", name: "Apollo" },
+  { slug: "senshi", name: "Ares" },
+  { slug: "mkissa", name: "Hermes" },
+  { slug: "anipm", name: "Athena" },
+  { slug: "animenosub", name: "Artemis" },
+  { slug: "anizone", name: "Hephaestus" },
+  { slug: "animeonsen", name: "Dionysus" },
+  { slug: "animedunya", name: "Hera" },
 ];
 
 const PROVIDER_SLUGS = new Set(ANIVEXA_PROVIDERS.map((p) => p.slug));
