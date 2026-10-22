@@ -36,6 +36,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Make sure kuro's SSO secrets live on THIS worker (so "Continue with kuro"
+      # works). Add KURO_SERVICE_KEY and KURO_SUPABASE_URL as GitHub Actions
+      # secrets; set only when present, so this is a no-op until you add them.
+      - name: Sync kuro secrets to the worker
+        env:
+          KURO_SERVICE_KEY: ${{ secrets.KURO_SERVICE_KEY }}
+          KURO_SUPABASE_URL: ${{ secrets.KURO_SUPABASE_URL }}
+        run: |
+          if [ -n "$KURO_SERVICE_KEY" ]; then printf '%s' "$KURO_SERVICE_KEY" | npx wrangler secret put KURO_SERVICE_KEY; fi
+          if [ -n "$KURO_SUPABASE_URL" ]; then printf '%s' "$KURO_SUPABASE_URL" | npx wrangler secret put KURO_SUPABASE_URL; fi
       # Apply any new D1 migrations before the new code goes live (idempotent —
       # wrangler skips migrations already recorded in the d1_migrations table).
       - run: npx wrangler d1 migrations apply felll --remote
