@@ -64,7 +64,7 @@ export default async function Portal({ searchParams }: Props) {
           <div>
             <div className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="" width={52} height={52} className="size-[52px] animate-float rounded-[18px] bg-paper p-1" />
+              <img src="/cupcake.png" alt="" width={56} height={56} className="size-14 animate-float drop-shadow-[0_6px_14px_rgb(var(--glow)/.4)]" />
               <span className="text-[30px] font-extrabold leading-none tracking-[-1.2px] text-frost">
                 cupcake<span className="text-2xl font-semibold tracking-[-.5px] text-night-muted/70">.gg</span>
               </span>

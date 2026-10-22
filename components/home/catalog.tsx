@@ -76,7 +76,7 @@ export function Catalog({ pool, total }: { pool: Anime[]; total?: number }) {
       ) : (
         <div className="flex flex-col items-center gap-2.5 rounded-3xl border-1.5 border-dashed border-line bg-cream-card px-5 py-12 text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="" width={56} height={56} className="rounded-2xl bg-paper" />
+          <img src="/cupcake.png" alt="" width={56} height={56} className="size-14" />
           <p className="text-base font-extrabold">Nothing in this box yet.</p>
           <Button variant="outline" size="sm" className="rounded-full px-[18px]" onClick={actions.clear}>Clear filters</Button>
         </div>
