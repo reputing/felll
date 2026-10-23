@@ -45,7 +45,7 @@ export function MoviePlayer({ stream, poster }: { stream: MovieStream; poster?: 
 
   return (
     <div className="flex flex-col gap-2.5">
-      <video ref={video} controls playsInline poster={poster ?? undefined} crossOrigin="anonymous"
+      <video ref={video} controls playsInline poster={poster ?? undefined}
         className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)]">
         {subtitles.map((t, i) => <track key={i} kind="subtitles" src={t.url} srcLang={t.lang} label={t.label} default={i === 0} />)}
       </video>
