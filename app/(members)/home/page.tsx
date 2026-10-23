@@ -52,35 +52,34 @@ export default async function Home() {
 
   return (
     <>
-      <div className="mx-auto flex max-w-[1600px] flex-wrap justify-between gap-3 px-7 pt-3 text-plum-muted">
-        <span className="eyebrow">Anime / TV &amp; Film</span>
-        <span className="text-xs font-semibold">Fresh picks, trending titles and {slots.length} shows airing this week.</span>
-      </div>
       {empty ? (
         <div className="mx-auto mt-10 max-w-[560px] rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center">
           <p className="text-2xl font-extrabold tracking-tight text-frost-deep">The listings are napping.</p>
           <p className="mt-2 text-plum-muted">The catalog is empty right now. If you run cupcake, fill it with <code className="rounded bg-cream-tint px-1.5 font-mono text-[12.5px] text-frost-text">npm run sync</code> (see the README), then refresh.</p>
         </div>
       ) : (
-        <div className="mx-auto flex max-w-[1560px] flex-col gap-[22px] px-3 pb-12 pt-[22px] sm:px-5 lg:flex-row lg:items-start">
-          <LibrarySidebar pool={pool} total={total} className="hidden lg:sticky lg:top-[100px] lg:block lg:w-[250px] lg:flex-none" />
-          <main className="flex min-w-0 flex-1 flex-col gap-[30px]">
-            <Hero items={trending.slice(0, 5)} />
-            <KeepWatching items={resume} />
-            <QueueRail />
-            <Catalog pool={pool} total={total} />
-            <Suspense fallback={<ShelfSkeleton />}>
-              <ForYou userId={me.id} />
-            </Suspense>
-            <MangaHomeRail />
-            <Suspense fallback={null}><MoviesHomeRail /></Suspense>
-            <FreshSchedule items={slots} />
-          </main>
-          <aside aria-label="details" className="flex flex-col gap-4 lg:sticky lg:top-[100px] lg:w-[330px] lg:flex-none">
-            <CloserLook pool={pool} />
-            <Suspense fallback={null}><FriendsNow userId={me.id} /></Suspense>
-            <TopTen lists={{ trending, season, top }} local={ranked} />
-          </aside>
+        <div className="mx-auto flex max-w-[1560px] flex-col gap-7 px-3 pb-12 pt-4 sm:px-5">
+          {/* Full-width hero leads the page, Netflix-style, then horizontal rows. */}
+          <Hero items={trending.slice(0, 5)} />
+          <div className="flex flex-col gap-[22px] lg:flex-row lg:items-start">
+            <LibrarySidebar pool={pool} total={total} className="hidden lg:sticky lg:top-[100px] lg:block lg:w-[240px] lg:flex-none" />
+            <main className="flex min-w-0 flex-1 flex-col gap-[34px]">
+              <KeepWatching items={resume} />
+              <QueueRail />
+              <Suspense fallback={<ShelfSkeleton />}>
+                <ForYou userId={me.id} />
+              </Suspense>
+              <MangaHomeRail />
+              <Suspense fallback={null}><MoviesHomeRail /></Suspense>
+              <Catalog pool={pool} total={total} />
+              <FreshSchedule items={slots} />
+            </main>
+            <aside aria-label="details" className="flex flex-col gap-4 lg:sticky lg:top-[100px] lg:w-[320px] lg:flex-none">
+              <CloserLook pool={pool} />
+              <Suspense fallback={null}><FriendsNow userId={me.id} /></Suspense>
+              <TopTen lists={{ trending, season, top }} local={ranked} />
+            </aside>
+          </div>
         </div>
       )}
     </>
