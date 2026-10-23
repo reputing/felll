@@ -6,6 +6,7 @@ import { Hero } from "@/components/home/hero";
 import { KeepWatching, type Resume } from "@/components/home/keep-watching";
 import { QueueRail } from "@/components/queue/queue-rail";
 import { MangaHomeRail } from "@/components/manga/home-rail";
+import { MoviesHomeRail } from "@/components/movies/home-rail";
 import { Catalog } from "@/components/home/catalog";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
 import { CloserLook } from "@/components/home/closer-look";
@@ -72,6 +73,7 @@ export default async function Home() {
               <ForYou userId={me.id} />
             </Suspense>
             <MangaHomeRail />
+            <Suspense fallback={null}><MoviesHomeRail /></Suspense>
             <FreshSchedule items={slots} />
           </main>
           <aside aria-label="details" className="flex flex-col gap-4 lg:sticky lg:top-[100px] lg:w-[330px] lg:flex-none">
