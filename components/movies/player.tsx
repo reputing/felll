@@ -14,7 +14,9 @@ export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStre
   const sources = stream?.sources ?? [];
   const subtitles = stream?.subtitles ?? [];
   const hasNative = sources.length > 0;
-  const servers = [...(hasNative ? [{ k: "cupcake", label: "Cupcake" }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name }))];
+  // Embeds lead: MovieBox's own CDN datacenter-blocks our proxy (502) and
+  // rate-limits the direct URL (429), so Cupcake is the unreliable last resort.
+  const servers = [...embeds.map((e) => ({ k: e.name, label: e.name })), ...(hasNative ? [{ k: "cupcake", label: "Cupcake" }] : [])];
   const [server, setServer] = useState<string>(servers[0]?.k ?? "cupcake");
   const curEmbed = embeds.find((e) => e.name === server) ?? null;
   const useEmbed = !!curEmbed;
