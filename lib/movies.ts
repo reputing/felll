@@ -161,23 +161,39 @@ export async function trendingTitles(limit = 18): Promise<MovieCard[]> {
   return live.slice(0, limit);
 }
 
+const pick = (...vals: Raw[]): Raw => vals.find((v) => v != null && v !== "");
+
 export async function movieDetail(slug: string): Promise<MovieDetail | null> {
   if (!slug) return null;
   const data = await cached(`movie:detail:${slug}`, () => getJson(`/detail/${encodeURIComponent(slug)}`));
-  const d = data?.data ?? data;
-  if (!d) return null;
-  const seasons: MovieDetail["seasons"] = (d.seasons ?? []).map((s: Raw, i: number) => ({
-    season: s.season ?? s.se ?? i + 1,
-    episodes: (s.episodes ?? []).map((e: Raw, j: number) => ({ se: s.season ?? i + 1, ep: e.ep ?? e.episode ?? j + 1, title: e.name ?? e.title ?? `Episode ${e.ep ?? j + 1}` })),
+  if (!data) return null;
+  // Moviebox nests the subject differently across endpoints; dig for it.
+  const d = data.data ?? data;
+  const subj = d.subject ?? d.detail ?? d;
+  const subjectId = String(pick(d.subject_id, d.subjectId, subj.subject_id, subj.subjectId, subj.id, d.id) ?? "");
+  const title = pick(subj.name, subj.title, d.name, d.title, subj.subjectTitle) ?? "Untitled";
+  const poster = pick(subj.poster_url, subj.cover, subj.poster, subj.image, subj.coverVerticalUrl, d.poster_url, d.cover) ?? null;
+  const rawSeasons = subj.seasons ?? d.seasons ?? subj.resource?.seasons ?? [];
+  const seasons: MovieDetail["seasons"] = (rawSeasons as Raw[]).map((s: Raw, i: number) => ({
+    season: s.season ?? s.se ?? s.seasonNum ?? i + 1,
+    episodes: (s.episodes ?? s.eps ?? []).map((e: Raw, j: number) => ({ se: s.season ?? i + 1, ep: e.ep ?? e.episode ?? e.episodeNum ?? j + 1, title: pick(e.name, e.title) ?? `Episode ${e.ep ?? j + 1}` })),
   }));
-  const card = toCard({ ...d, subject_id: d.subject_id ?? d.id, slug });
+  const genreRaw = subj.genre ?? d.genre ?? subj.genres ?? d.genres ?? [];
+  const type = classify({ ...subj, subject_type: pick(subj.subject_type, subj.subjectType, d.subject_type) });
   return {
-    ...card,
-    overview: d.description ?? d.overview ?? "",
-    genres: Array.isArray(d.genre) ? d.genre : (d.genres ?? []),
-    cast: (d.cast ?? d.actors ?? []).slice(0, 12).map((c: Raw) => ({ name: c.name ?? "", character: c.character ?? c.role ?? "", image: c.image ?? c.avatar ?? null })),
+    id: subjectId,
+    slug,
+    title,
+    poster,
+    year: pick(subj.year, d.year) ?? null,
+    rating: pick(subj.rating, subj.imdbRatingValue, d.rating) != null ? String(pick(subj.rating, subj.imdbRatingValue, d.rating)) : null,
+    badge: subj.badge ?? null,
+    type,
+    overview: pick(subj.description, subj.overview, subj.synopsis, d.description, d.overview) ?? "",
+    genres: Array.isArray(genreRaw) ? genreRaw.map((g: Raw) => (typeof g === "string" ? g : g?.name)).filter(Boolean) : String(genreRaw).split(",").map((s) => s.trim()).filter(Boolean),
+    cast: (subj.cast ?? subj.actors ?? d.cast ?? []).slice(0, 12).map((c: Raw) => ({ name: c.name ?? c.staffName ?? "", character: c.character ?? c.role ?? "", image: c.image ?? c.avatar ?? c.avatarUrl ?? null })),
     seasons,
-    isSeries: seasons.length > 0 || card.type === "tv",
+    isSeries: seasons.length > 0 || type === "tv",
   };
 }
 
@@ -185,11 +201,12 @@ export async function movieDetail(slug: string): Promise<MovieDetail | null> {
 export async function movieStream(subjectId: string, slug: string, se?: number, ep?: number): Promise<MovieStream | null> {
   if (!subjectId) return null;
   const q = `detail_path=${encodeURIComponent(slug)}${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}`;
-  const data = await getJson(`/api/stream/${encodeURIComponent(subjectId)}?${q}`);
-  if (!data?.has_resource && !data?.sources?.length && !data?.hls?.length) return null;
-  const sources: MovieSource[] = (data.sources ?? [])
-    .filter((s: Raw) => s?.url)
-    .map((s: Raw) => ({ res: String(s.resolution ?? s.res ?? "auto"), url: String(s.url), format: String(s.format ?? "mp4") }));
+  const raw = await getJson(`/api/stream/${encodeURIComponent(subjectId)}?${q}`);
+  const data = raw?.data ?? raw;
+  if (!data || (!data.has_resource && !data.sources?.length && !data.hls?.length && !data.streams?.length)) return null;
+  const sources: MovieSource[] = [...(data.sources ?? []), ...(data.streams ?? [])]
+    .filter((s: Raw) => s?.url || s?.src)
+    .map((s: Raw) => ({ res: String(s.resolution ?? s.res ?? s.quality ?? s.label ?? "auto"), url: String(s.url ?? s.src), format: String(s.format ?? (String(s.url ?? s.src).includes(".m3u8") ? "hls" : "mp4")) }));
   // HLS manifests, if any, as a last entry
   for (const h of data.hls ?? []) if (h?.url || typeof h === "string") sources.push({ res: "HLS", url: String(h.url ?? h), format: "hls" });
   const subtitles = (data.captions ?? data.subtitles ?? [])

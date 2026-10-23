@@ -64,7 +64,7 @@ export function MovieBrowse() {
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3.5">
           {items.map((m) => (
-            <Link key={m.id + m.slug} href={`/movies/${m.slug}`} className="group flex flex-col gap-2">
+            <Link key={m.id + m.slug} href={`/movies/${m.slug}?sid=${encodeURIComponent(m.id)}&t=${encodeURIComponent(m.title)}`} className="group flex flex-col gap-2">
               <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot">
                 <Poster src={m.poster} className="size-full" />
                 {m.rating && <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-lg bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-white backdrop-blur"><Star className="size-3 text-sprinkle-star" fill="currentColor" />{m.rating}</span>}
