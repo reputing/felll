@@ -10,20 +10,35 @@ import type { MovieStream, MovieSource, MovieEmbed } from "@/lib/tmdb";
 //     proxy so no CORS/Referer check can block it.
 //   • VidSrc / VidLink / … — TMDB-keyed iframe embeds. Instant and resilient
 //     (the embed host handles the CDN), and the only option for TV episodes.
-export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStream | null; embeds?: MovieEmbed[]; poster?: string | null }) {
-  const sources = stream?.sources ?? [];
-  const subtitles = stream?.subtitles ?? [];
-  const hasNative = sources.length > 0;
-  // The direct 8Stream HLS leads when we have it (proxied, so it's reliable);
-  // the embeds are the fallback the viewer can switch to.
+export function MoviePlayer({ streamSrc, embeds = [], poster }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null }) {
+  const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
+  // The direct 8Stream sources resolve lazily (see effect below), so the page
+  // never blocks on them. "Cupcake" is offered optimistically until proven dead.
+  const [sources, setSources] = useState<MovieSource[] | null>(null); // null = not loaded yet
+  const [nativeDead, setNativeDead] = useState(false);
+  const hasNative = !!streamSrc && !nativeDead;
   const servers = [...(hasNative ? [{ k: "cupcake", label: "Cupcake" }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name }))];
-  const [server, setServer] = useState<string>(servers[0]?.k ?? "cupcake");
+  const [server, setServer] = useState<string>(streamSrc ? "cupcake" : embeds[0]?.name ?? "cupcake");
   const curEmbed = embeds.find((e) => e.name === server) ?? null;
   const useEmbed = !!curEmbed;
 
   const video = useRef<HTMLVideoElement>(null);
   const hls = useRef<Hls | null>(null);
-  const [cur, setCur] = useState<MovieSource | undefined>(() => sources.find((s) => s.format !== "hls") ?? sources[0]);
+  const [cur, setCur] = useState<MovieSource | undefined>(undefined);
+
+  // Resolve 8Stream's HLS only when the Cupcake server is actually in use.
+  useEffect(() => {
+    if (useEmbed || !streamSrc || sources !== null) return;
+    let on = true;
+    fetch(streamSrc).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!on) return;
+      const got: MovieSource[] = (d?.sources ?? []).map((s: { label: string; url: string }) => ({ label: s.label, url: s.url, format: "hls" as const }));
+      setSources(got);
+      if (got.length) setCur(got[0]);
+      else { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); }
+    }).catch(() => { if (on) { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); } });
+    return () => { on = false; };
+  }, [useEmbed, streamSrc, sources, embeds]);
 
   useEffect(() => {
     const v = video.current;
@@ -106,10 +121,10 @@ export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStre
             ))}
           </div>
         )}
-        {!useEmbed && sources.length > 1 && (
+        {!useEmbed && (sources?.length ?? 0) > 1 && (
           <>
             <span className="text-[11px] font-extrabold uppercase tracking-[.12em] text-plum-muted">Audio</span>
-            {sources.map((s) => (
+            {sources!.map((s) => (
               <button key={s.label + s.url} type="button" aria-pressed={cur?.url === s.url} onClick={() => setCur(s)}
                 className={cn("h-8 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot", cur?.url === s.url && "border-frost-hot bg-frost text-frost-ink")}>
                 {s.label}

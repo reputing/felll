@@ -196,6 +196,9 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
 
   useEffect(() => () => hls.current?.destroy(), []);
 
+  // Warm the next episode's page so "Next" / auto-next is instant.
+  useEffect(() => { if (nextHref) router.prefetch?.(nextHref); }, [nextHref, router]);
+
   // Crowd skip markers + timeline moments for this episode.
   useEffect(() => {
     let on = true;
@@ -243,13 +246,19 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     return () => io.disconnect();
   }, []);
 
-  // Hide servers that won't play. Local vault rows are known-ready; only the
-  // external (Anivexa) servers need checking, and the resolve is cached upstream
-  // so this stays cheap. Runs in the background, a few at a time, after load.
-  useEffect(() => {
+  // Hide servers that won't play. Only the external (Anivexa) servers need
+  // checking (local vault rows are known-ready). This used to fire for every
+  // server on every episode load — a resolve storm on the backend — so it now
+  // runs once, lazily, the first time the viewer opens the server menu.
+  const probeRan = useRef(false);
+  const probeAc = useRef<AbortController | null>(null);
+  const probeServers = useCallback(() => {
+    if (probeRan.current) return;
+    probeRan.current = true;
     const probe = sources.filter((s) => typeof s.id === "string" && s.id.startsWith("anivexa:"));
     if (!probe.length) return;
     const ac = new AbortController();
+    probeAc.current = ac;
     let i = 0;
     const worker = async () => {
       while (i < probe.length && !ac.signal.aborted) {
@@ -262,8 +271,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       }
     };
     Promise.allSettled(Array.from({ length: 3 }, worker));
-    return () => ac.abort();
-  }, [sources]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sources, current]);
+  useEffect(() => () => probeAc.current?.abort(), []);
 
 
   const report = useCallback((force = false) => {
@@ -574,7 +583,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
               <Captions className="size-5" />
             </button>
           )}
-          <Menu.Root modal={false}>
+          <Menu.Root modal={false} onOpenChange={(o) => { if (o) probeServers(); }}>
             <Menu.Trigger className={bar} aria-label="Settings"><Settings className="size-5 transition group-data-[state=open]:rotate-45" /></Menu.Trigger>
             <Menu.Portal container={box.current}>
               <Menu.Content side="top" align="end" sideOffset={10} className={cn(POPUP, "max-h-[60vh] w-[250px] overflow-y-auto")}>

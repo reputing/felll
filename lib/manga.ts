@@ -37,6 +37,7 @@ export interface Chapter {
   pages: number;
   group: string;
   lang: string;
+  external: string | null; // set when the chapter is only on an official site
 }
 
 // Pick an English-ish value from MangaDex's {lang: text} maps.
@@ -51,7 +52,7 @@ function toCard(m: Raw): MangaCard {
   return {
     id: m.id,
     title: pick(m.attributes.title) || pick(m.attributes.altTitles?.find?.((a: Raw) => a.en)) || "Untitled",
-    cover: coverUrl(m.id, m.relationships, 512),
+    cover: coverUrl(m.id, m.relationships, 256),
     year: m.attributes.year ?? null,
     status: m.attributes.status ?? "",
     rating: m.attributes.contentRating ?? "",
@@ -126,14 +127,30 @@ export async function getMangaTags(): Promise<MangaTag[]> {
   return tagCache!;
 }
 
-/** Full detail for one title. */
-export async function getManga(id: string): Promise<MangaFull | null> {
+// getManga and getChapters are hit repeatedly as the reader moves between
+// chapters, so memoise them per title for the browser session (a rejected
+// fetch is evicted so it can be retried). getChapterPages is never cached: its
+// at-home URLs carry short-lived tokens.
+const mangaCache = new Map<string, Promise<MangaFull | null>>();
+const chaptersCache = new Map<string, Promise<Chapter[]>>();
+
+/** Full detail for one title (memoised per session). */
+export function getManga(id: string): Promise<MangaFull | null> {
+  let p = mangaCache.get(id);
+  if (!p) {
+    p = fetchManga(id).catch((e) => { mangaCache.delete(id); throw e; });
+    mangaCache.set(id, p);
+  }
+  return p;
+}
+async function fetchManga(id: string): Promise<MangaFull | null> {
   const d = await get(`/manga/${id}?includes[]=cover_art&includes[]=author&includes[]=artist`).catch(() => null);
   const m = d?.data;
   if (!m) return null;
   const author = m.relationships?.find((r: Raw) => r.type === "author")?.attributes?.name ?? "";
   return {
     ...toCard(m),
+    cover: coverUrl(m.id, m.relationships, 512), // the detail hero wants the larger cover
     description: pick(m.attributes.description),
     altTitle: pick(m.attributes.altTitles?.find?.((a: Raw) => a.en || a.ja_ro)) || "",
     tags: (m.attributes.tags ?? []).map((t: Raw) => pick(t.attributes?.name)).filter(Boolean),
@@ -141,23 +158,28 @@ export async function getManga(id: string): Promise<MangaFull | null> {
   };
 }
 
-/** Readable English chapters, de-duped to one per chapter number, in order. */
-export async function getChapters(id: string): Promise<Chapter[]> {
+async function fetchFeed(id: string, extraQs: string): Promise<Raw[]> {
   const out: Raw[] = [];
   for (let offset = 0; offset < 2000; offset += 500) {
-    const d = await get(`/manga/${id}/feed?translatedLanguage[]=en&limit=500&offset=${offset}&order[volume]=asc&order[chapter]=asc&includes[]=scanlation_group&${RATING}`);
+    const d = await get(`/manga/${id}/feed?limit=500&offset=${offset}&order[volume]=asc&order[chapter]=asc&includes[]=scanlation_group&${RATING}${extraQs}`);
     out.push(...(d.data ?? []));
     if (!d.data?.length || offset + 500 >= (d.total ?? 0)) break;
   }
+  return out;
+}
+
+// Build readable (or, when asked, external-only) chapters from a raw feed,
+// de-duped to one per chapter number, keeping the first scanlation group.
+function buildChapters(raw: Raw[], external = false): Chapter[] {
   const seen = new Set<string>();
   const chapters: Chapter[] = [];
-  for (const c of out) {
+  for (const c of raw) {
     const a = c.attributes;
-    // skip external (official-site) chapters with nothing hosted here
-    if (a.externalUrl || !a.pages) continue;
+    const isExternal = !!a.externalUrl;
+    if (external ? !isExternal : isExternal || !a.pages) continue;
     const num = String(a.chapter ?? "");
     const key = num || c.id;
-    if (seen.has(key)) continue; // first scanlation group wins
+    if (seen.has(key)) continue;
     seen.add(key);
     chapters.push({
       id: c.id,
@@ -167,9 +189,45 @@ export async function getChapters(id: string): Promise<Chapter[]> {
       pages: a.pages ?? 0,
       group: c.relationships?.find((r: Raw) => r.type === "scanlation_group")?.attributes?.name ?? "",
       lang: a.translatedLanguage ?? "en",
+      external: isExternal ? a.externalUrl : null,
     });
   }
   return chapters;
+}
+
+/** Readable chapters for a title (memoised per session).
+ *  English first; if none is hosted here, fall back to the language with the
+ *  most chapters, and failing that surface the official/external links, so a
+ *  popular title is never shown as empty. */
+export function getChapters(id: string): Promise<Chapter[]> {
+  let p = chaptersCache.get(id);
+  if (!p) {
+    p = fetchChapters(id).catch((e) => { chaptersCache.delete(id); throw e; });
+    chaptersCache.set(id, p);
+  }
+  return p;
+}
+async function fetchChapters(id: string): Promise<Chapter[]> {
+  const enChapters = buildChapters(await fetchFeed(id, "&translatedLanguage[]=en"));
+  if (enChapters.length) return enChapters;
+
+  // No English chapters hosted here. Look across every language and take the
+  // one with the most readable chapters.
+  const all = await fetchFeed(id, "");
+  const byLang = new Map<string, Raw[]>();
+  for (const c of all) {
+    if (c.attributes.externalUrl || !c.attributes.pages) continue;
+    const l = c.attributes.translatedLanguage ?? "";
+    const arr = byLang.get(l);
+    if (arr) arr.push(c); else byLang.set(l, [c]);
+  }
+  let best: Raw[] = [];
+  for (const arr of byLang.values()) if (arr.length > best.length) best = arr;
+  const bestChapters = buildChapters(best);
+  if (bestChapters.length) return bestChapters;
+
+  // Nothing is hosted in any language → the official/external chapters.
+  return buildChapters(all, true);
 }
 
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */

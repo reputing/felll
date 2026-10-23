@@ -27,6 +27,19 @@ export async function stream8Enabled(): Promise<boolean> {
   return (await base()) !== null;
 }
 
+/** Health probe: is 8Stream configured and reachable? (for /api/health) */
+export async function stream8Ping(): Promise<{ configured: boolean; ok: boolean; ms: number }> {
+  const b = await base();
+  if (!b) return { configured: false, ok: false, ms: 0 };
+  const t = Date.now();
+  try {
+    const res = await fetch(b, { signal: AbortSignal.timeout(6000) });
+    return { configured: true, ok: res.status < 500, ms: Date.now() - t };
+  } catch {
+    return { configured: true, ok: false, ms: Date.now() - t };
+  }
+}
+
 export interface Stream8Source {
   label: string;
   url: string;
