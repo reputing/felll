@@ -48,6 +48,15 @@ export async function moviesEnabled(): Promise<boolean> {
   return (await base()) !== null;
 }
 
+/** The backend /proxy URL for a stream — server-side only, so the workers.dev
+ *  host never reaches the browser. /api/movie/proxy fetches this and streams it
+ *  back same-origin. */
+export async function movieProxyTarget(subjectId: string, slug: string, res: string, se?: number, ep?: number): Promise<string | null> {
+  const b = await base();
+  if (!b || !subjectId) return null;
+  return `${b}/api/stream/${encodeURIComponent(subjectId)}/proxy?detail_path=${encodeURIComponent(slug)}&res=${encodeURIComponent(res)}${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}`;
+}
+
 async function getJson(path: string, timeout = 15_000): Promise<Raw | null> {
   const b = await base();
   if (!b) return null;
@@ -200,7 +209,6 @@ export async function movieDetail(slug: string): Promise<MovieDetail | null> {
 /** Resolve playable sources for a movie, or one episode of a series. */
 export async function movieStream(subjectId: string, slug: string, se?: number, ep?: number): Promise<MovieStream | null> {
   if (!subjectId) return null;
-  const b = await base();
   const q = `detail_path=${encodeURIComponent(slug)}${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}`;
   const raw = await getJson(`/api/stream/${encodeURIComponent(subjectId)}?${q}`);
   const data = raw?.data ?? raw;
@@ -217,8 +225,10 @@ export async function movieStream(subjectId: string, slug: string, se?: number, 
   //                the CDN insists on a referer rather than allowing an empty
   //                one.
   const RES = (r: string) => Number((r.match(/(\d{3,4})/) || [])[1]) || 0;
+  // Same-origin proxy path — the browser hits cupcake.gg, never the backend's
+  // workers.dev host. /api/movie/proxy forwards to the backend server-side.
   const proxyUrl = (res: string) =>
-    b ? `${b}/api/stream/${encodeURIComponent(subjectId)}/proxy?detail_path=${encodeURIComponent(slug)}&res=${encodeURIComponent(res)}${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}` : undefined;
+    `/api/movie/proxy?sid=${encodeURIComponent(subjectId)}&slug=${encodeURIComponent(slug)}&res=${encodeURIComponent(res)}${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}`;
   const sources: MovieSource[] = [];
   for (const s of [...(data.sources ?? []), ...(data.streams ?? [])] as Raw[]) {
     const url = s?.url ?? s?.src;
