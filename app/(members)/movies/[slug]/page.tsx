@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ChevronRight, Star } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { movieDetail, movieStream } from "@/lib/movies";
+import { vidcoreEmbed } from "@/lib/tmdb";
 import { Poster } from "@/components/poster";
 import { MoviePlayer } from "@/components/movies/player";
 import { cn } from "@/lib/utils";
@@ -32,7 +33,12 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const season = d.seasons[0];
   const se = d.isSeries ? Number(sp.se) || season?.season || 1 : undefined;
   const ep = d.isSeries ? Number(sp.ep) || season?.episodes[0]?.ep || 1 : undefined;
-  const stream = subjectId ? await movieStream(subjectId, slug, se, ep) : null;
+  // Native Moviebox stream + the VidCore embed (TMDB-keyed), resolved together.
+  // Either can be absent; the player offers whichever exist as servers.
+  const [stream, embed] = await Promise.all([
+    subjectId ? movieStream(subjectId, slug, se, ep) : Promise.resolve(null),
+    vidcoreEmbed(title, d.year, d.isSeries, se, ep).catch(() => null),
+  ]);
   const epList = d.seasons.find((s) => s.season === se)?.episodes ?? [];
 
   return (
@@ -42,7 +48,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
         <ChevronRight className="size-3.5" /><span className="truncate text-frost-text">{title}</span>
       </nav>
 
-      {stream ? <MoviePlayer stream={stream} poster={d.poster} /> : (
+      {stream || embed ? <MoviePlayer stream={stream} embed={embed} poster={d.poster} /> : (
         <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center text-night-muted">
           <div>
             <p className="text-[17px] font-extrabold text-night-text">Not streamable right now</p>
