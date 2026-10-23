@@ -204,19 +204,19 @@ export async function movieStream(subjectId: string, slug: string, se?: number, 
   const raw = await getJson(`/api/stream/${encodeURIComponent(subjectId)}?${q}`);
   const data = raw?.data ?? raw;
   if (!data || (!data.has_resource && !data.sources?.length && !data.hls?.length && !data.streams?.length)) return null;
-  const b = await base();
-  const epQ = `${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}`;
-  // Play MP4 through Moviebox's Range-aware /proxy: it adds the Referer the CDN
-  // requires, which a browser <video> can't set itself (direct URLs 403 / stall).
-  const resList = [...new Set([...(data.sources ?? []), ...(data.streams ?? [])]
-    .filter((s: Raw) => s?.url || s?.src)
-    .map((s: Raw) => String(s.resolution ?? s.res ?? s.quality ?? s.label ?? "")))].filter(Boolean);
-  const sources: MovieSource[] = b && resList.length
-    ? resList.map((res) => ({ res, url: `${b}/api/stream/${encodeURIComponent(subjectId)}/proxy?detail_path=${encodeURIComponent(slug)}&res=${encodeURIComponent(res)}${epQ}`, format: "mp4" }))
-    : b
-      ? [{ res: "Auto", url: `${b}/api/stream/${encodeURIComponent(subjectId)}/proxy?detail_path=${encodeURIComponent(slug)}${epQ}`, format: "mp4" }]
-      : [];
-  // HLS manifests play direct (the proxy is MP4-only).
+  // The CDN (hakunaymatata) blocks datacenter IPs, so Moviebox's server-side
+  // /proxy 502s — a browser on a home connection is the only thing that can
+  // fetch these. The stream URLs are already signed (?sign&t), so hand them
+  // straight to the <video> (no Referer needed) rather than through the proxy.
+  const RES = (r: string) => Number((r.match(/(\d{3,4})/) || [])[1]) || 0;
+  const sources: MovieSource[] = [];
+  for (const s of [...(data.sources ?? []), ...(data.streams ?? [])] as Raw[]) {
+    const url = s?.url ?? s?.src;
+    if (!url || sources.some((x) => x.url === url)) continue;
+    sources.push({ res: String(s.resolution ?? s.res ?? s.quality ?? s.label ?? "Auto"), url: String(url), format: "mp4" });
+  }
+  sources.sort((a, b2) => RES(b2.res) - RES(a.res));
+  // HLS manifests also play direct.
   for (const h of data.hls ?? []) if (h?.url || typeof h === "string") sources.push({ res: "HLS", url: String(h.url ?? h), format: "hls" });
   const subtitles = (data.captions ?? data.subtitles ?? [])
     .filter((s: Raw) => s?.url || s?.lang)
