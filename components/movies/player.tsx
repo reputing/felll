@@ -10,13 +10,14 @@ import type { MovieEmbed } from "@/lib/tmdb";
 //     browser controls, fullscreen everywhere incl. iOS, quality picker).
 //   • VidCore — a TMDB-keyed iframe embed. Instant and resilient (the embed host
 //     handles the CDN), a good fallback when Cupcake's stream is flaky.
-export function MoviePlayer({ stream, embed, poster }: { stream: MovieStream | null; embed?: MovieEmbed | null; poster?: string | null }) {
+export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStream | null; embeds?: MovieEmbed[]; poster?: string | null }) {
   const sources = stream?.sources ?? [];
   const subtitles = stream?.subtitles ?? [];
   const hasNative = sources.length > 0;
-  const servers = [hasNative ? { k: "cupcake", label: "Cupcake" } : null, embed ? { k: "vidcore", label: embed.name } : null].filter(Boolean) as { k: string; label: string }[];
-  const [server, setServer] = useState<string>(hasNative ? "cupcake" : "vidcore");
-  const useEmbed = server === "vidcore" && !!embed;
+  const servers = [...(hasNative ? [{ k: "cupcake", label: "Cupcake" }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name }))];
+  const [server, setServer] = useState<string>(servers[0]?.k ?? "cupcake");
+  const curEmbed = embeds.find((e) => e.name === server) ?? null;
+  const useEmbed = !!curEmbed;
 
   const video = useRef<HTMLVideoElement>(null);
   const hls = useRef<Hls | null>(null);
@@ -78,14 +79,14 @@ export function MoviePlayer({ stream, embed, poster }: { stream: MovieStream | n
 
   useEffect(() => () => hls.current?.destroy(), []);
 
-  if (!hasNative && !embed) {
+  if (!hasNative && !embeds.length) {
     return <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night text-center text-[14px] font-semibold text-night-muted">This title isn’t playable right now. Try another.</div>;
   }
 
   return (
     <div className="flex flex-col gap-2.5">
-      {useEmbed && embed ? (
-        <iframe key={embed.url} src={embed.url} title="Player" allowFullScreen referrerPolicy="origin"
+      {useEmbed && curEmbed ? (
+        <iframe key={curEmbed.url} src={curEmbed.url} title="Player" allowFullScreen referrerPolicy="origin"
           sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
           className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black" />
       ) : (
@@ -118,6 +119,9 @@ export function MoviePlayer({ stream, embed, poster }: { stream: MovieStream | n
           </>
         )}
       </div>
+      {servers.length > 1 && (
+        <p className="px-1 text-[11.5px] font-semibold text-plum-muted">Black screen or won’t play? Switch to another server above.</p>
+      )}
     </div>
   );
 }
