@@ -18,9 +18,10 @@ const PRIMARY = [
   { href: "/home", label: "Explore" },
   { href: "/browse", label: "Browse" },
   { href: "/manga", label: "Manga" },
-  { href: "/schedule", label: "Schedule" },
+  { href: "/movies", label: "Movies" },
 ];
 const MORE = [
+  { href: "/schedule", label: "Schedule" },
   { href: "/seasonal", label: "Seasonal" },
   { href: "/rankings", label: "Rankings" },
   { href: "/community", label: "Community" },
