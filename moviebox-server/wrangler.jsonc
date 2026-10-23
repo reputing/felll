@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "moviebox-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // The container image is built from the Dockerfile in this folder (needs
+  // Docker running locally when you `wrangler deploy`). It runs the full
+  // Moviebox-API FastAPI backend.
+  "containers": [
+    {
+      "class_name": "MovieboxContainer",
+      "image": "./Dockerfile",
+      // One instance only: Moviebox's SQLite catalog is not multi-writer safe,
+      // and two instances would each walk their own DB.
+      "max_instances": 1,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "MovieboxContainer", "name": "MOVIEBOX_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MovieboxContainer"] }],
+  "observability": { "enabled": true }
+}
