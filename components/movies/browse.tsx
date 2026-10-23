@@ -6,11 +6,11 @@ import { Poster } from "@/components/poster";
 import { cn } from "@/lib/utils";
 import type { MovieCard } from "@/lib/movies";
 
+// Anime has its own section, so the movies page is films + series only.
 const TABS = [
   { v: "all", label: "All" },
   { v: "movie", label: "Movies" },
   { v: "tv", label: "TV series" },
-  { v: "anime", label: "Anime" },
 ] as const;
 
 export function MovieBrowse() {
@@ -63,7 +63,7 @@ export function MovieBrowse() {
         </p>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3.5">
-          {items.map((m) => (
+          {items.filter((m) => m.type !== "anime").map((m) => (
             <Link key={m.id + m.slug} href={`/movies/${m.slug}?sid=${encodeURIComponent(m.id)}&t=${encodeURIComponent(m.title)}`} className="group flex flex-col gap-2">
               <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot">
                 <Poster src={m.poster} className="size-full" />
