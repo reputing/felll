@@ -1,9 +1,12 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Play, Search, X } from "lucide-react";
+import { Clock, Play, Search, X } from "lucide-react";
 import { Poster } from "@/components/poster";
+import { Countdown, LocalTime } from "@/components/countdown";
 import { cn } from "@/lib/utils";
+
+const WEEK = 7 * 86400;
 
 export interface EpisodeEntry {
   n: number;
@@ -16,10 +19,15 @@ export interface EpisodeEntry {
 }
 
 // The watch-page episode list, with a search box — essential for 1000+ episode
-// shows. Matches on episode number or title.
-export function EpisodeRail({ id, current, total, streamableCount, episodes }: {
+// shows. Matches on episode number or title. For currently-airing shows, episodes
+// past the next broadcast slot are locked (not clickable) and the next one wears
+// an "airing" badge with a live countdown.
+export function EpisodeRail({ id, current, total, streamableCount, episodes, airing = false, airedThrough, nextEp = null, nextAt = null, broadcast }: {
   id: number; current: number; total: number; streamableCount: number; episodes: EpisodeEntry[];
+  airing?: boolean; airedThrough?: number; nextEp?: number | null; nextAt?: number | null;
+  broadcast?: { day: string | null; time: string | null };
 }) {
+  const gate = airedThrough ?? total;
   const [q, setQ] = useState("");
   const activeRef = useRef<HTMLLIElement>(null);
 
@@ -67,29 +75,58 @@ export function EpisodeRail({ id, current, total, streamableCount, episodes }: {
         )}
         {filtered.map((e) => {
           const on = e.n === current;
-          const sub = `${e.audio ? e.audio.replace(",", " · ").toUpperCase() : e.streamable ? "Stream" : "Not uploaded"}${e.filler ? " · filler" : ""}`;
+          // Available if the show is finished, the episode is already streamable,
+          // or it has aired. Otherwise it's locked (not out yet).
+          const aired = !airing || e.streamable || e.n <= gate;
+          const isNext = airing && !aired && e.n === nextEp;
+          const airAt = nextAt != null && nextEp != null ? nextAt + (e.n - nextEp) * WEEK : null;
+          const num = String(e.n).padStart(2, "0");
+          const thumb = e.image ? (
+            <span className="relative aspect-video w-[92px] flex-none overflow-hidden rounded-xl bg-night">
+              <Poster src={e.image} className={cn("size-full transition", (!e.streamable || !aired) && "opacity-60 saturate-50")} />
+              <span className="absolute left-1 top-1 grid min-w-5 place-items-center rounded-md bg-black/70 px-1 font-mono text-[10.5px] font-bold text-white">
+                {on ? <Play className="size-3" fill="currentColor" /> : !aired ? <Clock className="size-3" /> : num}
+              </span>
+              {isNext && <span className="absolute inset-x-0 bottom-0 bg-frost/90 py-0.5 text-center text-[9.5px] font-extrabold uppercase tracking-wide text-frost-ink">Airing next</span>}
+            </span>
+          ) : (
+            <span className={cn("grid size-10 flex-none place-items-center rounded-xl font-mono text-[13px]", on ? "bg-frost text-frost-ink" : !aired ? "bg-cream-tint text-plum-faint" : e.streamable ? "bg-paper text-frost-text" : "bg-cream-tint text-plum-faint")}>
+              {on ? <Play className="size-4" fill="currentColor" /> : !aired ? <Clock className="size-4" /> : num}
+            </span>
+          );
+          const body = (
+            <span className="min-w-0 flex-1 py-0.5">
+              <span className={cn("block truncate font-bold", !aired && "text-plum-muted")}>{aired ? e.title : `Episode ${e.n}`}</span>
+              {aired && e.overview && <span className="mt-0.5 line-clamp-2 text-[11px] font-medium leading-snug text-plum-muted">{e.overview}</span>}
+              {!aired ? (
+                isNext && airAt ? (
+                  <span className="mt-0.5 flex items-center gap-1 text-[11px] font-bold text-frost-text">
+                    <Clock className="size-3" />Airs in <Countdown at={airAt} compact />
+                  </span>
+                ) : airAt ? (
+                  <span className="mt-0.5 block text-[11px] font-semibold text-plum-muted">Airs <LocalTime at={airAt} opts={{ month: "short", day: "numeric" }} /></span>
+                ) : (
+                  <span className="mt-0.5 block text-[11px] font-semibold text-plum-muted">Not aired yet{broadcast?.day ? ` · ${broadcast.day}` : ""}</span>
+                )
+              ) : (
+                <span className="mt-0.5 block text-[11px] font-semibold text-plum-muted">
+                  {e.audio ? e.audio.replace(",", " · ").toUpperCase() : e.streamable ? "Stream" : "Not uploaded"}{e.filler ? " · filler" : ""}
+                </span>
+              )}
+            </span>
+          );
           return (
             <li key={e.n} ref={on ? activeRef : undefined}>
-              <Link href={`/watch/${id}/${e.n}`} aria-current={on ? "page" : undefined} scroll={false}
-                className={cn("flex items-start gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep")}>
-                {e.image ? (
-                  <span className="relative aspect-video w-[92px] flex-none overflow-hidden rounded-xl bg-night">
-                    <Poster src={e.image} className={cn("size-full transition", !e.streamable && "opacity-60 saturate-50")} />
-                    <span className="absolute left-1 top-1 grid min-w-5 place-items-center rounded-md bg-black/70 px-1 font-mono text-[10.5px] font-bold text-white">
-                      {on ? <Play className="size-3" fill="currentColor" /> : String(e.n).padStart(2, "0")}
-                    </span>
-                  </span>
-                ) : (
-                  <span className={cn("grid size-10 flex-none place-items-center rounded-xl font-mono text-[13px]", on ? "bg-frost text-frost-ink" : e.streamable ? "bg-paper text-frost-text" : "bg-cream-tint text-plum-faint")}>
-                    {on ? <Play className="size-4" fill="currentColor" /> : String(e.n).padStart(2, "0")}
-                  </span>
-                )}
-                <span className="min-w-0 flex-1 py-0.5">
-                  <span className="block truncate font-bold">{e.title}</span>
-                  {e.overview && <span className="mt-0.5 line-clamp-2 text-[11px] font-medium leading-snug text-plum-muted">{e.overview}</span>}
-                  <span className="mt-0.5 block text-[11px] font-semibold text-plum-muted">{sub}</span>
-                </span>
-              </Link>
+              {aired ? (
+                <Link href={`/watch/${id}/${e.n}`} aria-current={on ? "page" : undefined} scroll={false}
+                  className={cn("flex items-start gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep")}>
+                  {thumb}{body}
+                </Link>
+              ) : (
+                <div aria-disabled className={cn("flex cursor-not-allowed items-start gap-2.5 rounded-2xl p-1.5 text-[13px]", isNext ? "bg-cream-tint/50" : "opacity-70")}>
+                  {thumb}{body}
+                </div>
+              )}
             </li>
           );
         })}

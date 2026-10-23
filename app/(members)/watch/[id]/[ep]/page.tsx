@@ -131,6 +131,10 @@ export default async function WatchPage({ params, searchParams }: Props) {
   // trust Jikan's own air dates over the weekly-slot estimate
   const airedAlready = !!info?.aired && Date.parse(info.aired) < Date.now();
   const notYet = !here && !airedAlready && nextEp != null && ep >= nextEp;
+  // For a currently-airing show, episodes at/after the next broadcast slot aren't
+  // out yet — the rail locks them and badges the next one with its countdown.
+  // With no schedule we can't tell, so nothing is locked.
+  const airedThrough = a.airing && nextEp != null ? nextEp - 1 : total;
 
   return (
     <div className="mx-auto flex max-w-[1560px] flex-col gap-5 px-3 pb-12 pt-4 sm:px-5">
@@ -213,7 +217,8 @@ export default async function WatchPage({ params, searchParams }: Props) {
           <Comments malId={id} episode={ep} title={a.title} image={a.posterSm} heading={`Episode ${ep} talk`} />
         </div>
 
-        <EpisodeRail id={id} current={ep} total={total} streamableCount={streamableSet.size} episodes={episodeEntries} />
+        <EpisodeRail id={id} current={ep} total={total} streamableCount={streamableSet.size} episodes={episodeEntries}
+          airing={a.airing} airedThrough={airedThrough} nextEp={nextEp} nextAt={next} broadcast={a.broadcast} />
       </div>
     </div>
   );

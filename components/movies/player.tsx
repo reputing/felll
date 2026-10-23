@@ -21,16 +21,27 @@ export function MoviePlayer({ stream, poster }: { stream: MovieStream; poster?: 
     const at = v.currentTime;
     hls.current?.destroy();
     hls.current = null;
-    // Ordered candidates for an MP4: the signed CDN URL direct (the page's
-    // no-referrer policy keeps the browser from sending a referer the CDN would
-    // reject), then the backend proxy (which adds the real moviebox referer) if
-    // the direct hit fails. HLS plays direct only.
-    const chain = (cur.format === "hls" ? [cur.url] : [cur.url, cur.proxy]).filter(Boolean) as string[];
+    // Ordered candidates for an MP4: the backend /proxy first — it fetches the
+    // stream server-side with the real moviebox referer, so it's the reliable
+    // path — then the signed CDN URL direct (played with no referer thanks to
+    // the page's no-referrer policy) as a fallback. A watchdog advances if a
+    // source neither starts nor errors within a few seconds, so a dead URL
+    // never stalls the player on a long network timeout. HLS plays direct only.
+    const chain = (cur.format === "hls" ? [cur.url] : [cur.proxy, cur.url]).filter(Boolean) as string[];
     let idx = 0;
-    const onError = () => {
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const started = () => { clearTimeout(watchdog); };
+    const advance = () => {
       if (cancelled) return;
+      clearTimeout(watchdog);
       idx += 1;
-      if (idx < chain.length) { v.src = chain[idx]; v.load(); }
+      if (idx < chain.length) play(idx);
+    };
+    const play = (n: number) => {
+      v.src = chain[n];
+      v.load();
+      clearTimeout(watchdog);
+      if (n < chain.length - 1) watchdog = setTimeout(advance, 7000);
     };
     (async () => {
       if (cur.format === "hls" && !v.canPlayType("application/vnd.apple.mpegurl")) {
@@ -41,12 +52,20 @@ export function MoviePlayer({ stream, poster }: { stream: MovieStream; poster?: 
         h.loadSource(cur.url);
         h.attachMedia(v);
       } else {
-        v.src = chain[0];
+        play(0);
       }
-      v.addEventListener("error", onError);
+      v.addEventListener("error", advance);
+      v.addEventListener("loadeddata", started);
+      v.addEventListener("playing", started);
       v.addEventListener("loadedmetadata", () => { if (at > 1) v.currentTime = at; }, { once: true });
     })().catch(() => { v.src = cur.url; });
-    return () => { cancelled = true; v.removeEventListener("error", onError); };
+    return () => {
+      cancelled = true;
+      clearTimeout(watchdog);
+      v.removeEventListener("error", advance);
+      v.removeEventListener("loadeddata", started);
+      v.removeEventListener("playing", started);
+    };
   }, [cur]);
 
   useEffect(() => () => hls.current?.destroy(), []);

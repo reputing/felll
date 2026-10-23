@@ -161,11 +161,12 @@
   --radius-box: 1.75rem;
   --radius-shell: 1.875rem;
 
-  --shadow-shell: 0 14px 34px -22px rgb(var(--glow) / 0.45);
-  --shadow-poster: 0 12px 24px -12px rgb(59 26 44 / 0.55);
+  /* Neutral depth, not coloured glows — flat cards read cleaner (Netflix-ish). */
+  --shadow-shell: 0 16px 36px -24px rgb(10 8 14 / 0.5);
+  --shadow-poster: 0 12px 24px -14px rgb(10 8 14 / 0.45);
   --shadow-halo: 0 0 0 4px var(--cream-blush);
   --shadow-press: inset 0 -3px 0 var(--frost-hot);
-  --shadow-lift: 0 22px 40px -26px rgb(var(--glow) / 0.7);
+  --shadow-lift: 0 20px 38px -28px rgb(10 8 14 / 0.42);
 
   --animate-fill: fill var(--dur, 8s) linear forwards;
   --animate-marquee: marquee var(--marquee-dur, 60s) linear infinite;
@@ -207,7 +208,8 @@
   scrollbar-width: none;
   &::-webkit-scrollbar { display: none; }
 }
-/* 21st.dev-style spotlight: a soft glow that follows the pointer (components/spotlight.tsx sets --x/--y). */
+/* A faint neutral highlight that follows the pointer (components/spotlight.tsx
+ * sets --x/--y). Kept subtle and colourless — no coloured glow. */
 @utility spotlight {
   position: relative;
   isolation: isolate;
@@ -219,7 +221,7 @@
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.3s;
-    background: radial-gradient(260px circle at var(--x, 50%) var(--y, 50%), rgb(var(--glow) / 0.14), transparent 70%);
+    background: radial-gradient(260px circle at var(--x, 50%) var(--y, 50%), rgb(255 255 255 / 0.05), transparent 70%);
     z-index: -1;
   }
   &:hover::before { opacity: 1; }
