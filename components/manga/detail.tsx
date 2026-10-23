@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BookOpen, Play } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { Button } from "@/components/ui/button";
+import { MangaSaveButton } from "@/components/manga/save-button";
 import { getChapters, getManga, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
 
 export function MangaDetail({ id }: { id: string }) {
@@ -43,13 +44,14 @@ export function MangaDetail({ id }: { id: string }) {
             <div className="flex flex-wrap gap-1.5">
               {m.tags.slice(0, 6).map((t) => <span key={t} className="rounded-full border border-night-line px-2.5 py-0.5 text-[11.5px] font-bold text-night-text/90">{t}</span>)}
             </div>
-            {startHref && (
-              <div className="mt-1">
+            <div className="mt-1 flex flex-wrap gap-2">
+              {startHref && (
                 <Button size="lg" asChild className="font-extrabold">
                   <Link href={startHref}><Play className="size-4" fill="currentColor" />{resumeCh ? `Continue · Ch. ${resume!.chapter_num || resumeCh.chapter}` : "Start reading"}</Link>
                 </Button>
-              </div>
-            )}
+              )}
+              <MangaSaveButton manga={m} />
+            </div>
           </div>
         </div>
       </section>
