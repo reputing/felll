@@ -17,7 +17,7 @@ export function MoviesComingSoon() {
           <p className="mt-2 text-2xl font-extrabold tracking-[-.6px] text-frost-deep">Coming soon</p>
           <p className="mt-2 text-[14px] leading-relaxed text-plum-muted">
             Movies &amp; series are taking a short break while we move to a new
-            streaming backend. Everything anime is still right here — check back soon. ✿
+            streaming backend. Everything anime is still right here. Check back soon. ✿
           </p>
         </div>
       </div>

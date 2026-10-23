@@ -32,12 +32,9 @@ export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStre
     const at = v.currentTime;
     hls.current?.destroy();
     hls.current = null;
-    // Ordered candidates for an MP4: the backend /proxy first — it fetches the
-    // stream server-side with the real moviebox referer, so it's the reliable
-    // path — then the signed CDN URL direct (played with no referer thanks to
-    // the page's no-referrer policy) as a fallback. A watchdog advances if a
-    // source neither starts nor errors within a few seconds, so a dead URL
-    // never stalls the player on a long network timeout. HLS plays direct only.
+    // One candidate per source: 8Stream's HLS (proxied through our origin) or an
+    // embed. A watchdog advances if a source neither starts nor errors within a
+    // few seconds, so a dead URL never stalls the player on a long timeout.
     const chain = [cur.url].filter(Boolean) as string[];
     let idx = 0;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
