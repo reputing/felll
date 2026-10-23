@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Search, Star } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { cn } from "@/lib/utils";
-import type { MovieCard } from "@/lib/movies";
+import type { MovieCard } from "@/lib/tmdb";
 
 // Anime has its own section, so the movies page is films + series only.
 const TABS = [
@@ -63,16 +63,15 @@ export function MovieBrowse() {
         </p>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3.5">
-          {items.filter((m) => m.type !== "anime").map((m) => (
-            <Link key={m.id + m.slug} href={`/movies/${m.slug}?sid=${encodeURIComponent(m.id)}&t=${encodeURIComponent(m.title)}`} className="group flex flex-col gap-2">
+          {items.map((m) => (
+            <Link key={m.slug} href={`/movies/${m.slug}`} className="group flex flex-col gap-2">
               <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot">
                 <Poster src={m.poster} className="size-full" />
                 {m.rating && <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-lg bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-white backdrop-blur"><Star className="size-3 text-sprinkle-star" fill="currentColor" />{m.rating}</span>}
-                {m.badge && <span className="absolute bottom-1.5 left-1.5 rounded-md bg-frost/90 px-1.5 py-0.5 text-[10px] font-extrabold text-frost-ink">{m.badge}</span>}
               </div>
               <div className="min-w-0">
                 <div className="truncate text-[13.5px] font-extrabold leading-tight">{m.title}</div>
-                <div className="text-[11.5px] font-semibold uppercase tracking-[.04em] text-plum-muted">{m.type === "tv" ? "Series" : m.type}{m.year ? ` · ${m.year}` : ""}</div>
+                <div className="text-[11.5px] font-semibold uppercase tracking-[.04em] text-plum-muted">{m.media === "tv" ? "Series" : "Movie"}{m.year ? ` · ${m.year}` : ""}</div>
               </div>
             </Link>
           ))}

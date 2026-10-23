@@ -37,4 +37,12 @@ interface CloudflareEnv {
   STREAM_CUSTOMER_DOMAIN?: string;
   STREAM_SIGNING_KEY_ID?: string;
   STREAM_SIGNING_KEY_JWK?: string;
+  /** The Anivexa aggregator ("the bot") for anime streams */
+  ANIVEXA_API_URL?: string;
+  /** TMDB v3 API key — powers the movies & series catalog and embed players */
+  TMDB_API_KEY?: string;
+  /** A self-hosted 8Stream API (github.com/himanshu8443/8StreamApi) for movie HLS */
+  STREAM8_API_URL?: string;
+  /** Override the VidCore embed host (it moves) */
+  VIDCORE_EMBED_BASE?: string;
 }
