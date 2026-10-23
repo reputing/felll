@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { ChevronRight, Star } from "lucide-react";
 import { Poster } from "@/components/poster";
-import { trendingTitles } from "@/lib/movies";
+import { tmdbTrending } from "@/lib/tmdb";
 
-// A broad "beyond anime" rail for the home page. Hidden when the movie backend
-// isn't configured (trendingTitles returns []).
+// A broad "beyond anime" rail for the home page. Hidden when TMDB isn't
+// configured (tmdbTrending returns []).
 export async function MoviesHomeRail() {
-  const items = (await trendingTitles(16).catch(() => [])).filter((m) => m.type !== "anime");
+  const items = await tmdbTrending(16).catch(() => []);
   if (!items.length) return null;
   return (
     <section className="flex flex-col gap-3">
@@ -16,7 +16,7 @@ export async function MoviesHomeRail() {
       </div>
       <div className="scrollbar-none flex gap-3 overflow-x-auto pb-1">
         {items.map((m) => (
-          <Link key={m.id + m.slug} href={`/movies/${m.slug}?sid=${encodeURIComponent(m.id)}&t=${encodeURIComponent(m.title)}`} className="group w-[128px] flex-none">
+          <Link key={m.slug} href={`/movies/${m.slug}`} className="group w-[128px] flex-none">
             <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot">
               <Poster src={m.poster} className="size-full" />
               {m.rating && <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-lg bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-white backdrop-blur"><Star className="size-3 text-sprinkle-star" fill="currentColor" />{m.rating}</span>}

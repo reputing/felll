@@ -6,6 +6,7 @@ import { Hero } from "@/components/home/hero";
 import { KeepWatching, type Resume } from "@/components/home/keep-watching";
 import { QueueRail } from "@/components/queue/queue-rail";
 import { MangaHomeRail } from "@/components/manga/home-rail";
+import { MoviesHomeRail } from "@/components/movies/home-rail";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
 import { TopRow } from "@/components/home/top-row";
 import { Shelf, ShelfSkeleton, type ShelfItem } from "@/components/shelf";
@@ -75,7 +76,7 @@ export default async function Home() {
             <Shelf key={g} eyebrow="Genre" title={g} items={toItems(pool.filter((m) => m.genres.includes(g)).slice(0, 18))} href="/browse" />
           ))}
           <MangaHomeRail />
-          {/* Movies rail hidden while the streaming backend is down — see /movies ("coming soon"). */}
+          <Suspense fallback={null}><MoviesHomeRail /></Suspense>
           <Shelf eyebrow="Timeless" title="All-time greats" items={toItems(top)} href="/rankings" />
           <FreshSchedule items={slots} />
         </div>

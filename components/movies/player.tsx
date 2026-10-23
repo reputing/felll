@@ -2,21 +2,21 @@
 import type Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { MovieStream, MovieSource } from "@/lib/movies";
-import type { MovieEmbed } from "@/lib/tmdb";
+import type { MovieStream, MovieSource, MovieEmbed } from "@/lib/tmdb";
 
-// Movie/series player. Two servers:
-//   • Cupcake — Moviebox's direct MP4/HLS sources in a native <video> (real
-//     browser controls, fullscreen everywhere incl. iOS, quality picker).
-//   • VidCore — a TMDB-keyed iframe embed. Instant and resilient (the embed host
-//     handles the CDN), a good fallback when Cupcake's stream is flaky.
+// Movie/series player. Two kinds of server:
+//   • Cupcake — 8Stream's direct HLS for a movie, played in a native <video>
+//     (real browser controls, fullscreen everywhere incl. iOS) through our own
+//     proxy so no CORS/Referer check can block it.
+//   • VidSrc / VidLink / … — TMDB-keyed iframe embeds. Instant and resilient
+//     (the embed host handles the CDN), and the only option for TV episodes.
 export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStream | null; embeds?: MovieEmbed[]; poster?: string | null }) {
   const sources = stream?.sources ?? [];
   const subtitles = stream?.subtitles ?? [];
   const hasNative = sources.length > 0;
-  // Embeds lead: MovieBox's own CDN datacenter-blocks our proxy (502) and
-  // rate-limits the direct URL (429), so Cupcake is the unreliable last resort.
-  const servers = [...embeds.map((e) => ({ k: e.name, label: e.name })), ...(hasNative ? [{ k: "cupcake", label: "Cupcake" }] : [])];
+  // The direct 8Stream HLS leads when we have it (proxied, so it's reliable);
+  // the embeds are the fallback the viewer can switch to.
+  const servers = [...(hasNative ? [{ k: "cupcake", label: "Cupcake" }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name }))];
   const [server, setServer] = useState<string>(servers[0]?.k ?? "cupcake");
   const curEmbed = embeds.find((e) => e.name === server) ?? null;
   const useEmbed = !!curEmbed;
@@ -38,7 +38,7 @@ export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStre
     // the page's no-referrer policy) as a fallback. A watchdog advances if a
     // source neither starts nor errors within a few seconds, so a dead URL
     // never stalls the player on a long network timeout. HLS plays direct only.
-    const chain = (cur.format === "hls" ? [cur.url] : [cur.proxy, cur.url]).filter(Boolean) as string[];
+    const chain = [cur.url].filter(Boolean) as string[];
     let idx = 0;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     const started = () => { clearTimeout(watchdog); };
@@ -111,11 +111,11 @@ export function MoviePlayer({ stream, embeds = [], poster }: { stream: MovieStre
         )}
         {!useEmbed && sources.length > 1 && (
           <>
-            <span className="text-[11px] font-extrabold uppercase tracking-[.12em] text-plum-muted">Quality</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[.12em] text-plum-muted">Audio</span>
             {sources.map((s) => (
-              <button key={s.res + s.url} type="button" aria-pressed={cur?.url === s.url} onClick={() => setCur(s)}
+              <button key={s.label + s.url} type="button" aria-pressed={cur?.url === s.url} onClick={() => setCur(s)}
                 className={cn("h-8 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot", cur?.url === s.url && "border-frost-hot bg-frost text-frost-ink")}>
-                {s.res}
+                {s.label}
               </button>
             ))}
           </>

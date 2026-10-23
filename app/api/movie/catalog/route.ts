@@ -1,5 +1,5 @@
 import { memberOr401 } from "@/lib/auth";
-import { movieCatalog } from "@/lib/movies";
+import { movieCatalog } from "@/lib/tmdb";
 
 // Browse the movie/series catalog (members only). Keeps MOVIEBOX_API_URL server-side.
 export async function GET(req: Request) {

@@ -1,10 +1,6 @@
-import { PageHead } from "@/components/page-head";
-
-// Stand-in for the movies section while the streaming backend is down (the
-// upstream providers stopped working). A blurred faux-poster grid sits behind a
-// glass "Coming soon" card, so the page still feels like the movies section
-// without calling a backend. Swap this back for <MovieBrowse /> in
-// app/(members)/movies/page.tsx once a working provider is wired up.
+// Stand-in for the movies section when no catalog backend is configured
+// (TMDB_API_KEY unset). A blurred faux-poster grid sits behind a glass "Coming
+// soon" card, so the page still feels like the movies section without a backend.
 export function MoviesComingSoon() {
   return (
     <div className="relative overflow-hidden rounded-box border-1.5 border-line bg-cream-card">
@@ -25,16 +21,6 @@ export function MoviesComingSoon() {
           </p>
         </div>
       </div>
-    </div>
-  );
-}
-
-// The full /movies page in its coming-soon state (head + blurred panel).
-export function MoviesComingSoonPage() {
-  return (
-    <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
-      <PageHead eyebrow="Cupcake / watch" title="Movies &amp; Series" sub="Films and shows from across the catalog — not just anime." />
-      <MoviesComingSoon />
     </div>
   );
 }
