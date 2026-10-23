@@ -21,6 +21,17 @@ export function MoviePlayer({ stream, poster }: { stream: MovieStream; poster?: 
     const at = v.currentTime;
     hls.current?.destroy();
     hls.current = null;
+    // Ordered candidates for an MP4: the signed CDN URL direct (the page's
+    // no-referrer policy keeps the browser from sending a referer the CDN would
+    // reject), then the backend proxy (which adds the real moviebox referer) if
+    // the direct hit fails. HLS plays direct only.
+    const chain = (cur.format === "hls" ? [cur.url] : [cur.url, cur.proxy]).filter(Boolean) as string[];
+    let idx = 0;
+    const onError = () => {
+      if (cancelled) return;
+      idx += 1;
+      if (idx < chain.length) { v.src = chain[idx]; v.load(); }
+    };
     (async () => {
       if (cur.format === "hls" && !v.canPlayType("application/vnd.apple.mpegurl")) {
         const { default: HlsJs } = await import("hls.js");
@@ -30,11 +41,12 @@ export function MoviePlayer({ stream, poster }: { stream: MovieStream; poster?: 
         h.loadSource(cur.url);
         h.attachMedia(v);
       } else {
-        v.src = cur.url;
+        v.src = chain[0];
       }
+      v.addEventListener("error", onError);
       v.addEventListener("loadedmetadata", () => { if (at > 1) v.currentTime = at; }, { once: true });
     })().catch(() => { v.src = cur.url; });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; v.removeEventListener("error", onError); };
   }, [cur]);
 
   useEffect(() => () => hls.current?.destroy(), []);
