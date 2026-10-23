@@ -2,23 +2,30 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Search } from "lucide-react";
+import * as Menu from "@radix-ui/react-dropdown-menu";
+import { Check, ChevronDown, Search } from "lucide-react";
 import { SaveIcon } from "@/components/icons";
+import { POPUP, POPUP_ITEM } from "@/components/ui/popup";
 import { set, useBox } from "@/lib/store";
 import { cn, pad2 } from "@/lib/utils";
 import { OnlinePill } from "./online-pill";
 import { NotificationsBell } from "./notifications";
 import { UserMenu, type MenuUser } from "./user-menu";
 
-const NAV = [
+// A few primary links up top; the rest tuck into a "More" menu so the bar
+// stays uncluttered as new sections (manga, movies) arrive.
+const PRIMARY = [
   { href: "/home", label: "Explore" },
   { href: "/browse", label: "Browse" },
   { href: "/manga", label: "Manga" },
-  { href: "/seasonal", label: "Seasonal" },
   { href: "/schedule", label: "Schedule" },
+];
+const MORE = [
+  { href: "/seasonal", label: "Seasonal" },
   { href: "/rankings", label: "Rankings" },
   { href: "/community", label: "Community" },
 ];
+const ALL = [...PRIMARY, ...MORE];
 
 export function SiteHeader({ user, unread }: { user: MenuUser; unread: number }) {
   const path = usePathname();
@@ -55,8 +62,8 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
             cupcake<span className="font-bold text-plum-faint">.gg</span>
           </span>
         </Link>
-        <nav aria-label="main" className="ml-1 hidden gap-0 lg:flex">
-          {NAV.map((n) => {
+        <nav aria-label="main" className="ml-1 hidden items-center gap-0 lg:flex">
+          {PRIMARY.map((n) => {
             const on = path === n.href || path.startsWith(n.href + "/");
             return (
               <Link key={n.href} href={n.href} aria-current={on ? "page" : undefined}
@@ -65,11 +72,28 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
               </Link>
             );
           })}
+          <Menu.Root modal={false}>
+            <Menu.Trigger className={cn("group flex h-11 items-center gap-1 px-2.5 text-[14px] font-bold text-plum-body outline-none transition-colors hover:text-plum", MORE.some((n) => path === n.href || path.startsWith(n.href + "/")) && "text-frost-text")}>
+              More <ChevronDown className="size-4 transition group-data-[state=open]:rotate-180" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Content align="start" sideOffset={8} className={cn(POPUP, "w-[180px]")}>
+                {MORE.map((n) => {
+                  const on = path === n.href || path.startsWith(n.href + "/");
+                  return (
+                    <Menu.Item key={n.href} asChild className={POPUP_ITEM}>
+                      <Link href={n.href}><span className="flex-1">{n.label}</span>{on && <Check className="size-4" strokeWidth={3} />}</Link>
+                    </Menu.Item>
+                  );
+                })}
+              </Menu.Content>
+            </Menu.Portal>
+          </Menu.Root>
         </nav>
         <div className="flex-1" />
         <button type="button" onClick={() => set({ palette: true })} className="group relative hidden h-11 min-w-[150px] flex-[0_1_300px] items-center overflow-hidden whitespace-nowrap rounded-full border-1.5 border-line bg-paper pl-[42px] pr-[60px] text-left text-sm font-medium text-plum-faint hover:border-frost-hot md:flex">
           <Search aria-hidden className="absolute left-4 size-[17px] text-plum-muted" strokeWidth={2.2} />
-          <span className="truncate">Find your next anime…</span>
+          <span className="truncate">Find your next watch…</span>
           <kbd className="absolute right-2.5 flex h-6 items-center rounded-[7px] border border-line bg-cream-tint px-[7px] font-mono text-[11.5px] text-plum-muted">⌘K</kbd>
         </button>
         <button type="button" onClick={() => set({ palette: true })} aria-label="Search" className="grid size-10 place-items-center rounded-full border-1.5 border-line bg-paper md:hidden">
@@ -84,7 +108,7 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
         <UserMenu user={user} />
       </div>
       <nav aria-label="main" className="scrollbar-none mx-auto mt-2 flex max-w-[1560px] gap-1 overflow-x-auto lg:hidden">
-        {NAV.map((n) => {
+        {ALL.map((n) => {
           const on = path === n.href || path.startsWith(n.href + "/");
           return (
             <Link key={n.href} href={n.href} className={cn("flex h-9 flex-none items-center rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold", on && "border-frost-hot bg-frost text-frost-ink")}>{n.label}</Link>
