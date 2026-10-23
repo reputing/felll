@@ -54,7 +54,7 @@ export default async function Home() {
     <>
       <div className="mx-auto flex max-w-[1600px] flex-wrap justify-between gap-3 px-7 pt-3 text-plum-muted">
         <span className="eyebrow">Anime / TV &amp; Film</span>
-        <span className="text-xs font-semibold">{slots.length} shows airing this week, one little watch box.</span>
+        <span className="text-xs font-semibold">Fresh picks, trending titles and {slots.length} shows airing this week.</span>
       </div>
       {empty ? (
         <div className="mx-auto mt-10 max-w-[560px] rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center">
