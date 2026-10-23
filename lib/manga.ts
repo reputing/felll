@@ -5,7 +5,9 @@
 //
 // Docs: https://api.mangadex.org/docs/
 
-const API = "https://api.mangadex.org";
+// JSON goes through our own origin (/api/md/*) to dodge MangaDex's browser CORS;
+// cover + page images load straight from the CDN (an <img> needs no CORS).
+const API = "/api/md";
 const UPLOADS = "https://uploads.mangadex.org";
 // Keep it to non-pornographic ratings.
 const RATING = "contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica";
