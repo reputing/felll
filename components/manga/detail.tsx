@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BookOpen, Play } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { Button } from "@/components/ui/button";
+import { Comments } from "@/components/comments/comments";
 import { MangaSaveButton } from "@/components/manga/save-button";
 import { getChapters, getManga, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
 
@@ -89,6 +90,8 @@ export function MangaDetail({ id }: { id: string }) {
           </ol>
         )}
       </section>
+
+      <Comments api="/api/manga/comments" scope={{ mangaId: m.id }} title={m.title} image={m.cover} heading={`${m.title} talk`} />
     </div>
   );
 }

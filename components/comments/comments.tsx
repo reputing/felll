@@ -64,7 +64,11 @@ function Composer({ onSend, placeholder, autoFocus, initial = "", onCancel, cta 
   );
 }
 
-export function Comments({ malId, episode, title, image, heading }: { malId: number; episode?: number; title: string; image?: string | null; heading?: string }) {
+export function Comments({ malId, episode, title, image, heading, api = "/api/comments", scope }: { malId?: number; episode?: number; title: string; image?: string | null; heading?: string; api?: string; scope?: Record<string, string | number | undefined> }) {
+  // The thread's identity. Anime pass malId/episode; manga pass a scope like
+  // { mangaId }. The same API verbs (/PUT /PATCH /DELETE by id) serve both.
+  const thread = scope ?? { malId, ep: episode };
+  const threadKey = JSON.stringify(thread);
   const [rows, setRows] = useState<C[] | null>(null);
   const [admin, setAdmin] = useState(false);
   const [sort, setSort] = useState<"top" | "new">("top");
@@ -83,16 +87,19 @@ export function Comments({ malId, episode, title, image, heading }: { malId: num
   }, []);
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/comments?malId=${malId}${episode ? `&ep=${episode}` : ""}&sort=${sort}`).catch(() => null);
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(thread)) if (v != null) qs.set(k, String(v));
+    qs.set("sort", sort);
+    const res = await fetch(`${api}?${qs}`).catch(() => null);
     if (!res?.ok) { setRows([]); return; }
     const j = await res.json();
     setRows(j.comments);
     setAdmin(j.admin);
-  }, [malId, episode, sort]);
+  }, [api, threadKey, sort]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (visible) load(); }, [visible, load]);
 
   const post = async (body: string, spoiler: boolean, parentId?: number) => {
-    const res = await fetch("/api/comments", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ malId, ep: episode, parentId, body, spoiler, title, image }) });
+    const res = await fetch(api, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...thread, parentId, body, spoiler, title, image }) });
     if (!res.ok) { toast((await res.json().catch(() => ({}))).error || "Couldn’t post that"); return false; }
     setReplying(null);
     await load();
@@ -100,15 +107,15 @@ export function Comments({ malId, episode, title, image, heading }: { malId: num
   };
   const like = async (c: C) => {
     setRows((rs) => rs?.map((r) => (r.id === c.id ? { ...r, liked: r.liked ? 0 : 1, likes: r.likes + (r.liked ? -1 : 1) } : r)) ?? null);
-    await fetch("/api/comments", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id }) });
+    await fetch(api, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id }) });
   };
   const edit = async (c: C, body: string) => {
-    const res = await fetch("/api/comments", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id, body }) });
+    const res = await fetch(api, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id, body }) });
     if (res.ok) { setEditing(null); await load(); }
     return res.ok;
   };
   const remove = async (c: C) => {
-    await fetch("/api/comments", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id }) });
+    await fetch(api, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id }) });
     toast("Comment deleted");
     await load();
   };
