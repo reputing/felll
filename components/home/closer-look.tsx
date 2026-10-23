@@ -13,7 +13,9 @@ import { cn } from "@/lib/utils";
 
 export function CloserLook({ pool }: { pool: Anime[] }) {
   const sel = useBox((s) => s.sel);
-  const a = pool.find((m) => m.id === sel) ?? pool[0];
+  // Default to a title past the hero's rotation (it features the first few), so
+  // nothing selected doesn't just mirror the hero.
+  const a = pool.find((m) => m.id === sel) ?? pool[6] ?? pool[0];
   const saved = useBox((s) => (a ? !!s.lib[a.id]?.status : false));
   if (!a) return null;
   const alt = a.native && a.romaji !== a.title ? a.romaji : a.native || a.romaji;
