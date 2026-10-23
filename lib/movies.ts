@@ -104,23 +104,61 @@ async function refresh<T>(key: string, build: () => Promise<T | null>): Promise<
 
 export interface MoviePage { items: MovieCard[]; totalPages: number }
 
-/** Browse the indexed catalog. type: all|movie|tv|anime. */
+// Pull cards out of any Moviebox shape: {items}, {data}, {results}, a bare
+// array, or the home feed's {sections:[{items}]}.
+function extractCards(data: Raw): MovieCard[] {
+  if (!data) return [];
+  let arr: Raw[] = [];
+  if (Array.isArray(data)) arr = data;
+  else if (Array.isArray(data.items)) arr = data.items;
+  else if (Array.isArray(data.data)) arr = data.data;
+  else if (Array.isArray(data.results)) arr = data.results;
+  else if (Array.isArray(data.sections)) arr = data.sections.flatMap((s: Raw) => s.items ?? []);
+  // de-dupe by subject id (home sections overlap)
+  const seen = new Set<string>();
+  return arr.map(toCard).filter((c: MovieCard) => c.id && c.slug && !seen.has(c.id) && seen.add(c.id));
+}
+
+const HOME_FALLBACK: Record<string, string> = { movie: "/movies", tv: "/tv-series", anime: "/animation", all: "/home/all" };
+
+/** Browse titles. Uses the indexed /catalog when it's populated, and falls back
+ *  to the live home-section + search endpoints when it isn't (so this works even
+ *  on an ephemeral host with no persistent catalog). */
 export async function movieCatalog(opts: { type?: string; sort?: string; page?: number; q?: string } = {}): Promise<MoviePage> {
-  const type = ["movie", "tv", "anime"].includes(opts.type || "") ? opts.type : "all";
+  const type = ["movie", "tv", "anime"].includes(opts.type || "") ? (opts.type as string) : "all";
   const sort = ["recent", "title", "rating"].includes(opts.sort || "") ? opts.sort : "recent";
   const page = Math.max(1, opts.page || 1);
   const q = (opts.q || "").trim();
-  const qs = `type=${type}&sort=${sort}&page=${page}&per_page=24${q ? `&q=${encodeURIComponent(q)}` : ""}`;
-  // Searches aren't cached (too many); browse pages are.
-  const data = q ? await getJson(`/catalog?${qs}`) : await cached(`movie:catalog:${type}:${sort}:${page}`, () => getJson(`/catalog?${qs}`));
-  if (!data) return { items: [], totalPages: 0 };
-  return { items: (data.items ?? []).map(toCard).filter((c: MovieCard) => c.id && c.slug), totalPages: data.total_pages ?? 1 };
+
+  if (q) {
+    const primary = extractCards(await getJson(`/catalog?type=${type}&sort=${sort}&page=${page}&per_page=24&q=${encodeURIComponent(q)}`));
+    if (primary.length) return { items: primary, totalPages: 1 };
+    return { items: extractCards(await getJson(`/search?q=${encodeURIComponent(q)}`)), totalPages: 1 }; // live fallback
+  }
+
+  // Only cache a /catalog page that actually has rows, so an empty index (cold
+  // container) doesn't get pinned for 6h — it retries until the walk populates.
+  const data = await cached(`movie:catalog:${type}:${sort}:${page}`, async () => {
+    const d = await getJson(`/catalog?type=${type}&sort=${sort}&page=${page}&per_page=24`);
+    return d && (d.items?.length ?? 0) > 0 ? d : null;
+  });
+  const items = extractCards(data);
+  if (items.length) return { items, totalPages: data?.total_pages ?? 1 };
+
+  // live fallback: the home-section catalogs
+  const live = await cached(`movie:home:${type}`, () => getJson(HOME_FALLBACK[type] ?? "/home/all"));
+  return { items: extractCards(live), totalPages: 1 };
 }
 
 /** A broad "popular now" set for the homepage, mixing movies and series. */
 export async function trendingTitles(limit = 18): Promise<MovieCard[]> {
-  const data = await cached("movie:trending", () => getJson("/catalog?sort=rating&page=1&per_page=24"));
-  return (data?.items ?? []).map(toCard).filter((c: MovieCard) => c.id && c.slug).slice(0, limit);
+  const indexed = extractCards(await cached("movie:trending", async () => {
+    const d = await getJson("/catalog?sort=rating&page=1&per_page=24");
+    return d && (d.items?.length ?? 0) > 0 ? d : null;
+  }));
+  if (indexed.length) return indexed.slice(0, limit);
+  const live = extractCards(await cached("movie:home", () => getJson("/home"))); // live fallback
+  return live.slice(0, limit);
 }
 
 export async function movieDetail(slug: string): Promise<MovieDetail | null> {
