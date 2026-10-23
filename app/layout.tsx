@@ -50,6 +50,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en" data-skin={isSkin(skin) ? skin : DEFAULT_SKIN} className={`${sans.variable} ${plex.variable}`}>
       <head>
         <link rel="preconnect" href="https://cdn.myanimelist.net" crossOrigin="" />
+        <link rel="preconnect" href="https://uploads.mangadex.org" crossOrigin="" />
+        <link rel="preconnect" href="https://image.tmdb.org" crossOrigin="" />
         <link rel="dns-prefetch" href="https://i.ytimg.com" />
       </head>
       <body className="min-h-screen overflow-x-hidden">{children}</body>

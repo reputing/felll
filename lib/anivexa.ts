@@ -47,6 +47,19 @@ export async function anivexaEnabled(): Promise<boolean> {
   return (await base()) !== null;
 }
 
+/** Health probe: is the Anivexa backend configured and reachable? (for /api/health) */
+export async function anivexaPing(): Promise<{ configured: boolean; ok: boolean; ms: number }> {
+  const b = await base();
+  if (!b) return { configured: false, ok: false, ms: 0 };
+  const t = Date.now();
+  try {
+    const res = await fetch(b, { signal: AbortSignal.timeout(6000) });
+    return { configured: true, ok: res.status < 500, ms: Date.now() - t };
+  } catch {
+    return { configured: true, ok: false, ms: Date.now() - t };
+  }
+}
+
 async function getJson(path: string): Promise<unknown | null> {
   const b = await base();
   if (!b) return null;
@@ -63,10 +76,19 @@ async function getJson(path: string): Promise<unknown | null> {
 
 const malMap = new Map<number, number | null>();
 
-/** Map a MyAnimeList id to an AniList id (via ARM). Cached per isolate. */
+/** Map a MyAnimeList id to an AniList id (via ARM). Cached per isolate and in
+ *  D1, so a cold Worker doesn't re-hit ARM (a single-point-of-failure) on every
+ *  first watch. */
 export async function malToAnilist(malId: number): Promise<number | null> {
   if (!Number.isInteger(malId)) return null;
   if (malMap.has(malId)) return malMap.get(malId)!;
+  const key = `arm:mal:${malId}`;
+  try {
+    const row = await (await db()).prepare("select body from jikan_cache where key = ?").bind(key).first<{ body: string }>();
+    if (row) { const v = JSON.parse(row.body) as number | null; malMap.set(malId, v); return v; }
+  } catch {
+    // no db (e.g. build) — fall through to the live lookup
+  }
   let anilist: number | null = null;
   try {
     const r = await fetch(`https://arm.haglund.dev/api/v2/ids?source=myanimelist&id=${malId}`, {
@@ -78,6 +100,14 @@ export async function malToAnilist(malId: number): Promise<number | null> {
     // leave null
   }
   malMap.set(malId, anilist);
+  // Persist only a positive hit, so a transient ARM failure isn't pinned.
+  if (anilist != null) {
+    try {
+      await (await db())
+        .prepare("insert into jikan_cache (key, body, fetched_at) values (?, ?, ?) on conflict(key) do update set body = excluded.body, fetched_at = excluded.fetched_at")
+        .bind(key, JSON.stringify(anilist), now()).run();
+    } catch { /* best effort */ }
+  }
   return anilist;
 }
 

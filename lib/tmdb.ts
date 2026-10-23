@@ -12,6 +12,7 @@ import { background, db, now } from "./db";
 type Raw = any;
 
 const IMG = "https://image.tmdb.org/t/p/w500";
+const CARD = "https://image.tmdb.org/t/p/w342"; // grid thumbnails; smaller than the detail poster
 const BACKDROP = "https://image.tmdb.org/t/p/w1280";
 const PROFILE = "https://image.tmdb.org/t/p/w185";
 
@@ -66,6 +67,15 @@ export async function moviesEnabled(): Promise<boolean> {
   return (await apiKey()) !== null;
 }
 
+/** Health probe: is TMDB configured and answering? (for /api/health) */
+export async function tmdbPing(): Promise<{ configured: boolean; ok: boolean; ms: number }> {
+  const configured = (await apiKey()) !== null;
+  if (!configured) return { configured: false, ok: false, ms: 0 };
+  const t = Date.now();
+  const ok = (await tmdbGet("/configuration", 6000)) != null;
+  return { configured: true, ok, ms: Date.now() - t };
+}
+
 // --- TMDB fetch ------------------------------------------------------------
 async function tmdbGet(path: string, timeout = 12_000): Promise<Raw | null> {
   const key = await apiKey();
@@ -116,7 +126,7 @@ function card(m: Raw, media?: MovieMedia): MovieCard | null {
     media: mm,
     slug: `${mm}-${id}`,
     title: m.title ?? m.name ?? "Untitled",
-    poster: m.poster_path ? IMG + m.poster_path : null,
+    poster: m.poster_path ? CARD + m.poster_path : null,
     year: date ? Number(date.slice(0, 4)) || null : null,
     rating: score ? score.toFixed(1) : null,
   };

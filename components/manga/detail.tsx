@@ -24,7 +24,10 @@ export function MangaDetail({ id }: { id: string }) {
 
   const first = chapters?.[0];
   const resumeCh = resume && chapters?.find((c) => c.id === resume.chapter_id);
-  const startHref = resumeCh ? `/manga/${id}/${resume!.chapter_id}` : first ? `/manga/${id}/${first.id}` : null;
+  // The chapters may be a non-English language (fallback) or official/external
+  // links, when nothing English is hosted here.
+  const nonEn = first && first.lang !== "en" ? first.lang.toUpperCase() : null;
+  const extFirst = first?.external ?? null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -46,11 +49,19 @@ export function MangaDetail({ id }: { id: string }) {
               {m.tags.slice(0, 6).map((t) => <span key={t} className="rounded-full border border-night-line px-2.5 py-0.5 text-[11.5px] font-bold text-night-text/90">{t}</span>)}
             </div>
             <div className="mt-1 flex flex-wrap gap-2">
-              {startHref && (
+              {resumeCh ? (
                 <Button size="lg" asChild className="font-extrabold">
-                  <Link href={startHref}><Play className="size-4" fill="currentColor" />{resumeCh ? `Continue · Ch. ${resume!.chapter_num || resumeCh.chapter}` : "Start reading"}</Link>
+                  <Link href={`/manga/${id}/${resume!.chapter_id}`}><Play className="size-4" fill="currentColor" />Continue · Ch. {resume!.chapter_num || resumeCh.chapter}</Link>
                 </Button>
-              )}
+              ) : extFirst ? (
+                <Button size="lg" asChild className="font-extrabold">
+                  <a href={extFirst} target="_blank" rel="noreferrer"><Play className="size-4" fill="currentColor" />Read on official site</a>
+                </Button>
+              ) : first ? (
+                <Button size="lg" asChild className="font-extrabold">
+                  <Link href={`/manga/${id}/${first.id}`}><Play className="size-4" fill="currentColor" />Start reading</Link>
+                </Button>
+              ) : null}
               <MangaSaveButton manga={m} />
             </div>
           </div>
@@ -65,25 +76,34 @@ export function MangaDetail({ id }: { id: string }) {
       )}
 
       <section className="rounded-box border-1.5 border-line bg-cream-card p-5 sm:p-6">
-        <div className="mb-4 flex items-center gap-2"><BookOpen className="size-4 text-frost-text" /><h2 className="text-xl font-extrabold tracking-[-.6px]">Chapters</h2>{chapters && <span className="font-mono text-[13px] text-plum-muted">{chapters.length}</span>}</div>
+        <div className="mb-4 flex items-center gap-2">
+          <BookOpen className="size-4 text-frost-text" /><h2 className="text-xl font-extrabold tracking-[-.6px]">Chapters</h2>
+          {chapters && <span className="font-mono text-[13px] text-plum-muted">{chapters.length}</span>}
+          {nonEn && <span className="rounded-full bg-cream-tint px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-[.08em] text-frost-text">{nonEn}</span>}
+        </div>
         {chapters === null ? (
           <div className="flex flex-col gap-1.5">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-11 animate-pulse rounded-xl bg-paper" />)}</div>
         ) : chapters.length === 0 ? (
-          <p className="text-[13.5px] font-semibold text-plum-muted">No English chapters hosted here yet.</p>
+          <p className="text-[13.5px] font-semibold text-plum-muted">No chapters available for this title yet.</p>
         ) : (
           <ol className="scrollbar-none grid max-h-[560px] gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
             {chapters.map((c) => {
               const read = resume?.chapter_id === c.id;
+              const inner = (
+                <>
+                  <span className="grid size-9 flex-none place-items-center rounded-lg bg-cream-tint font-mono text-[12.5px] text-frost-text">{c.chapter || "–"}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13.5px] font-extrabold">{c.title || `Chapter ${c.chapter || "?"}`}</span>
+                    <span className="block truncate text-[11.5px] font-semibold text-plum-muted">{c.external ? "Official release ↗" : `${c.pages} pages${c.group ? ` · ${c.group}` : ""}`}</span>
+                  </span>
+                  {read && <span className="ml-auto text-[10.5px] font-extrabold uppercase tracking-[.08em] text-frost-text">reading</span>}
+                </>
+              );
               return (
                 <li key={c.id}>
-                  <Link href={`/manga/${id}/${c.id}`} className={cnc(read)}>
-                    <span className="grid size-9 flex-none place-items-center rounded-lg bg-cream-tint font-mono text-[12.5px] text-frost-text">{c.chapter || "–"}</span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-[13.5px] font-extrabold">{c.title || `Chapter ${c.chapter || "?"}`}</span>
-                      <span className="block truncate text-[11.5px] font-semibold text-plum-muted">{c.pages} pages{c.group ? ` · ${c.group}` : ""}</span>
-                    </span>
-                    {read && <span className="ml-auto text-[10.5px] font-extrabold uppercase tracking-[.08em] text-frost-text">reading</span>}
-                  </Link>
+                  {c.external
+                    ? <a href={c.external} target="_blank" rel="noreferrer" className={cnc(read)}>{inner}</a>
+                    : <Link href={`/manga/${id}/${c.id}`} className={cnc(read)}>{inner}</Link>}
                 </li>
               );
             })}

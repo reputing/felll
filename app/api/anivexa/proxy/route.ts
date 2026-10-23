@@ -1,5 +1,6 @@
 import { anivexaProxyPath } from "@/lib/anivexa";
 import { currentUser } from "@/lib/auth";
+import { background } from "@/lib/db";
 
 // Streams an upstream HLS playlist/segment through our own origin, applying the
 // headers (Referer, etc.) providers require. m3u8 playlists are rewritten so
@@ -68,6 +69,19 @@ export async function GET(req: Request) {
   const range = req.headers.get("range");
   if (range) upstreamHeaders.range = range;
 
+  // Edge-cache full (non-range) segment GETs, so repeat viewers and seeks don't
+  // re-pull every .ts through the Worker. Playlists (no-store) are never cached.
+  const edge = (globalThis as unknown as { caches?: { default?: Cache } }).caches?.default;
+  const cacheKey = new Request(req.url, { method: "GET" });
+  if (edge && !range) {
+    try { const hit = await edge.match(cacheKey); if (hit) return hit; } catch { /* ignore */ }
+  }
+  const cachePut = (resp: Response) => {
+    if (edge && !range && resp.status === 200) {
+      try { background(edge.put(cacheKey, resp.clone())); } catch { /* ignore */ }
+    }
+  };
+
   let upstream: Response;
   try {
     upstream = await fetch(targetUrl, { headers: upstreamHeaders, redirect: "follow" });
@@ -113,10 +127,14 @@ export async function GET(req: Request) {
     const buf = await upstream.arrayBuffer();
     const head = new TextDecoder().decode(buf.slice(0, 16));
     if (/#EXTM3U/.test(head)) return makePlaylist(new TextDecoder().decode(buf));
-    return new Response(buf, { status: upstream.status, headers: responseHeaders });
+    const resp = new Response(buf, { status: upstream.status, headers: responseHeaders });
+    cachePut(resp);
+    return resp;
   }
 
-  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+  const resp = new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+  cachePut(resp);
+  return resp;
 }
 
 function rewritePlaylist(text: string, baseUrl: URL, headers: Record<string, string>, origin: string): string {

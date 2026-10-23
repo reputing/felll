@@ -34,6 +34,9 @@ export function setWatching(w: typeof watching) {
 export function PresenceBeacon() {
   const path = usePathname();
   useEffect(() => {
+    // The manga reader is a full-screen overlay; don't run the heartbeat (or any
+    // of the other chrome's background calls matter there) while reading.
+    if (/^\/manga\/[^/]+\/[^/]+/.test(path)) return;
     let stop = false;
     let t: ReturnType<typeof setTimeout>;
     const send = async () => {

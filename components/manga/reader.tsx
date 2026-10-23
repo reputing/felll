@@ -80,6 +80,18 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
     else setIdx(to);
   }, [pages, mode]);
 
+  // Prefetch the next chapter's first pages once you're near the end, so the
+  // flip to the next chapter is instant.
+  const prefetched = useRef<string | null>(null);
+  useEffect(() => {
+    if (!next || !pages?.length || idx < pages.length - 2) return;
+    if (prefetched.current === next.id) return;
+    prefetched.current = next.id;
+    getChapterPages(next.id).then((ps) => {
+      ps.slice(0, 3).forEach((src) => { const im = new Image(); im.src = src; });
+    }).catch(() => {});
+  }, [idx, pages, next]);
+
   // auto-scroll (strip)
   useEffect(() => {
     if (!auto || mode !== "strip") return;

@@ -2,8 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ChevronRight, Star } from "lucide-react";
 import { requireMember } from "@/lib/auth";
-import { movieDetail, movieEmbeds, movieSeasonEpisodes, moviesEnabled, type MovieMedia, type MovieSource, type MovieStream } from "@/lib/tmdb";
-import { stream8Movie } from "@/lib/stream8";
+import { movieDetail, movieEmbeds, movieSeasonEpisodes, moviesEnabled, type MovieMedia } from "@/lib/tmdb";
 import { Poster } from "@/components/poster";
 import { MoviePlayer } from "@/components/movies/player";
 import { cn } from "@/lib/utils";
@@ -36,15 +35,13 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const se = d.isSeries ? Number(sp.se) || d.seasons[0]?.season || 1 : undefined;
   const ep = d.isSeries ? Number(sp.ep) || 1 : undefined;
 
-  // Movie HLS from 8Stream (keyed by IMDB id), plus the TMDB-keyed embed
-  // servers; TV episodes rely on the embeds. Resolved together.
-  const [stream8List, embeds, epList] = await Promise.all([
-    d.media === "movie" ? stream8Movie(d.imdbId) : Promise.resolve([]),
+  // Embed servers (TMDB-keyed) render with the page. The direct 8Stream HLS for
+  // a movie resolves lazily in the player via this endpoint, so the page is fast.
+  const [embeds, epList] = await Promise.all([
     movieEmbeds(d.media, d.id, se, ep),
     d.isSeries && se ? movieSeasonEpisodes(d.id, se) : Promise.resolve([]),
   ]);
-  const sources: MovieSource[] = stream8List.map((s) => ({ label: s.label, url: s.url, format: "hls" as const }));
-  const stream: MovieStream | null = sources.length ? { sources, subtitles: [] } : null;
+  const streamSrc = d.media === "movie" && d.imdbId ? `/api/movie/stream?imdb=${encodeURIComponent(d.imdbId)}` : null;
 
   return (
     <div className="mx-auto flex max-w-[1240px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
@@ -53,7 +50,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
         <ChevronRight className="size-3.5" /><span className="truncate text-frost-text">{d.title}</span>
       </nav>
 
-      {stream || embeds.length ? <MoviePlayer stream={stream} embeds={embeds} poster={d.backdrop ?? d.poster} /> : (
+      {streamSrc || embeds.length ? <MoviePlayer streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} /> : (
         <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center text-night-muted">
           <div>
             <p className="text-[17px] font-extrabold text-night-text">Not streamable right now</p>
