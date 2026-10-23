@@ -77,6 +77,55 @@ export async function searchManga(q: string, limit = 30): Promise<MangaCard[]> {
   return (d.data ?? []).map(toCard);
 }
 
+export interface BrowseParams {
+  q?: string;
+  tag?: string;          // a genre tag id
+  status?: string;       // ongoing | completed | hiatus | cancelled
+  demographic?: string;  // shounen | shoujo | seinen | josei
+  year?: string;
+  order?: string;        // popular | latest | rating | newest | title
+  limit?: number;
+  offset?: number;
+}
+
+const ORDER: Record<string, string> = {
+  popular: "order[followedCount]=desc",
+  latest: "order[latestUploadedChapter]=desc",
+  rating: "order[rating]=desc",
+  newest: "order[year]=desc",
+  title: "order[title]=asc",
+};
+
+/** Filtered browse → cards plus the total count MangaDex reports. */
+export async function browseManga(p: BrowseParams): Promise<{ items: MangaCard[]; total: number }> {
+  const qs = [`limit=${p.limit ?? 36}`, `offset=${p.offset ?? 0}`, "includes[]=cover_art", RATING, "hasAvailableChapters=true"];
+  if (p.q?.trim()) qs.push(`title=${encodeURIComponent(p.q.trim())}`);
+  if (p.tag) qs.push(`includedTags[]=${p.tag}`);
+  if (p.status) qs.push(`status[]=${p.status}`);
+  if (p.demographic) qs.push(`publicationDemographic[]=${p.demographic}`);
+  if (p.year && /^\d{4}$/.test(p.year)) qs.push(`year=${p.year}`);
+  qs.push(ORDER[p.order || (p.q?.trim() ? "" : "popular")] || (p.q?.trim() ? "order[relevance]=desc" : ORDER.popular));
+  const d = await get(`/manga?${qs.join("&")}`);
+  return { items: (d.data ?? []).map(toCard), total: d.total ?? 0 };
+}
+
+export interface MangaTag { id: string; name: string }
+let tagCache: MangaTag[] | null = null;
+/** The genre tags, for the filter dropdown (cached per session). */
+export async function getMangaTags(): Promise<MangaTag[]> {
+  if (tagCache) return tagCache;
+  try {
+    const d = await get(`/manga/tag`);
+    tagCache = (d.data ?? [])
+      .filter((t: Raw) => t.attributes?.group === "genre")
+      .map((t: Raw) => ({ id: t.id, name: pick(t.attributes.name) }))
+      .sort((a: MangaTag, b: MangaTag) => a.name.localeCompare(b.name));
+  } catch {
+    tagCache = [];
+  }
+  return tagCache!;
+}
+
 /** Full detail for one title. */
 export async function getManga(id: string): Promise<MangaFull | null> {
   const d = await get(`/manga/${id}?includes[]=cover_art&includes[]=author&includes[]=artist`).catch(() => null);
