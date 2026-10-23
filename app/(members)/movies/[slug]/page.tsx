@@ -12,7 +12,10 @@ type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ se?: s
 export async function generateMetadata({ params }: Props) {
   const { slug } = await params;
   const d = await movieDetail(slug).catch(() => null);
-  return { title: d ? d.title : "Watch" };
+  // The stream CDN 403s a foreign Referer, so tell the browser to send none —
+  // the signed URL then plays direct off the viewer's own connection. See
+  // movieStream() in lib/movies.ts.
+  return { title: d ? d.title : "Watch", referrer: "no-referrer" as const };
 }
 
 export default async function MovieWatchPage({ params, searchParams }: Props) {

@@ -23,7 +23,7 @@ export interface MovieCard {
   badge: string | null;
   type: "movie" | "tv" | "anime" | "other";
 }
-export interface MovieSource { res: string; url: string; format: string }
+export interface MovieSource { res: string; url: string; format: string; proxy?: string }
 export interface MovieStream { sources: MovieSource[]; subtitles: { lang: string; label: string; url: string }[] }
 export interface MovieEpisode { se: number; ep: number; title: string }
 export interface MovieDetail extends MovieCard {
@@ -200,20 +200,31 @@ export async function movieDetail(slug: string): Promise<MovieDetail | null> {
 /** Resolve playable sources for a movie, or one episode of a series. */
 export async function movieStream(subjectId: string, slug: string, se?: number, ep?: number): Promise<MovieStream | null> {
   if (!subjectId) return null;
+  const b = await base();
   const q = `detail_path=${encodeURIComponent(slug)}${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}`;
   const raw = await getJson(`/api/stream/${encodeURIComponent(subjectId)}?${q}`);
   const data = raw?.data ?? raw;
   if (!data || (!data.has_resource && !data.sources?.length && !data.hls?.length && !data.streams?.length)) return null;
-  // The CDN (hakunaymatata) blocks datacenter IPs, so Moviebox's server-side
-  // /proxy 502s — a browser on a home connection is the only thing that can
-  // fetch these. The stream URLs are already signed (?sign&t), so hand them
-  // straight to the <video> (no Referer needed) rather than through the proxy.
+  // The Moviebox stream CDN gates on the Referer header: it accepts its own
+  // player's referer (or none) and 403s a foreign one. So each MP4 gets two
+  // playable URLs, tried in order by the player:
+  //   1. `url`   — the signed CDN URL, played direct. The watch page sets a
+  //                `no-referrer` policy so the browser sends NO Referer (not
+  //                cupcake.gg's), and the request rides the viewer's own
+  //                connection — the CDN's happy path.
+  //   2. `proxy` — the backend's /proxy, which re-fetches the stream server
+  //                side WITH the real moviebox.ph Referer. Fallback for when
+  //                the CDN insists on a referer rather than allowing an empty
+  //                one.
   const RES = (r: string) => Number((r.match(/(\d{3,4})/) || [])[1]) || 0;
+  const proxyUrl = (res: string) =>
+    b ? `${b}/api/stream/${encodeURIComponent(subjectId)}/proxy?detail_path=${encodeURIComponent(slug)}&res=${encodeURIComponent(res)}${se ? `&se=${se}` : ""}${ep ? `&ep=${ep}` : ""}` : undefined;
   const sources: MovieSource[] = [];
   for (const s of [...(data.sources ?? []), ...(data.streams ?? [])] as Raw[]) {
     const url = s?.url ?? s?.src;
     if (!url || sources.some((x) => x.url === url)) continue;
-    sources.push({ res: String(s.resolution ?? s.res ?? s.quality ?? s.label ?? "Auto"), url: String(url), format: "mp4" });
+    const res = String(s.resolution ?? s.res ?? s.quality ?? s.label ?? "Auto");
+    sources.push({ res, url: String(url), format: "mp4", proxy: proxyUrl(res) });
   }
   sources.sort((a, b2) => RES(b2.res) - RES(a.res));
   // HLS manifests also play direct.
