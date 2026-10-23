@@ -13,7 +13,7 @@ export default async function MoviesPage() {
   const on = await moviesEnabled();
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
-      <PageHead eyebrow="Cupcake / watch" title="Movies &amp; Series" sub="Films and shows from across the catalog — not just anime." />
+      <PageHead eyebrow="Cupcake / watch" title="Movies &amp; Series" sub="Films and shows from across the catalog, not just anime." />
       {on ? <MovieBrowse /> : <MoviesComingSoon />}
     </div>
   );
