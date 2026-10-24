@@ -16,7 +16,7 @@ import { UserMenu, type MenuUser } from "./user-menu";
 // stays uncluttered as new sections (manga, movies) arrive.
 const PRIMARY = [
   { href: "/home", label: "Explore" },
-  { href: "/browse", label: "Browse" },
+  { href: "/browse", label: "Anime" },
   { href: "/manga", label: "Manga" },
   { href: "/movies", label: "Movies" },
 ];

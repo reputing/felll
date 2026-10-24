@@ -137,7 +137,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   // Sleep timer: pause after N minutes.
   useEffect(() => {
     if (sleepMin == null) return;
-    const id = setTimeout(() => { video.current?.pause(); setFlash("Sleep timer — paused"); setSleepMin(null); }, sleepMin * 60_000);
+    const id = setTimeout(() => { video.current?.pause(); setFlash("Sleep timer paused"); setSleepMin(null); }, sleepMin * 60_000);
     return () => clearTimeout(id);
   }, [sleepMin]);
 

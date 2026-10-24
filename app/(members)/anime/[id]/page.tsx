@@ -62,12 +62,12 @@ export default async function AnimePage({ params, searchParams }: Props) {
     ["Episodes", episodesLabel(a)],
     ["Status", a.status],
     ["Aired", a.aired],
-    ["Season", a.season ? `${a.season[0].toUpperCase()}${a.season.slice(1)} ${a.year ?? ""}` : a.year ?? "—"],
-    ["Broadcast", a.broadcast.day ? `${a.broadcast.day} ${a.broadcast.time ?? ""} JST` : "—"],
-    ["Studios", a.studios.join(", ") || "—"],
-    ["Source", a.source || "—"],
-    ["Duration", a.duration || "—"],
-    ["Rating", a.rating || "—"],
+    ["Season", a.season ? `${a.season[0].toUpperCase()}${a.season.slice(1)} ${a.year ?? ""}` : a.year ?? "-"],
+    ["Broadcast", a.broadcast.day ? `${a.broadcast.day} ${a.broadcast.time ?? ""} JST` : "-"],
+    ["Studios", a.studios.join(", ") || "-"],
+    ["Source", a.source || "-"],
+    ["Duration", a.duration || "-"],
+    ["Rating", a.rating || "-"],
   ];
 
   return (

@@ -19,9 +19,9 @@ export function CloserLook({ pool }: { pool: Anime[] }) {
   const saved = useBox((s) => (a ? !!s.lib[a.id]?.status : false));
   if (!a) return null;
   const alt = a.native && a.romaji !== a.title ? a.romaji : a.native || a.romaji;
-  const season = a.season ? `${a.season[0].toUpperCase()}${a.season.slice(1)} ${a.year ?? ""}` : String(a.year ?? "—");
+  const season = a.season ? `${a.season[0].toUpperCase()}${a.season.slice(1)} ${a.year ?? ""}` : String(a.year ?? "-");
   const stats = [
-    { k: "Studio", v: a.studio || "—" },
+    { k: "Studio", v: a.studio || "-" },
     { k: a.group === "film" ? "Format" : "Episodes", v: a.group === "film" ? "Film" : a.episodes ?? "Airing" },
     { k: "Season", v: season },
   ];

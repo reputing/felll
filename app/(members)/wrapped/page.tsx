@@ -53,7 +53,7 @@ export default async function Wrapped() {
     <div className="mx-auto flex max-w-[840px] flex-col gap-5 px-3 pb-16 pt-4 sm:px-5" style={{ ["--accent" as string]: accent }}>
       <div className="flex items-center justify-between px-1">
         <Link href="/home" className="flex items-center gap-1.5 text-[13.5px] font-bold text-plum-muted hover:text-frost-text"><ArrowLeft className="size-4" />Home</Link>
-        <ShareButton path="/wrapped" title={`My cupcake Wrapped — ${title}`} variant="outline" />
+        <ShareButton path="/wrapped" title={`My cupcake Wrapped: ${title}`} variant="outline" />
       </div>
 
       {/* the shareable card */}
