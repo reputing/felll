@@ -3,9 +3,10 @@
 // chat is truly real-time (no polling). Messages are also written to D1, so the
 // last 50 load as history when someone first opens the panel (GET /api/chat).
 //
-// Uses the WebSocket Hibernation API (state.acceptWebSocket), so idle rooms
-// don't keep a billed isolate alive. worker.ts authenticates the session and
-// forwards the upgrade here with the member's info in the `u` query param.
+// Uses the WebSocket Hibernation API (ctx.acceptWebSocket), so idle rooms don't
+// keep a billed isolate alive. worker.ts authenticates the session and forwards
+// the upgrade here with the member's info in the `u` query param.
+import { DurableObject } from "cloudflare:workers";
 
 interface ChatUser {
   id: string;
@@ -16,16 +17,9 @@ interface ChatUser {
   is_plus: number;
 }
 
-export class ChatRoom {
-  private state: DurableObjectState;
-  private env: CloudflareEnv;
+export class ChatRoom extends DurableObject<CloudflareEnv> {
   // best-effort per-user rate limit (DO memory; may reset on hibernation)
   private lastSend = new Map<string, number>();
-
-  constructor(state: DurableObjectState, env: CloudflareEnv) {
-    this.state = state;
-    this.env = env;
-  }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
@@ -36,7 +30,7 @@ export class ChatRoom {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    this.state.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server);
     server.serializeAttachment(user);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -70,7 +64,7 @@ export class ChatRoom {
         avatar_url: user.avatar_url, accent: user.accent, is_plus: user.is_plus, mine: 0,
       },
     });
-    for (const sock of this.state.getWebSockets()) {
+    for (const sock of this.ctx.getWebSockets()) {
       try { sock.send(payload); } catch { /* dead socket */ }
     }
   }

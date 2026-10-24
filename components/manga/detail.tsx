@@ -6,28 +6,37 @@ import { Poster } from "@/components/poster";
 import { Button } from "@/components/ui/button";
 import { Comments } from "@/components/comments/comments";
 import { MangaSaveButton } from "@/components/manga/save-button";
-import { getChapters, getManga, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
+import { getChapters, getManga, langName, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
 
 export function MangaDetail({ id }: { id: string }) {
   const [m, setM] = useState<MangaFull | null | "loading">("loading");
   const [chapters, setChapters] = useState<Chapter[] | null>(null);
   const [resume, setResume] = useState<{ chapter_id: string; chapter_num: string; page: number } | null>(null);
+  const [lang, setLang] = useState("en");
+
+  // the reader shares this preference, so picking a language here sticks
+  useEffect(() => { try { const s = localStorage.getItem("manga:lang"); if (s) setLang(s); } catch { /* */ } }, []);
+  const pickLang = (l: string) => { setLang(l); try { localStorage.setItem("manga:lang", l); } catch { /* */ } };
 
   useEffect(() => {
     getManga(id).then((x) => setM(x)).catch(() => setM(null));
-    getChapters(id).then(setChapters).catch(() => setChapters([]));
     fetch(`/api/manga-progress?mangaId=${id}`).then((r) => (r.ok ? r.json() : null)).then((d) => setResume(d?.progress ?? null)).catch(() => {});
   }, [id]);
+  useEffect(() => {
+    setChapters(null);
+    getChapters(id, lang).then(setChapters).catch(() => setChapters([]));
+  }, [id, lang]);
 
   if (m === "loading") return <div className="h-64 animate-pulse rounded-shell bg-cream-card" />;
   if (!m) return <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">Couldn’t load this title.</p>;
 
   const first = chapters?.[0];
   const resumeCh = resume && chapters?.find((c) => c.id === resume.chapter_id);
-  // The chapters may be a non-English language (fallback) or official/external
-  // links, when nothing English is hosted here.
-  const nonEn = first && first.lang !== "en" ? first.lang.toUpperCase() : null;
   const extFirst = first?.external ?? null;
+  // The language actually being shown (chapters may fall back if the picked one
+  // isn't hosted here). English first in the picker.
+  const activeLang = first?.lang ?? lang;
+  const langs = [...(m.languages ?? [])].sort((a, b) => (a === "en" ? -1 : b === "en" ? 1 : langName(a).localeCompare(langName(b))));
 
   return (
     <div className="flex flex-col gap-6">
@@ -76,10 +85,15 @@ export function MangaDetail({ id }: { id: string }) {
       )}
 
       <section className="rounded-box border-1.5 border-line bg-cream-card p-5 sm:p-6">
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <BookOpen className="size-4 text-frost-text" /><h2 className="text-xl font-extrabold tracking-[-.6px]">Chapters</h2>
           {chapters && <span className="font-mono text-[13px] text-plum-muted">{chapters.length}</span>}
-          {nonEn && <span className="rounded-full bg-cream-tint px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-[.08em] text-frost-text">{nonEn}</span>}
+          {langs.length > 1 && (
+            <select value={activeLang} onChange={(e) => pickLang(e.target.value)} aria-label="Chapter language"
+              className="ml-auto h-8 rounded-full border-1.5 border-line bg-paper px-3 text-[12.5px] font-bold text-plum outline-none focus:border-frost-hot">
+              {langs.map((l) => <option key={l} value={l}>{langName(l)}</option>)}
+            </select>
+          )}
         </div>
         {chapters === null ? (
           <div className="flex flex-col gap-1.5">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-11 animate-pulse rounded-xl bg-paper" />)}</div>
