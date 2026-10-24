@@ -119,7 +119,7 @@ export function WatchParty({ video, malId, ep }: { video: React.RefObject<HTMLVi
         <div className="w-[230px] rounded-2xl border-1.5 border-white/15 bg-black/70 p-3 text-white backdrop-blur-xl">
           <div className="text-[11px] font-bold uppercase tracking-[.12em] text-white/60">{isHost ? "You’re hosting" : "Synced to host"}</div>
           <p className="mt-1 text-[12.5px] font-semibold text-white/85">
-            {isHost ? "Share this link — everyone who opens it follows your playback." : "Your player follows the host’s play, pause and seeks."}
+            {isHost ? "Share this link. Everyone who opens it follows your playback." : "Your player follows the host’s play, pause and seeks."}
           </p>
           <div className="mt-2.5 flex gap-1.5">
             {isHost && (
