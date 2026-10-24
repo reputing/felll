@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Columns2, Gauge, Loader2, Maximize, Rows3, ScrollText, Square } from "lucide-react";
 import { getChapterPages, getChapters, getManga, type Chapter } from "@/lib/manga";
+import { setReading } from "@/components/shell/presence";
 import { cn } from "@/lib/utils";
 
 type Mode = "strip" | "single" | "dual";
@@ -79,6 +80,13 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
     if (mode === "strip") requestAnimationFrame(() => scroller.current?.querySelector(`[data-n="${to}"]`)?.scrollIntoView());
     else setIdx(to);
   }, [pages, mode]);
+
+  // Tell presence we're reading this title, so it shows "reading X" in the
+  // online list; clear it when the reader closes.
+  useEffect(() => {
+    if (info.title) setReading({ mangaId, title: info.title });
+    return () => setReading(null);
+  }, [mangaId, info.title]);
 
   // Prefetch the next chapter's first pages once you're near the end, so the
   // flip to the next chapter is instant.

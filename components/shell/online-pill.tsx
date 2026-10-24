@@ -20,12 +20,14 @@ export function OnlinePill() {
             {people.length === 0 && <p className="px-3 py-4 text-[13px] text-plum-muted">Just you. Cosy.</p>}
             {people.map((p) => (
               <Popover.Item key={p.handle} asChild>
-                <Link href={p.mal_id && p.episode ? `/watch/${p.mal_id}/${p.episode}` : `/u/${p.handle}`} className="grid grid-cols-[34px_1fr] items-center gap-2.5 rounded-2xl p-2 outline-none data-[highlighted]:bg-cream-tint">
+                <Link href={p.manga_id ? `/manga/${p.manga_id}` : p.mal_id && p.episode ? `/watch/${p.mal_id}/${p.episode}` : `/u/${p.handle}`} className="grid grid-cols-[34px_1fr] items-center gap-2.5 rounded-2xl p-2 outline-none data-[highlighted]:bg-cream-tint">
                   <Avatar src={p.avatar_url} name={p.handle} size={34} />
                   <span className="min-w-0">
                     <span className="block truncate text-[13px] font-extrabold">{p.display_name}</span>
                     <span className="block truncate text-[11.5px] font-semibold text-plum-muted">
-                      {p.title ? <>watching <span className="text-frost-text">{p.title}</span>{p.episode ? ` · ep ${p.episode}` : ""}</> : `@${p.handle} · browsing`}
+                      {p.manga_id && p.title ? <>reading <span className="text-frost-text">{p.title}</span></>
+                        : p.title ? <>watching <span className="text-frost-text">{p.title}</span>{p.episode ? ` · ep ${p.episode}` : ""}</>
+                        : `@${p.handle} · browsing`}
                     </span>
                   </span>
                 </Link>

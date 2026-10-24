@@ -13,12 +13,14 @@ export interface Online {
   mal_id: number | null;
   episode: number | null;
   title: string | null;
+  manga_id: string | null;
 }
 type Snapshot = { count: number; people: Online[] };
 
 let snap: Snapshot = { count: 0, people: [] };
 const subs = new Set<() => void>();
 let watching: { malId: number; episode: number; title: string } | null = null;
+let reading: { mangaId: string; title: string } | null = null;
 let beat: (() => void) | null = null;
 
 export function usePresence(): Snapshot {
@@ -31,22 +33,28 @@ export function setWatching(w: typeof watching) {
   beat?.();
 }
 
+/** The manga reader says what's being read; sent with the next heartbeat. */
+export function setReading(r: typeof reading) {
+  reading = r;
+  beat?.();
+}
+
 export function PresenceBeacon() {
   const path = usePathname();
   useEffect(() => {
-    // The manga reader is a full-screen overlay; don't run the heartbeat (or any
-    // of the other chrome's background calls matter there) while reading.
-    if (/^\/manga\/[^/]+\/[^/]+/.test(path)) return;
+    const reader = /^\/manga\/[^/]+\/[^/]+/.test(path);
     let stop = false;
     let t: ReturnType<typeof setTimeout>;
     const send = async () => {
       clearTimeout(t);
       if (stop) return;
       if (document.visibilityState === "visible") {
+        // What they're doing: watching on /watch, reading on the manga reader.
+        const doing = watching && path.startsWith("/watch") ? watching : reader && reading ? reading : {};
         const res = await fetch("/api/presence", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ path, ...(watching && path.startsWith("/watch") ? watching : {}) }),
+          body: JSON.stringify({ path, ...doing }),
           keepalive: true,
         }).catch(() => null);
         if (res?.ok) {
