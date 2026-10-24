@@ -225,11 +225,17 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
     if (chosen.length) return chosen;
     // nothing hosted in that language → fall through to the default resolution
   }
-  const enChapters = buildChapters(await fetchFeed(id, "&translatedLanguage[]=en"));
-  if (enChapters.length) return enChapters;
+  // English by default, as strongly as possible: hosted English first, then
+  // English official/external links — we'd rather show English links than dump
+  // the reader into Italian/Spanish/etc. for a title that's popular in English.
+  const enFeed = await fetchFeed(id, "&translatedLanguage[]=en");
+  const enHosted = buildChapters(enFeed);
+  if (enHosted.length) return enHosted;
+  const enExternal = buildChapters(enFeed, true);
+  if (enExternal.length) return enExternal;
 
-  // No English chapters hosted here. Look across every language and take the
-  // one with the most readable chapters.
+  // No English at all (not even official links). Fall back to the language with
+  // the most readable chapters, and failing that any official/external links.
   const all = await fetchFeed(id, "");
   const byLang = new Map<string, Raw[]>();
   for (const c of all) {
@@ -243,7 +249,6 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
   const bestChapters = buildChapters(best);
   if (bestChapters.length) return bestChapters;
 
-  // Nothing is hosted in any language → the official/external chapters.
   return buildChapters(all, true);
 }
 
