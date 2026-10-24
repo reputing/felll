@@ -19,6 +19,26 @@ interface D1Database {
   batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
 }
 
+// Minimal Durable Object + WebSocket types for the live chat room (hand-written,
+// like the D1 slice above, so a fresh clone typechecks without wrangler types).
+interface DurableObjectId { toString(): string }
+interface DurableObjectStub { fetch(request: Request): Promise<Response> }
+interface DurableObjectNamespace {
+  idFromName(name: string): DurableObjectId;
+  get(id: DurableObjectId): DurableObjectStub;
+}
+interface DurableObjectState {
+  acceptWebSocket(ws: WebSocket, tags?: string[]): void;
+  getWebSockets(tag?: string): WebSocket[];
+}
+// Cloudflare extends the DOM WebSocket with these (declaration merging):
+interface WebSocket {
+  serializeAttachment(value: unknown): void;
+  deserializeAttachment(): unknown;
+}
+interface ResponseInit { webSocket?: WebSocket | null }
+declare const WebSocketPair: { new (): { 0: WebSocket; 1: WebSocket } };
+
 interface CloudflareEnv {
   DB: D1Database;
   NEXT_PUBLIC_SITE_NAME?: string;
@@ -45,4 +65,6 @@ interface CloudflareEnv {
   STREAM8_API_URL?: string;
   /** Override the VidCore embed host (it moves) */
   VIDCORE_EMBED_BASE?: string;
+  /** The global chat room Durable Object (live WebSocket fan-out) */
+  CHAT: DurableObjectNamespace;
 }
