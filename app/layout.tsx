@@ -12,7 +12,7 @@ import "./globals.css";
 const sans = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-sans-src", display: "swap" });
 const plex = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex", display: "swap" });
 
-const TAGLINE = "Every show you're watching, everything you've loved, and whatever's next — all in one little box. The kuro members' watch lounge.";
+const TAGLINE = "Anime, manga and movies in one little box. Lists, ratings, comments and next-episode countdowns, for kuro members.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://cupcake.gg"),
@@ -24,13 +24,13 @@ export const metadata: Metadata = {
     type: "website",
     url: "https://cupcake.gg",
     siteName: "cupcake.gg",
-    title: "cupcake.gg — the kuro watch box",
+    title: "cupcake.gg · the kuro watch box",
     description: TAGLINE,
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "cupcake.gg — every anime you love, in one little box" }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "cupcake.gg: your anime, manga and movies in one box" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "cupcake.gg — the kuro watch box",
+    title: "cupcake.gg · the kuro watch box",
     description: TAGLINE,
     images: ["/og.png"],
   },
