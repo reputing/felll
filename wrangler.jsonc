@@ -9,6 +9,12 @@
     "binding": "ASSETS"
   },
   "observability": { "enabled": true },
+  // The public domain. Kept here so every deploy re-attaches it — wrangler
+  // overrides the Worker's remote config with this file, so a custom domain set
+  // only in the dashboard gets dropped on deploy.
+  "routes": [
+    { "pattern": "cupcake.gg", "custom_domain": true }
+  ],
   // Members, lists, comments, video sources and the Jikan cache.
   // `npx wrangler d1 create felll` prints the id to paste here.
   "d1_databases": [
@@ -21,8 +27,11 @@
   ],
   // Keeps the Jikan cache warm so nobody waits on a cold MyAnimeList call.
   "triggers": { "crons": ["*/20 * * * *"] },
-  // Public values. Secrets (KURO_SERVICE_KEY, STREAM_SIGNING_KEY_*) are set
-  // with `wrangler secret put`, never here.
+  // Public values only. Secrets and API keys (KURO_SERVICE_KEY,
+  // STREAM_SIGNING_KEY_*, TMDB_API_KEY, STREAM8_API_URL) are set with
+  // `wrangler secret put`, never here — anything in this file is committed to
+  // the repo. A deploy overrides the Worker's vars with this list, so a var set
+  // only in the dashboard is dropped; put durable non-secret vars here.
   "vars": {
     "NEXT_PUBLIC_SITE_NAME": "cupcake.gg",
     "KURO_URL": "https://kuro.rip",
@@ -32,6 +41,8 @@
     "JIKAN_DISABLED": "1",
     // The Anivexa backend ("the bot"). Deploy anivexa-server/ as a Cloudflare
     // Container (npm run anivexa:container:deploy) and point this at its URL.
-    "ANIVEXA_API_URL": "https://anivexa-api.matthewsjakael.workers.dev"
+    "ANIVEXA_API_URL": "https://anivexa-api.matthewsjakael.workers.dev",
+    // Embed host for the movie players (overridable since it moves).
+    "VIDCORE_EMBED_BASE": "https://vidcore.org"
   }
 }
