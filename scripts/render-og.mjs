@@ -7,13 +7,20 @@ import { chromium } from "playwright";
 
 const WIDTH = 1200, HEIGHT = 630;
 
+// Covers from AniList (the catalog's own source — reachable from CI, unlike
+// Jikan which sits behind Cloudflare and blocks datacenter requests).
 async function topCovers(n) {
+  const query = `query{Page(page:1,perPage:14){media(type:ANIME,sort:POPULARITY_DESC,isAdult:false){coverImage{extraLarge large}}}}`;
   try {
-    const res = await fetch("https://api.jikan.moe/v4/top/anime?filter=bypopularity&limit=12", { headers: { accept: "application/json" } });
+    const res = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ query }),
+    });
     if (!res.ok) return [];
-    const { data } = await res.json();
-    return (data ?? [])
-      .map((a) => a?.images?.jpg?.large_image_url || a?.images?.jpg?.image_url)
+    const j = await res.json();
+    return (j?.data?.Page?.media ?? [])
+      .map((m) => m?.coverImage?.extraLarge || m?.coverImage?.large)
       .filter(Boolean)
       .slice(0, n);
   } catch {
@@ -43,7 +50,7 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .poster{width:168px;height:252px;border-radius:20px;overflow:hidden;border:1px solid #2f2530;box-shadow:0 36px 70px -34px rgba(0,0,0,.9)}
   .poster img{width:100%;height:100%;object-fit:cover;display:block}
   .poster.ph{background:linear-gradient(160deg,#3a2230,#17101a)}
-  .fade{position:absolute;inset:0;background:linear-gradient(90deg,#09080a 40%,rgba(9,8,10,.55) 66%,rgba(9,8,10,0) 90%)}
+  .fade{position:absolute;inset:0;background:linear-gradient(90deg,#09080a 46%,rgba(9,8,10,.72) 68%,rgba(9,8,10,.15) 92%,rgba(9,8,10,0))}
   .wrap{position:relative;padding:74px;height:100%;display:flex;flex-direction:column}
   .top{display:flex;align-items:center;gap:20px}
   .mark{width:78px;height:78px;filter:drop-shadow(0 8px 18px rgba(255,143,196,.4))}
