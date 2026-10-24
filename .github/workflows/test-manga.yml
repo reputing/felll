@@ -1,0 +1,17 @@
+# Verifies the manga pipeline against real MangaDex (runners have internet; a
+# Cloudflare Worker / the dev sandbox can't reach it). Run from the Actions tab.
+name: Test manga
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/test-manga.mjs
