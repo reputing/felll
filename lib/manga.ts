@@ -28,16 +28,7 @@ export interface MangaFull extends MangaCard {
   altTitle: string;
   tags: string[];
   author: string;
-  languages: string[]; // translated languages available on MangaDex
 }
-
-const LANG_NAMES: Record<string, string> = {
-  en: "English", ja: "Japanese", "ja-ro": "Japanese (rōmaji)", es: "Spanish", "es-la": "Spanish (LatAm)",
-  "pt-br": "Portuguese (BR)", pt: "Portuguese", fr: "French", de: "German", it: "Italian", ru: "Russian",
-  zh: "Chinese", "zh-hk": "Chinese (HK)", ko: "Korean", id: "Indonesian", tr: "Turkish", ar: "Arabic",
-  th: "Thai", vi: "Vietnamese", pl: "Polish", uk: "Ukrainian", nl: "Dutch", hi: "Hindi", fil: "Filipino",
-};
-export const langName = (c: string) => LANG_NAMES[c] ?? c.toUpperCase();
 export interface Chapter {
   id: string;
   chapter: string; // "12" or "12.5"
@@ -164,7 +155,6 @@ async function fetchManga(id: string): Promise<MangaFull | null> {
     altTitle: pick(m.attributes.altTitles?.find?.((a: Raw) => a.en || a.ja_ro)) || "",
     tags: (m.attributes.tags ?? []).map((t: Raw) => pick(t.attributes?.name)).filter(Boolean),
     author,
-    languages: (m.attributes.availableTranslatedLanguages ?? []).filter((l: unknown): l is string => typeof l === "string"),
   };
 }
 
@@ -205,26 +195,19 @@ function buildChapters(raw: Raw[], external = false): Chapter[] {
   return chapters;
 }
 
-/** Readable chapters for a title, in `lang` (memoised per session). When no
- *  language is asked for, English first; if none is hosted here, fall back to
- *  the language with the most chapters, and failing that surface the
- *  official/external links, so a popular title is never shown as empty. */
-export function getChapters(id: string, lang?: string): Promise<Chapter[]> {
-  const key = `${id}|${lang || "auto"}`;
-  let p = chaptersCache.get(key);
+/** Readable chapters for a title (memoised per session).
+ *  English first; if none is hosted here, fall back to the language with the
+ *  most chapters, and failing that surface the official/external links, so a
+ *  popular title is never shown as empty. */
+export function getChapters(id: string): Promise<Chapter[]> {
+  let p = chaptersCache.get(id);
   if (!p) {
-    p = fetchChapters(id, lang).catch((e) => { chaptersCache.delete(key); throw e; });
-    chaptersCache.set(key, p);
+    p = fetchChapters(id).catch((e) => { chaptersCache.delete(id); throw e; });
+    chaptersCache.set(id, p);
   }
   return p;
 }
-async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
-  // A specific language was chosen (reader/detail language picker).
-  if (lang) {
-    const chosen = buildChapters(await fetchFeed(id, `&translatedLanguage[]=${encodeURIComponent(lang)}`));
-    if (chosen.length) return chosen;
-    // nothing hosted in that language → fall through to the default resolution
-  }
+async function fetchChapters(id: string): Promise<Chapter[]> {
   const enChapters = buildChapters(await fetchFeed(id, "&translatedLanguage[]=en"));
   if (enChapters.length) return enChapters;
 
