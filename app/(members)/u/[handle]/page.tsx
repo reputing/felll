@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CalendarDays, Crown, Flame, Lock, MessageSquare, Pencil, Radio, Sparkles } from "lucide-react";
+import { BookOpen, CalendarDays, Crown, Flame, Lock, MessageSquare, Pencil, Radio, Sparkles } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { all, db, first } from "@/lib/db";
 import { getCachedAnime } from "@/lib/jikan";
@@ -18,6 +18,9 @@ import type { User } from "@/lib/auth";
 
 type Props = { params: Promise<{ handle: string }> };
 
+interface MangaRow { manga_id: string; status: string | null; favorite: number; title: string; cover: string | null; updated_at: number }
+const MANGA_STATUS: Record<string, string> = { reading: "Reading", planning: "Plan to read", completed: "Completed", paused: "On hold", dropped: "Dropped" };
+
 export async function generateMetadata({ params }: Props) {
   return { title: `@${(await params).handle}` };
 }
@@ -29,7 +32,7 @@ export default async function Profile({ params }: Props) {
   if (!u) notFound();
   const self = u.id === me.id;
   const d = await db();
-  const [[counts, following, live], stats, rows, activity, comments] = await Promise.all([
+  const [[counts, following, live], stats, rows, activity, comments, mangaRows, reading, mangaComments] = await Promise.all([
     d.batch<Record<string, number | string | null>>([
       d.prepare("select (select count(*) from follows where followee_id = ?1) as followers, (select count(*) from follows where follower_id = ?1) as following").bind(u.id),
       d.prepare("select count(*) as n from follows where follower_id = ? and followee_id = ?").bind(me.id, u.id),
@@ -41,6 +44,10 @@ export default async function Profile({ params }: Props) {
       "select kind, mal_id, episode, title, image, detail, created_at from activity where user_id = ? order by created_at desc limit 14", u.id),
     all<{ id: number; mal_id: number; episode: number | null; body: string; spoiler: number; created_at: number; likes: number }>(
       "select id, mal_id, episode, body, spoiler, created_at, likes from comments where user_id = ? and deleted = 0 order by created_at desc limit 5", u.id),
+    all<MangaRow>("select manga_id, status, favorite, title, cover, updated_at from manga_library where user_id = ? order by (status = 'reading') desc, updated_at desc", u.id).catch(() => []),
+    first<{ manga_id: string; title: string; cover: string | null; chapter_num: string }>("select manga_id, title, cover, chapter_num from manga_progress where user_id = ? order by updated_at desc limit 1", u.id).catch(() => null),
+    all<{ id: number; manga_id: string; body: string; spoiler: number; created_at: number; likes: number }>(
+      "select id, manga_id, body, spoiler, created_at, likes from manga_comments where user_id = ? and deleted = 0 order by created_at desc limit 5", u.id).catch(() => []),
   ]);
   const c = counts.results[0] as { followers: number; following: number };
   const now = live.results[0] as { mal_id: number | null; episode: number | null; title: string | null } | undefined;
@@ -48,6 +55,13 @@ export default async function Profile({ params }: Props) {
   const showcase = showcaseIds.map((id) => rows.find((r) => r.mal_id === id)).filter(Boolean) as BoxRow[];
   const favs = rows.filter((r) => r.favorite);
   const hidden = !!u.private_lists && !self;
+
+  // Latest comments across anime and manga, newest first.
+  const latestComments = [
+    ...comments.map((c) => ({ key: `a${c.id}`, href: `${c.episode ? `/watch/${c.mal_id}/${c.episode}` : `/anime/${c.mal_id}`}#c${c.id}`, body: c.body, spoiler: c.spoiler, created_at: c.created_at, likes: c.likes })),
+    ...mangaComments.map((c) => ({ key: `m${c.id}`, href: `/manga/${c.manga_id}`, body: c.body, spoiler: c.spoiler, created_at: c.created_at, likes: c.likes })),
+  ].sort((a, b) => b.created_at - a.created_at).slice(0, 6);
+  const mangaShelf = hidden ? [] : mangaRows;
 
   // genre mix from whatever of their list is already in the cache (no live calls)
   const cached = await getCachedAnime(rows.filter((r) => r.status === "completed" || r.status === "watching" || r.favorite).slice(0, 80).map((r) => r.mal_id));
@@ -100,13 +114,18 @@ export default async function Profile({ params }: Props) {
             )}
           </div>
         </div>
-        {(u.bio || u.status_text || now?.title) && (
+        {(u.bio || u.status_text || now?.title || reading?.title) && (
           <div className="relative grid gap-3 border-t border-night-line px-5 py-5 sm:px-8 md:grid-cols-[1fr_auto]">
             {u.bio ? <p className="max-w-[70ch] whitespace-pre-line text-[14.5px] leading-relaxed text-night-muted">{u.bio}</p> : <span />}
             <div className="flex flex-col items-start gap-2 md:items-end">
               {now?.title ? (
                 <Link href={now.mal_id && now.episode ? `/watch/${now.mal_id}/${now.episode}` : "#"} className="flex items-center gap-2 rounded-full border border-night-edge px-3.5 py-1.5 text-[12.5px] font-bold hover:border-frost">
                   <span className="size-2 rounded-full bg-sprinkle-mint animate-pulse-dot" />watching {now.title}{now.episode ? ` · ep ${now.episode}` : ""}
+                </Link>
+              ) : null}
+              {reading?.title && !hidden ? (
+                <Link href={`/manga/${reading.manga_id}`} className="flex items-center gap-2 rounded-full border border-night-edge px-3.5 py-1.5 text-[12.5px] font-bold hover:border-frost">
+                  <BookOpen className="size-3.5 text-frost" />reading {reading.title}{reading.chapter_num ? ` · ch ${reading.chapter_num}` : ""}
                 </Link>
               ) : null}
               {u.status_text && <span className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-bold" style={{ background: `color-mix(in srgb, ${accent} 22%, transparent)`, color: accent }}><Sparkles className="size-3.5" />{u.status_text}</span>}
@@ -176,6 +195,24 @@ export default async function Profile({ params }: Props) {
               <BoxGrid rows={rows} readOnly={!self} initialTab={rows.some((r) => r.status === "watching") ? "watching" : "all"} />
             )}
           </section>
+
+          {mangaShelf.length > 0 && (
+            <section className="rounded-box border-1.5 border-line bg-cream-card p-5">
+              <div className="flex items-end justify-between">
+                <div><div className="eyebrow">On the shelf</div><h2 className="mt-1 text-xl font-extrabold tracking-[-.6px]">{self ? "Your manga" : `${u.display_name}’s manga`}</h2></div>
+                <span className="font-mono text-[13px] text-plum-muted">{mangaShelf.length}</span>
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-6">
+                {mangaShelf.slice(0, 12).map((m) => (
+                  <Link key={m.manga_id} href={`/manga/${m.manga_id}`} className="group">
+                    <Poster src={m.cover} className="aspect-[2/3] rounded-2xl border-1.5 border-line shadow-poster transition group-hover:-translate-y-1 group-hover:border-frost-hot" />
+                    <div className="mt-1.5 line-clamp-2 text-[12px] font-extrabold leading-tight">{m.title}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[.04em] text-plum-muted">{m.status ? MANGA_STATUS[m.status] ?? m.status : ""}</div>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
 
         <aside className="flex flex-col gap-4">
@@ -204,7 +241,7 @@ export default async function Profile({ params }: Props) {
           <section className="rounded-box border-1.5 border-line bg-cream-card p-5">
             <div className="eyebrow mb-3 flex items-center gap-1.5"><Radio className="size-3" />Activity</div>
             {activity.length === 0 && <p className="text-[13px] text-plum-muted">Quiet so far.</p>}
-            <ol className="flex flex-col gap-3">
+            <ol className="scrollbar-none flex max-h-[460px] flex-col gap-3 overflow-y-auto pr-1">
               {activity.map((a, i) => (
                 <li key={i} className="grid grid-cols-[30px_1fr] gap-2.5 text-[12.5px] leading-snug">
                   {a.image ? <Poster src={a.image} className="h-10 w-[30px] rounded-lg" /> : <span className="grid h-10 w-[30px] place-items-center rounded-lg bg-cream-tint">✿</span>}
@@ -213,13 +250,13 @@ export default async function Profile({ params }: Props) {
               ))}
             </ol>
           </section>
-          {comments.length > 0 && (
+          {latestComments.length > 0 && (
             <section className="rounded-box border-1.5 border-line bg-cream-card p-5">
               <div className="eyebrow mb-3 flex items-center gap-1.5"><MessageSquare className="size-3" />Latest comments</div>
               <ul className="flex flex-col gap-2.5">
-                {comments.map((cm) => (
-                  <li key={cm.id}>
-                    <Link href={`${cm.episode ? `/watch/${cm.mal_id}/${cm.episode}` : `/anime/${cm.mal_id}`}#c${cm.id}`} className="block rounded-2xl bg-cream-tint px-3.5 py-2.5 text-[13px] hover:bg-cream-blush">
+                {latestComments.map((cm) => (
+                  <li key={cm.key}>
+                    <Link href={cm.href} className="block rounded-2xl bg-cream-tint px-3.5 py-2.5 text-[13px] hover:bg-cream-blush">
                       <span className="line-clamp-2">{cm.spoiler ? "‹spoiler›" : cm.body}</span>
                       <span className="text-[11px] font-semibold text-plum-muted">{ago(cm.created_at)} · ♥ {cm.likes}</span>
                     </Link>
