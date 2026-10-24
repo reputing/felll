@@ -21,6 +21,8 @@ export async function GET(req: Request) {
     run("delete from sso_burned where expires_at < unixepoch()"),
     run("delete from jikan_cache where fetched_at < unixepoch() - 30 * 86400"),
     run("delete from daily_views where day < date('now', '-60 days')"),
+    // keep the global chat to the most recent ~500 messages
+    run("delete from chat_messages where id <= (select max(id) - 500 from chat_messages)"),
   ]);
   return new Response("warm");
 }

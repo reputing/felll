@@ -11,6 +11,20 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const PASS_THROUGH_HEADERS = ["content-type", "content-length", "accept-ranges", "content-range"];
 
+// Some stream providers bake a watermark (e.g. "PiP") into every subtitle cue.
+// Strip it so it doesn't show on screen. Add to the list if one uses another tag.
+const SUB_WATERMARKS = ["PiP"];
+function cleanSubtitle(text: string): string {
+  let out = text;
+  for (const w of SUB_WATERMARKS) {
+    const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out
+      .replace(new RegExp(`([A-Za-z])${esc}\\b`, "g"), "$1") // concatenated: I'llPiP -> I'll
+      .replace(new RegExp(`\\b${esc}\\b`, "g"), "");          // standalone
+  }
+  return out.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+$/gm, "");
+}
+
 function isBlockedHost(host: string): boolean {
   const h = host.toLowerCase();
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".internal") || h.endsWith(".local")) return true;
@@ -107,6 +121,19 @@ export async function GET(req: Request) {
 
   if (/mpegurl|vnd\.apple|x-mpegurl/i.test(contentType) || /\.m3u8(\?|$)/i.test(path)) {
     return makePlaylist(await upstream.text());
+  }
+
+  // Subtitles: strip provider watermarks (e.g. "PiP") baked into the cues.
+  if (/\.(vtt|srt)(\?|$)/i.test(path) || /text\/vtt|x-subrip|subrip|\bsrt\b/i.test(contentType)) {
+    const resp = new Response(cleanSubtitle(await upstream.text()), {
+      headers: {
+        "content-type": contentType || "text/vtt",
+        "access-control-allow-origin": "*",
+        "cache-control": "public, max-age=3600",
+      },
+    });
+    cachePut(resp);
+    return resp;
   }
 
   const responseHeaders = new Headers();
