@@ -1,0 +1,37 @@
+# Renders the cupcake.gg link-preview card (public/og-v3.png) with a shelf of
+# real top-anime covers. GitHub's runners can reach Jikan + the MAL image CDN,
+# which a Cloudflare Worker can't. Run it from the Actions tab (Run workflow)
+# whenever you want to refresh the covers.
+name: OG card
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm i -D playwright@1.48.0
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/render-og.mjs
+      - name: Commit the rendered card
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/og-v3.png
+          if git diff --cached --quiet; then
+            echo "og-v3.png unchanged"
+          else
+            git commit -m "OG card: render with current top-anime covers"
+            git push
+          fi
