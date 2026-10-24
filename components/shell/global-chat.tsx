@@ -11,20 +11,25 @@ interface Msg {
   handle: string; display_name: string; avatar_url: string | null; accent: string; is_plus: number; mine: number;
 }
 
-// A live global chat room, docked on the right. Polls every few seconds while
-// visible (no websockets on Workers), so it feels live without a realtime layer.
-export function GlobalChat() {
+// A live global chat room, docked on the right. Real-time over a WebSocket to
+// the ChatRoom Durable Object (worker.ts); if the socket drops it falls back to
+// polling and keeps retrying, so it degrades gracefully.
+export function GlobalChat({ me }: { me: string }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [body, setBody] = useState("");
-  const [busy, setBusy] = useState(false);
   const [unseen, setUnseen] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [connected, setConnected] = useState(false);
+
   const lastId = useRef(0);
+  const seen = useRef<Set<number>>(new Set());
   const openRef = useRef(false);
-  const listRef = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
+  const listRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { openRef.current = open; }, [open]);
 
@@ -33,34 +38,72 @@ export function GlobalChat() {
   }, []);
 
   const apply = useCallback((incoming: Msg[], initial = false) => {
-    if (!incoming.length && !initial) return;
+    const fresh = incoming.map((m) => ({ ...m, mine: m.handle === me ? 1 : 0 })).filter((m) => !seen.current.has(m.id));
+    if (!fresh.length && !initial) return;
+    fresh.forEach((m) => seen.current.add(m.id));
     lastId.current = Math.max(lastId.current, 0, ...incoming.map((m) => m.id));
-    setMsgs((cur) => (initial ? incoming : [...cur, ...incoming]).slice(-250));
-    if (!initial && !openRef.current) setUnseen((n) => n + incoming.filter((m) => !m.mine).length);
-    if (openRef.current && (initial || nearBottom.current || incoming.some((m) => m.mine))) scrollDown();
-  }, [scrollDown]);
+    setMsgs((cur) => [...(initial ? [] : cur), ...fresh].sort((a, b) => a.id - b.id).slice(-250));
+    if (!initial && !openRef.current) setUnseen((n) => n + fresh.filter((m) => !m.mine).length);
+    if (openRef.current && (initial || nearBottom.current || fresh.some((m) => m.mine))) scrollDown();
+  }, [me, scrollDown]);
 
-  // initial load + poll (independent of open state, so it keeps a live unread count)
+  // live socket + history + fallbacks
   useEffect(() => {
-    let on = true;
-    const load = async (url: string, initial = false) => {
-      const r = await fetch(url).then((x) => (x.ok ? x.json() : null)).catch(() => null);
-      if (on && r?.messages) { apply(r.messages, initial); if (initial) setLoaded(true); }
+    let stopped = false;
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+
+    const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+    const startPoll = () => {
+      if (pollRef.current) return;
+      pollRef.current = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          fetch(`/api/chat?after=${lastId.current}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.messages) apply(d.messages); }).catch(() => {});
+        }
+      }, 5000);
     };
-    load("/api/chat", true);
-    const iv = setInterval(() => { if (document.visibilityState === "visible") load(`/api/chat?after=${lastId.current}`); }, 5000);
-    return () => { on = false; clearInterval(iv); };
+
+    const connect = () => {
+      if (stopped) return;
+      let ws: WebSocket;
+      try {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${proto}//${location.host}/api/chat/ws`);
+      } catch { startPoll(); return; }
+      wsRef.current = ws;
+      ws.onopen = () => { tries = 0; setConnected(true); stopPoll(); };
+      ws.onmessage = (e) => { try { const d = JSON.parse(e.data as string); if (d.message) apply([d.message]); } catch { /* noise */ } };
+      ws.onerror = () => { try { ws.close(); } catch { /* */ } };
+      ws.onclose = () => {
+        setConnected(false);
+        wsRef.current = null;
+        if (stopped) return;
+        startPoll();
+        tries = Math.min(tries + 1, 6);
+        reconnect = setTimeout(connect, 1000 * tries);
+      };
+    };
+
+    // history first, then go live
+    fetch("/api/chat").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.messages) apply(d.messages, true); }).catch(() => {}).finally(() => setLoaded(true));
+    connect();
+
+    return () => { stopped = true; clearTimeout(reconnect); stopPoll(); try { wsRef.current?.close(); } catch { /* */ } };
   }, [apply]);
 
   useEffect(() => { if (open) { setUnseen(0); scrollDown(); } }, [open, scrollDown]);
 
   const send = async () => {
     const text = body.trim();
-    if (!text || busy) return;
-    setBusy(true);
+    if (!text) return;
+    setBody("");
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ body: text })); // the DO echoes it back to everyone, us included
+      return;
+    }
     const res = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: text }) }).catch(() => null);
-    if (res?.ok) { const d = await res.json(); setBody(""); if (d.message) apply([d.message]); }
-    setBusy(false);
+    if (res?.ok) { const d = await res.json(); if (d.message) apply([d.message]); }
   };
 
   // The manga reader is a full-screen overlay; don't float the chat over it.
@@ -81,7 +124,7 @@ export function GlobalChat() {
         <div className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l-1.5 border-line bg-cream-card shadow-[-20px_0_60px_-30px_rgba(0,0,0,.6)] animate-in slide-in-from-right sm:w-[380px]">
           <div className="flex flex-none items-center justify-between border-b-1.5 border-line px-4 py-3">
             <div>
-              <div className="eyebrow">cupcake / live</div>
+              <div className="eyebrow flex items-center gap-1.5"><span className={cn("size-1.5 rounded-full", connected ? "bg-sprinkle-mint animate-pulse-dot" : "bg-plum-faint")} />cupcake / live</div>
               <h2 className="text-[17px] font-extrabold tracking-[-.4px]">Global chat</h2>
             </div>
             <button type="button" onClick={() => setOpen(false)} aria-label="Close chat" className="grid size-9 place-items-center rounded-full text-plum-muted transition hover:bg-cream-tint hover:text-plum"><X className="size-5" /></button>
@@ -114,9 +157,9 @@ export function GlobalChat() {
               <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Say something to everyone…" rows={1} maxLength={500}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                 className="max-h-24 w-full resize-none bg-transparent px-2 py-1.5 text-[13.5px] font-medium text-plum outline-none" />
-              <button type="button" onClick={send} disabled={!body.trim() || busy} aria-label="Send"
+              <button type="button" onClick={send} disabled={!body.trim()} aria-label="Send"
                 className="grid size-9 flex-none place-items-center rounded-xl bg-frost text-frost-ink shadow-press transition disabled:opacity-40">
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                <Send className="size-4" />
               </button>
             </div>
           </div>

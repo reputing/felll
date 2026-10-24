@@ -34,7 +34,7 @@ export default async function MembersLayout({ children }: { children: React.Reac
       <SiteFooter />
       <PresenceBeacon />
       <CommandPalette />
-      <GlobalChat />
+      <GlobalChat me={user.handle} />
       <SpotlightTracker />
       <Toaster />
     </div>
