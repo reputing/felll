@@ -26,13 +26,13 @@ export const metadata: Metadata = {
     siteName: "cupcake.gg",
     title: "cupcake.gg · the kuro watch box",
     description: TAGLINE,
-    images: [{ url: "/og-v2.png", width: 1200, height: 630, alt: "cupcake.gg: your anime, manga and movies in one box" }],
+    images: [{ url: "/og-v3.png", width: 1200, height: 630, alt: "cupcake.gg: your anime, manga and movies in one box" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "cupcake.gg · the kuro watch box",
     description: TAGLINE,
-    images: ["/og-v2.png"],
+    images: ["/og-v3.png"],
   },
 };
 
