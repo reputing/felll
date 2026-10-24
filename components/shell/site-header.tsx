@@ -100,7 +100,9 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
         <button type="button" onClick={() => set({ palette: true })} aria-label="Search" className="grid size-10 place-items-center rounded-full border-1.5 border-line bg-paper md:hidden">
           <Search className="size-[17px]" />
         </button>
-        <OnlinePill />
+        {/* The online count + who's-watching list is cramped and intrusive on
+            phones, so show it from sm up only. */}
+        <div className="hidden sm:block"><OnlinePill /></div>
         <Link href="/box" className="hidden h-11 items-center gap-2 px-1.5 font-bold hover:text-frost-text sm:flex">
           <SaveIcon on={savedN > 0} className="size-[17px]" /> <span className="hidden 2xl:inline">Saved</span> <span className="font-mono text-[12.5px] text-frost-text">{pad2(savedN)}</span>
         </Link>
