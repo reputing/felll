@@ -37,7 +37,7 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
   // Load everything for this chapter.
   useEffect(() => {
     setPages(null); setIdx(0);
-    refreshes.current = 0;
+    setAltPages(null); altReq.current = false;
     let on = true;
     let lang = "en";
     try { lang = localStorage.getItem("manga:lang") || "en"; } catch { /* storage off */ }
@@ -50,16 +50,16 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
     return () => { on = false; };
   }, [mangaId, chapterId]);
 
-  // MangaDex's at-home servers are sometimes slow or down, so a page can fail to
-  // load. On an image error, request a fresh at-home server (a different node)
-  // and reload the pages — up to twice per chapter.
-  const refreshing = useRef(false);
-  const refreshes = useRef(0);
-  const refreshPages = useCallback(() => {
-    if (refreshing.current || refreshes.current >= 2) return;
-    refreshing.current = true;
-    refreshes.current += 1;
-    getChapterPages(chapterId).then((p) => { if (p.length) setPages(p); }).catch(() => {}).finally(() => { setTimeout(() => { refreshing.current = false; }, 2500); });
+  // MangaDex's at-home nodes are rate-limited per IP and occasionally flaky, so a
+  // page or two in a chapter can fail. On the first failure we fetch ONE fresh
+  // at-home server; each failed image then retries from it on its own, so pages
+  // that are loading fine are never disturbed.
+  const [altPages, setAltPages] = useState<string[] | null>(null);
+  const altReq = useRef(false);
+  const requestAlt = useCallback(() => {
+    if (altReq.current) return;
+    altReq.current = true;
+    getChapterPages(chapterId).then((p) => { if (p.length) setAltPages(p); }).catch(() => {});
   }, [chapterId]);
 
   // Save progress (debounced) whenever the page changes.
@@ -184,8 +184,7 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
         ) : mode === "strip" ? (
           <div className="mx-auto flex max-w-[920px] flex-col items-center">
             {pages.map((src, n) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={n} data-n={n} src={src} alt={`Page ${n + 1}`} loading={n < 2 ? "eager" : "lazy"} onError={refreshPages} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
+              <Page key={n} n={n} dataN={n} src={src} altSrc={altPages?.[n]} onReqAlt={requestAlt} eager={n < 2} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
             ))}
             <div className="flex w-full flex-col items-center gap-3 py-10 text-center">
               {next ? (
@@ -200,8 +199,7 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
           <div className="relative grid h-full place-items-center">
             <div className={cn("flex h-full items-center justify-center", mode === "dual" && "gap-1")}>
               {[idx, ...(mode === "dual" && idx + 1 < pages.length ? [idx + 1] : [])].map((n) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={n} src={pages[n]} alt={`Page ${n + 1}`} onError={refreshPages} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
+                <Page key={n} n={n} src={pages[n]} altSrc={altPages?.[n]} onReqAlt={requestAlt} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
               ))}
             </div>
             {/* tap zones */}
@@ -220,5 +218,30 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
         </div>
       )}
     </div>
+  );
+}
+
+// One manga page image. Loads direct from the MangaDex CDN with no referrer
+// (like the covers, which work). If it fails, it retries once from a fresh
+// at-home server (requested via onReqAlt) — on its own, so pages that loaded
+// fine are untouched.
+function Page({ n, dataN, src, altSrc, onReqAlt, eager, className }: {
+  n: number; dataN?: number; src: string; altSrc?: string; onReqAlt: () => void; eager?: boolean; className?: string;
+}) {
+  const [url, setUrl] = useState(src);
+  const failed = useRef(false);
+  useEffect(() => { setUrl(src); failed.current = false; }, [src]);
+  useEffect(() => { if (failed.current && altSrc && url !== altSrc) setUrl(altSrc); }, [altSrc, url]);
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      data-n={dataN}
+      alt={`Page ${n + 1}`}
+      loading={eager ? "eager" : "lazy"}
+      referrerPolicy="no-referrer"
+      onError={() => { if (!failed.current) { failed.current = true; onReqAlt(); if (altSrc) setUrl(altSrc); } }}
+      className={className}
+    />
   );
 }

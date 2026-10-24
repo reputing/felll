@@ -36,7 +36,7 @@ export function MangaDetail({ id }: { id: string }) {
   // The language actually being shown (chapters may fall back if the picked one
   // isn't hosted here). English first in the picker.
   const activeLang = first?.lang ?? lang;
-  const langs = [...m.languages].sort((a, b) => (a === "en" ? -1 : b === "en" ? 1 : langName(a).localeCompare(langName(b))));
+  const langs = [...(m.languages ?? [])].sort((a, b) => (a === "en" ? -1 : b === "en" ? 1 : langName(a).localeCompare(langName(b))));
 
   return (
     <div className="flex flex-col gap-6">

@@ -39,6 +39,14 @@ interface WebSocket {
 interface ResponseInit { webSocket?: WebSocket | null }
 declare const WebSocketPair: { new (): { 0: WebSocket; 1: WebSocket } };
 
+declare module "cloudflare:workers" {
+  export class DurableObject<Env = unknown> {
+    protected ctx: DurableObjectState;
+    protected env: Env;
+    constructor(ctx: DurableObjectState, env: Env);
+  }
+}
+
 interface CloudflareEnv {
   DB: D1Database;
   NEXT_PUBLIC_SITE_NAME?: string;
