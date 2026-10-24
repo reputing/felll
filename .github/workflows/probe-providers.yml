@@ -1,0 +1,18 @@
+# Evaluates candidate manga/anime providers against the live internet (runners
+# have it; the Worker / dev sandbox do not). Run from the Actions tab. Reports
+# only — wires nothing up.
+name: Probe providers
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/probe-providers.mjs
