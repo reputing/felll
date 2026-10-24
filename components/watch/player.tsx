@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { POPUP, POPUP_ITEM, POPUP_LABEL, POPUP_SEPARATOR } from "@/components/ui/popup";
 import { useBox } from "@/lib/store";
 import { REACTIONS } from "@/lib/reactions";
+import { fetchAniSkip } from "@/lib/aniskip";
 import { clock, cn } from "@/lib/utils";
 import { WatchParty } from "./watch-party";
 
@@ -54,6 +55,9 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   // Some providers return skip markers with the stream; they win over the props.
   const [streamIntro, setStreamIntro] = useState<{ start: number; end: number } | null>(null);
   const [streamOutro, setStreamOutro] = useState<{ start: number; end: number } | null>(null);
+  // Auto-detected OP/ED from AniSkip (community timestamps, keyed by MAL id+ep).
+  const [aniIntro, setAniIntro] = useState<{ start: number; end: number } | null>(null);
+  const [aniOutro, setAniOutro] = useState<{ start: number; end: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [extraSubs, setExtraSubs] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,7 +85,6 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [moments, setMoments] = useState<{ at: number; emoji: string }[]>([]);
   const [reactOpen, setReactOpen] = useState(false);
   const [autoNext, setAutoNext] = usePref("autoNext", true);
-  const [autoSkip, setAutoSkip] = usePref("autoSkip", false);
   const [theater, setTheater] = usePref("theater", false);
   const [preferDub] = usePref("preferDub", false);
   const started = useRef(false);
@@ -90,11 +93,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const engaged = useRef(false); // has the viewer started playback at least once
   const [docked, setDocked] = useState(false); // scrolled past → corner mini
 
-  // Effective skip markers: a provider's own markers (Anivexa) override the
-  // vault's stored ones for the current source.
-  const introStart = streamIntro?.start ?? intro.start ?? crowdIntro?.start ?? null;
-  const introEnd = streamIntro?.end ?? intro.end ?? crowdIntro?.end ?? null;
-  const outroStartEff = streamOutro?.start ?? outroStart ?? crowdOutro?.start ?? null;
+  // Effective skip markers, by priority: the provider's own markers (Anivexa),
+  // then auto-detected AniSkip, then the vault's stored markers, then crowd.
+  const introStart = streamIntro?.start ?? aniIntro?.start ?? intro.start ?? crowdIntro?.start ?? null;
+  const introEnd = streamIntro?.end ?? aniIntro?.end ?? intro.end ?? crowdIntro?.end ?? null;
+  const outroStartEff = streamOutro?.start ?? aniOutro?.start ?? outroStart ?? crowdOutro?.start ?? null;
 
   useEffect(() => {
     if (theater) document.documentElement.dataset.theater = "1";
@@ -199,27 +202,26 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   // Warm the next episode's page so "Next" / auto-next is instant.
   useEffect(() => { if (nextHref) router.prefetch?.(nextHref); }, [nextHref, router]);
 
-  // Crowd skip markers + timeline moments for this episode.
+  // Auto-detected OP/ED (AniSkip) + crowd fallback + timeline moments, per episode.
   useEffect(() => {
     let on = true;
-    setCrowdIntro(null); setCrowdOutro(null); setMoments([]);
+    setAniIntro(null); setAniOutro(null); setCrowdIntro(null); setCrowdOutro(null); setMoments([]);
+    // AniSkip is keyed by MAL id + episode — no manual marking. Refined with the
+    // real episode length once it's known (see the duration effect below).
+    fetchAniSkip(meta.malId, meta.ep).then((s) => { if (on) { setAniIntro(s.intro); setAniOutro(s.outro); } }).catch(() => {});
     fetch(`/api/skip?malId=${meta.malId}&ep=${meta.ep}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (on && d) { setCrowdIntro(d.intro ?? null); setCrowdOutro(d.outro ?? null); } }).catch(() => {});
     fetch(`/api/moments?malId=${meta.malId}&ep=${meta.ep}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (on && Array.isArray(d?.moments)) setMoments(d.moments.slice(0, 80)); }).catch(() => {});
     return () => { on = false; };
   }, [meta.malId, meta.ep]);
 
-  // Mark where the intro ends / outro starts, for everyone (crowd-sourced).
-  const markSkip = useCallback((kind: "intro" | "outro") => {
-    const v = video.current;
-    if (!v || !v.duration) return;
-    const t = Math.floor(v.currentTime);
-    const start = kind === "intro" ? 0 : t;
-    const end = kind === "intro" ? t : Math.floor(v.duration);
-    if (end <= start) return;
-    setFlash(kind === "intro" ? "Marked intro end" : "Marked outro start");
-    fetch("/api/skip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ malId: meta.malId, ep: meta.ep, kind, start, end }) })
-      .then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) { setCrowdIntro(d.intro ?? null); setCrowdOutro(d.outro ?? null); } }).catch(() => {});
-  }, [meta.malId, meta.ep]);
+  // Once the real duration is known, re-query AniSkip with it for a tighter
+  // match (it disambiguates episodes that have multiple length variants).
+  useEffect(() => {
+    if (!dur) return;
+    let on = true;
+    fetchAniSkip(meta.malId, meta.ep, dur).then((s) => { if (on && (s.intro || s.outro)) { setAniIntro(s.intro); setAniOutro(s.outro); } }).catch(() => {});
+    return () => { on = false; };
+  }, [dur, meta.malId, meta.ep]);
 
   // Drop an emoji on the timeline at the current second.
   const react = useCallback((emoji: string) => {
@@ -425,10 +427,6 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setT(v.currentTime);
     if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
     report();
-    if (autoSkip && introStart != null && introEnd != null && v.currentTime >= introStart && v.currentTime < introEnd - 0.5) {
-      v.currentTime = introEnd;
-      setFlash("Skipped intro");
-    }
     if (autoNext && !stopAfterEp && nextHref && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
   };
 
@@ -509,8 +507,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       {flash && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/60 px-5 py-2.5 text-[15px] font-extrabold text-white backdrop-blur animate-in fade-in zoom-in-90">{flash}</div>}
       {error && <div className="absolute inset-0 grid place-items-center bg-black/85 p-6 text-center text-[15px] font-bold text-white">{error}</div>}
 
-      {/* skip buttons */}
-      {inIntro && !autoSkip && (
+      {/* skip buttons — always a tap, never automatic */}
+      {inIntro && (
         <button type="button" onClick={() => { video.current!.currentTime = introEnd!; }} className="absolute bottom-24 right-5 flex h-11 items-center gap-2 rounded-full border-1.5 border-white/30 bg-black/60 px-5 text-[14px] font-extrabold text-white backdrop-blur-md transition hover:bg-frost hover:text-frost-ink animate-in fade-in slide-in-from-right-4">
           <FastForward className="size-4" /> Skip intro
         </button>
@@ -613,7 +611,6 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
                 )}
                 <Menu.Separator className={POPUP_SEPARATOR} />
                 <Menu.CheckboxItem checked={autoNext} onCheckedChange={setAutoNext} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Auto-next</span><Toggle on={autoNext} /></Menu.CheckboxItem>
-                <Menu.CheckboxItem checked={autoSkip} onCheckedChange={setAutoSkip} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Auto-skip intro</span><Toggle on={autoSkip} /></Menu.CheckboxItem>
                 <Menu.CheckboxItem checked={stopAfterEp} onCheckedChange={setStopAfterEp} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Stop after this episode</span><Toggle on={stopAfterEp} /></Menu.CheckboxItem>
                 <Menu.Separator className={POPUP_SEPARATOR} />
                 <div className={POPUP_LABEL}>Sleep timer{sleepMin ? ` · ${sleepMin}m` : ""}</div>
@@ -623,10 +620,6 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
                   ))}
                   <button type="button" onClick={() => setSleepMin(null)} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", sleepMin == null ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>Off</button>
                 </div>
-                <Menu.Separator className={POPUP_SEPARATOR} />
-                <div className={POPUP_LABEL}>Skip markers · help everyone</div>
-                <Menu.Item className={POPUP_ITEM} onSelect={(e) => { e.preventDefault(); markSkip("intro"); }}><span className="flex-1">Mark intro ends here</span></Menu.Item>
-                <Menu.Item className={POPUP_ITEM} onSelect={(e) => { e.preventDefault(); markSkip("outro"); }}><span className="flex-1">Mark outro starts here</span></Menu.Item>
               </Menu.Content>
             </Menu.Portal>
           </Menu.Root>
