@@ -53,6 +53,11 @@
     // Cloudflare Container (npm run consumet:container:deploy) and uncomment this,
     // pointing it at the deployed URL. Left unset = disabled (MangaDex only).
     // "CONSUMET_API_URL": "https://consumet-api.matthewsjakael.workers.dev",
+    // Per-source browse sections at /read/<source>. Deploy the matching
+    // container (npm run vortexscans:container:deploy / omega:container:deploy)
+    // and uncomment. Omega is adult (18+), gated in the UI + proxy.
+    // "VORTEXSCANS_API_URL": "https://vortexscans-api.matthewsjakael.workers.dev",
+    // "OMEGA_API_URL": "https://omega-api.matthewsjakael.workers.dev",
     // Embed host for the movie players (overridable since it moves).
     "VIDCORE_EMBED_BASE": "https://vidcore.org"
   }
