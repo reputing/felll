@@ -20,12 +20,11 @@ async function post(path: string, body: any): Promise<any | null> {
     return null;
   }
 }
-const enc = (s: string) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const dec = (s: string) => {
-  let b = s.replace(/-/g, "+").replace(/_/g, "/");
-  while (b.length % 4) b += "=";
-  try { return decodeURIComponent(escape(atob(b))); } catch { return ""; }
-};
+// weebcentral chapter URLs are https://weebcentral.com/chapters/<ULID>, and the
+// ULID is alphanumeric (URL-path-safe), so store it raw — base64 in a path
+// segment was getting mangled and corrupting the URL.
+const WEEB_BASE = "https://weebcentral.com/chapters/";
+const ulidOf = (url: string) => (url.split(/[?#]/)[0].split("/").filter(Boolean).pop() || "");
 
 export async function weebEnglishChapters(title: string, alt?: string): Promise<Chapter[]> {
   const want = norm(title);
@@ -59,18 +58,20 @@ export async function weebEnglishChapters(title: string, alt?: string): Promise<
     const key = num || curl;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ id: `${WEEB_PREFIX}${enc(curl)}`, chapter: num, title: typeof c?.title === "string" ? c.title : "", volume: null, pages: 0, group: "Cupcake", lang: "en", external: null });
+    const ulid = ulidOf(curl);
+    if (!ulid) continue;
+    out.push({ id: `${WEEB_PREFIX}${ulid}`, chapter: num, title: typeof c?.title === "string" ? c.title : "", volume: null, pages: 0, group: "Cupcake", lang: "en", external: null });
   }
   out.sort((a, b) => (parseFloat(a.chapter) || 0) - (parseFloat(b.chapter) || 0));
   return out;
 }
 
 export async function weebChapterPages(encodedId: string): Promise<string[]> {
-  const chapterUrl = dec(encodedId.slice(WEEB_PREFIX.length));
-  if (!chapterUrl) return [];
+  const ulid = encodedId.slice(WEEB_PREFIX.length);
+  if (!ulid) return [];
   // weebcentral loads the pages from a separate /images endpoint (the bare
   // chapter page only has the first image), so fetch that.
-  const imagesUrl = `${chapterUrl.replace(/\/+$/, "")}/images?is_prev=False&current_page=1&reading_style=long_strip`;
+  const imagesUrl = `${WEEB_BASE}${ulid}/images?is_prev=False&current_page=1&reading_style=long_strip`;
   let html = "";
   try {
     const r = await fetch(`${API}/api/proxy/html?url=${encodeURIComponent(imagesUrl)}`);
