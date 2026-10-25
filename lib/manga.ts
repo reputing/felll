@@ -8,6 +8,7 @@
 // JSON goes through our own origin (/api/md/*) to dodge MangaDex's browser CORS;
 // cover + page images load straight from the CDN (an <img> needs no CORS).
 import { CONSUMET_PREFIX, consumetChapterPages, consumetEnglishChapters } from "./manga-consumet";
+import { COMICK_PREFIX, comickChapterPages, comickEnglishChapters } from "./manga-comick";
 
 const API = "/api/md";
 const UPLOADS = "https://uploads.mangadex.org";
@@ -239,14 +240,18 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
   //    embed Consumet's pages instead of bouncing the reader to another site.
   //  - MangaDex's English is a sparse partial upload missing the early chapters.
   // No-op when the provider isn't configured (proxy 503 → we fall through).
-  let consumet: Chapter[] = [];
+  let second: Chapter[] = [];
   try {
     const m = await getManga(id);
-    if (m) consumet = await consumetEnglishChapters(m.title, m.altTitle);
+    if (m) {
+      // comick.io first (broadest English), then the Consumet providers.
+      second = await comickEnglishChapters(m.title, m.altTitle);
+      if (!second.length) second = await consumetEnglishChapters(m.title, m.altTitle);
+    }
   } catch {
     /* provider off or a miss */
   }
-  if (consumet.length && consumet.length >= enHosted.length) return consumet;
+  if (second.length && second.length >= enHosted.length) return second;
   if (enHosted.length) return enHosted; // keep MangaDex's partial run over nothing
 
   // No readable English anywhere → surface the official/external English links.
@@ -285,7 +290,8 @@ function startsEarly(chs: Chapter[]): boolean {
 
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */
 export async function getChapterPages(chapterId: string, saver = false): Promise<string[]> {
-  // Chapters from the second source carry a tag → read them from Consumet.
+  // Chapters from a second source carry a tag → read their pages from it.
+  if (chapterId.startsWith(COMICK_PREFIX)) return comickChapterPages(chapterId);
   if (chapterId.startsWith(CONSUMET_PREFIX)) return consumetChapterPages(chapterId);
   const d = await get(`/at-home/server/${chapterId}`);
   const base = d.baseUrl, hash = d.chapter?.hash;
