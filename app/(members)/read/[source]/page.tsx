@@ -13,7 +13,7 @@ export async function generateMetadata({ params }: { params: Promise<{ source: s
 export default async function SourceBrowsePage({ params }: { params: Promise<{ source: string }> }) {
   const { source } = await params;
   if (!isSourceId(source)) notFound();
-  await requireMember(`/read/${source}`);
+  const user = await requireMember(`/read/${source}`);
   const meta = SOURCES[source];
   const content = (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
@@ -21,5 +21,5 @@ export default async function SourceBrowsePage({ params }: { params: Promise<{ s
       <SourceBrowse source={source} />
     </div>
   );
-  return meta.adult ? <AgeGate sourceName={meta.name}>{content}</AgeGate> : content;
+  return meta.adult ? <AgeGate approved={user.adult_ok === 1}>{content}</AgeGate> : content;
 }

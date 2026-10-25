@@ -4,13 +4,13 @@ import { currentUser } from "@/lib/auth";
 // Same-origin proxy for the extra manga source containers (VortexScans, Omega).
 // Members only. Each source maps to its own *_API_URL var; unset = 503 so the
 // /read/<source> page shows an "isn't enabled" state. Adult sources additionally
-// require the 18+ cookie the age gate sets.
+// require the viewer to have admin-granted 18+ access (users.adult_ok), enforced
+// here server-side — not a cookie the viewer can set themselves.
 const ENV_VAR: Record<string, string> = {
   vortexscans: "VORTEXSCANS_API_URL",
   omega: "OMEGA_API_URL",
 };
 const ADULT = new Set(["omega"]);
-export const ADULT_COOKIE = "cupcake_adult";
 
 async function baseFor(src: string): Promise<string | null> {
   const key = ENV_VAR[src];
@@ -27,16 +27,14 @@ async function baseFor(src: string): Promise<string | null> {
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ src: string; path: string[] }> }) {
-  if (!(await currentUser())) return new Response("sign in first", { status: 401 });
+  const user = await currentUser();
+  if (!user) return new Response("sign in first", { status: 401 });
   const { src, path } = await params;
   if (!ENV_VAR[src]) return new Response("unknown source", { status: 404 });
 
-  // 18+ gate for adult sources.
-  if (ADULT.has(src)) {
-    const cookie = req.headers.get("cookie") ?? "";
-    if (!new RegExp(`(?:^|; )${ADULT_COOKIE}=1(?:;|$)`).test(cookie)) {
-      return Response.json({ error: "age confirmation required" }, { status: 403 });
-    }
+  // Adult sources require admin-granted 18+ access.
+  if (ADULT.has(src) && user.adult_ok !== 1) {
+    return Response.json({ error: "18+ access required" }, { status: 403 });
   }
 
   const b = await baseFor(src);
