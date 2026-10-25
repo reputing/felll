@@ -1,13 +1,13 @@
 "use client";
 import Link from "next/link";
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { Check, Clock3, Crown, LibraryBig, LogOut, Palette, Settings, UserRound, Users } from "lucide-react";
+import { Check, Clock3, Crown, LibraryBig, LogOut, Palette, Settings, ShieldCheck, UserRound, Users } from "lucide-react";
 import { useState } from "react";
 import { Avatar } from "@/components/avatar";
 import { POPUP, POPUP_ITEM, POPUP_SEPARATOR } from "@/components/ui/popup";
 import { SKINS } from "@/lib/skins";
 
-export interface MenuUser { handle: string; display_name: string; avatar_url: string | null; is_plus: number; accent: string }
+export interface MenuUser { handle: string; display_name: string; avatar_url: string | null; is_plus: number; is_admin: number; accent: string }
 
 const item = POPUP_ITEM;
 
@@ -41,6 +41,7 @@ export function UserMenu({ user }: { user: MenuUser }) {
           <Menu.Item asChild><Link href="/box/history" className={item}><Clock3 className="size-4" />History</Link></Menu.Item>
           <Menu.Item asChild><Link href="/community" className={item}><Users className="size-4" />Friends &amp; feed</Link></Menu.Item>
           <Menu.Item asChild><Link href="/settings" className={item}><Settings className="size-4" />Customize</Link></Menu.Item>
+          {user.is_admin ? <Menu.Item asChild><Link href="/admin/manhwa" className={item}><ShieldCheck className="size-4" />18+ access</Link></Menu.Item> : null}
           <Menu.Separator className={POPUP_SEPARATOR} />
           <div className="eyebrow flex items-center gap-1.5 px-3 pb-1.5 pt-1"><Palette className="size-3" />Skin</div>
           <div className="grid grid-cols-4 gap-1.5 px-2 pb-2">

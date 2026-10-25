@@ -24,6 +24,7 @@ export interface User {
   showcase: string;
   is_plus: number;
   is_admin: number;
+  adult_ok: number; // admin-granted access to 18+ sources
   private_lists: number;
   created_at: number;
   last_seen: number;

@@ -9,8 +9,8 @@ export const metadata = { title: "Reading" };
 export default async function SourceReadPage({ params }: { params: Promise<{ source: string; slug: string; chapter: string }> }) {
   const { source, slug, chapter } = await params;
   if (!isSourceId(source)) notFound();
-  await requireMember(`/read/${source}/${slug}/${chapter}`);
+  const user = await requireMember(`/read/${source}/${slug}/${chapter}`);
   const meta = SOURCES[source];
   const reader = <SourceReader source={source} slug={decodeURIComponent(slug)} chapter={decodeURIComponent(chapter)} />;
-  return meta.adult ? <AgeGate sourceName={meta.name}>{reader}</AgeGate> : reader;
+  return meta.adult ? <AgeGate approved={user.adult_ok === 1}>{reader}</AgeGate> : reader;
 }
