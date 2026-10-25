@@ -2,6 +2,7 @@ import { requireMember } from "@/lib/auth";
 import { PageHead } from "@/components/page-head";
 import { MangaBrowse } from "@/components/manga/browse";
 import { MangaLibraryRail } from "@/components/manga/library-rail";
+import { MoreSources } from "@/components/sources/more-sources";
 
 export const metadata = { title: "Manga" };
 
@@ -12,6 +13,7 @@ export default async function MangaPage() {
       <PageHead eyebrow="Cupcake / read" title="Manga" sub="Every series, every chapter, read right here." />
       <MangaLibraryRail />
       <MangaBrowse />
+      <MoreSources />
     </div>
   );
 }
