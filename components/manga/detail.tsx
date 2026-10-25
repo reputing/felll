@@ -6,7 +6,7 @@ import { Poster } from "@/components/poster";
 import { Button } from "@/components/ui/button";
 import { Comments } from "@/components/comments/comments";
 import { MangaSaveButton } from "@/components/manga/save-button";
-import { getChapters, getManga, langName, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
+import { cachedChapters, getChapters, getManga, langName, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
 
 export function MangaDetail({ id }: { id: string }) {
   const [m, setM] = useState<MangaFull | null | "loading">("loading");
@@ -23,8 +23,10 @@ export function MangaDetail({ id }: { id: string }) {
     fetch(`/api/manga-progress?mangaId=${id}`).then((r) => (r.ok ? r.json() : null)).then((d) => setResume(d?.progress ?? null)).catch(() => {});
   }, [id]);
   useEffect(() => {
-    setChapters(null);
-    getChapters(id, lang).then(setChapters).catch(() => setChapters([]));
+    // Paint the last-known list instantly (localStorage), then revalidate.
+    const cached = cachedChapters(id, lang);
+    setChapters(cached);
+    getChapters(id, lang).then(setChapters).catch(() => setChapters((prev) => prev ?? []));
   }, [id, lang]);
 
   if (m === "loading") return <div className="h-64 animate-pulse rounded-shell bg-cream-card" />;

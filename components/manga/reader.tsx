@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Columns2, Gauge, Loader2, Maximize, Rows3, ScrollText, Square } from "lucide-react";
-import { getChapterPages, getChapters, getManga, safeDecode, type Chapter } from "@/lib/manga";
+import { cachedChapters, getChapterPages, getChapters, getManga, safeDecode, type Chapter } from "@/lib/manga";
 import { setReading } from "@/components/shell/presence";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +46,8 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
     let lang = "en";
     try { lang = localStorage.getItem("manga:lang") || "en"; } catch { /* storage off */ }
     getManga(mangaId).then((m) => { if (on && m) setInfo({ title: m.title, cover: m.cover }); }).catch(() => {});
+    const cachedChs = cachedChapters(mangaId, lang);
+    if (cachedChs) setChapters(cachedChs); // instant prev/next + chapter number
     getChapters(mangaId, lang).then((c) => { if (on) setChapters(c); }).catch(() => {});
     getChapterPages(chapterId).then((p) => { if (on) setPages(p); }).catch(() => { if (on) setPages([]); });
     fetch(`/api/manga-progress?mangaId=${mangaId}`).then((r) => (r.ok ? r.json() : null)).then((d) => {

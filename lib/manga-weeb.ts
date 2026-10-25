@@ -30,9 +30,13 @@ export async function weebEnglishChapters(title: string, alt?: string): Promise<
   const want = norm(title);
   const wantAlt = alt ? norm(alt) : "";
   const queries = [...new Set([title, alt].filter((s): s is string => !!s && !!s.trim()))];
+  // Fire the title + alt-title searches at once rather than one-then-the-other:
+  // the container round trip is the slow part, so overlapping them halves the
+  // wait when the first query doesn't match. Matching still prefers the first
+  // query's results (queries/searches stay in order).
+  const searches = await Promise.all(queries.map((q) => post("/api/search", { query: q, source: SOURCE })));
   let url = "";
-  for (const q of queries) {
-    const s = await post("/api/search", { query: q, source: SOURCE });
+  for (const s of searches) {
     const results: any[] = s?.results ?? [];
     if (!results.length) continue;
     const cands = results.map((r) => ({ r, t: norm(r?.title) })).filter((x) => x.t && !/\bnovel\b/.test(x.t));

@@ -209,29 +209,61 @@ function buildChapters(raw: Raw[], external = false): Chapter[] {
   return chapters;
 }
 
+const chKey = (id: string, lang?: string) => `${id}|${lang || "auto"}`;
+// Resolving a title's chapters means hitting MangaDex plus a scraper container
+// (for licensed manhwa), a multi-second waterfall. The in-memory cache above is
+// wiped on every full page load, so persist the resolved list to localStorage
+// too: the detail/reader paint it instantly on a revisit while a fresh fetch
+// revalidates in the background.
+const CH_STORE = (key: string) => `cupcake:chs:${key}`;
+export function cachedChapters(id: string, lang?: string): Chapter[] | null {
+  try {
+    const raw = localStorage.getItem(CH_STORE(chKey(id, lang)));
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    return Array.isArray(v?.chs) && v.chs.length ? (v.chs as Chapter[]) : null;
+  } catch {
+    return null;
+  }
+}
+function storeChapters(key: string, chs: Chapter[]): void {
+  if (!chs.length) return;
+  try {
+    localStorage.setItem(CH_STORE(key), JSON.stringify({ at: Date.now(), chs }));
+  } catch {
+    /* storage off or full — fine, it's only a speed-up */
+  }
+}
+
 /** Readable chapters for a title, in `lang` (memoised per session). When no
  *  language is asked for, English first; if none is hosted here, fall back to
  *  the language with the most chapters, and failing that surface the
  *  official/external links, so a popular title is never shown as empty. */
 export function getChapters(id: string, lang?: string): Promise<Chapter[]> {
-  const key = `${id}|${lang || "auto"}`;
+  const key = chKey(id, lang);
   let p = chaptersCache.get(key);
   if (!p) {
-    p = fetchChapters(id, lang).catch((e) => { chaptersCache.delete(key); throw e; });
+    p = fetchChapters(id, lang).then((chs) => { storeChapters(key, chs); return chs; }).catch((e) => { chaptersCache.delete(key); throw e; });
     chaptersCache.set(key, p);
   }
   return p;
 }
 async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
   // A specific language was chosen (reader/detail language picker).
+  let enFeed: Raw[] | null = null;
   if (lang) {
-    const chosen = buildChapters(await fetchFeed(id, `&translatedLanguage[]=${encodeURIComponent(lang)}`));
+    const feed = await fetchFeed(id, `&translatedLanguage[]=${encodeURIComponent(lang)}`);
+    const chosen = buildChapters(feed);
     if (chosen.length) return chosen;
-    // nothing hosted in that language → fall through to the default resolution
+    // Nothing readable in that language → fall through to the default
+    // resolution. When the chosen language is English, reuse this feed rather
+    // than re-fetching the identical English feed below (the slow, common path
+    // for licensed manhwa that has no readable English on MangaDex).
+    if (lang === "en") enFeed = feed;
   }
   // English by default, as strongly as possible. A COMPLETE English run on
   // MangaDex (one that includes the early chapters) wins outright.
-  const enFeed = await fetchFeed(id, "&translatedLanguage[]=en");
+  if (!enFeed) enFeed = await fetchFeed(id, "&translatedLanguage[]=en");
   const enHosted = buildChapters(enFeed);
   if (enHosted.length && startsEarly(enHosted)) return enHosted;
 
