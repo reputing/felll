@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "consumet-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // The container image is built from the Dockerfile in this folder (wrangler
+  // builds and pushes it to Cloudflare on `npm run consumet:container:deploy`;
+  // Docker must be running locally for that build). The default Dockerfile just
+  // pulls the official Consumet image, so there is nothing to maintain.
+  "containers": [
+    {
+      "class_name": "ConsumetContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "ConsumetContainer", "name": "CONSUMET_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ConsumetContainer"] }],
+  "observability": { "enabled": true }
+}

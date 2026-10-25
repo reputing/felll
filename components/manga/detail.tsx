@@ -36,7 +36,9 @@ export function MangaDetail({ id }: { id: string }) {
   // The language actually being shown (chapters may fall back if the picked one
   // isn't hosted here). English first in the picker.
   const activeLang = first?.lang ?? lang;
-  const langs = [...(m.languages ?? [])].sort((a, b) => (a === "en" ? -1 : b === "en" ? 1 : langName(a).localeCompare(langName(b))));
+  // English is always offered (it may come from the second source even when
+  // MangaDex lists no English for the title), plus every MangaDex language.
+  const langs = [...new Set(["en", activeLang, ...(m.languages ?? [])])].sort((a, b) => (a === "en" ? -1 : b === "en" ? 1 : langName(a).localeCompare(langName(b))));
 
   return (
     <div className="flex flex-col gap-6">
@@ -108,7 +110,7 @@ export function MangaDetail({ id }: { id: string }) {
                   <span className="grid size-9 flex-none place-items-center rounded-lg bg-cream-tint font-mono text-[12.5px] text-frost-text">{c.chapter || "–"}</span>
                   <span className="min-w-0">
                     <span className="block truncate text-[13.5px] font-extrabold">{c.title || `Chapter ${c.chapter || "?"}`}</span>
-                    <span className="block truncate text-[11.5px] font-semibold text-plum-muted">{c.external ? "Official release ↗" : `${c.pages} pages${c.group ? ` · ${c.group}` : ""}`}</span>
+                    <span className="block truncate text-[11.5px] font-semibold text-plum-muted">{c.external ? "Official release ↗" : c.pages ? `${c.pages} pages${c.group ? ` · ${c.group}` : ""}` : c.group || "Read"}</span>
                   </span>
                   {read && <span className="ml-auto text-[10.5px] font-extrabold uppercase tracking-[.08em] text-frost-text">reading</span>}
                 </>

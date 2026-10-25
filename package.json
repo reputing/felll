@@ -18,7 +18,8 @@
     "upload:watch": "tsx scripts/upload-folder.ts --watch",
     "anivexa:deploy": "wrangler deploy -c anivexa/wrangler.jsonc",
     "anivexa:container:deploy": "wrangler deploy -c anivexa-server/wrangler.jsonc",
-    "moviebox:container:deploy": "wrangler deploy -c moviebox-server/wrangler.jsonc"
+    "moviebox:container:deploy": "wrangler deploy -c moviebox-server/wrangler.jsonc",
+    "consumet:container:deploy": "wrangler deploy -c consumet-server/wrangler.jsonc"
   },
   "dependencies": {
     "@cloudflare/containers": "0.3.7",

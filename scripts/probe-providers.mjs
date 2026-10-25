@@ -25,7 +25,14 @@ async function tryJson(url, opts = {}) {
 async function probeMangaReader() {
   console.log("=== A) mangareader-api.vercel.app (hosted, no container) ===");
   const BASE = "https://mangareader-api.vercel.app/api/v1";
-  const title = "jujutsu kaisen";
+  // Is ANY endpoint usable? Hit the list endpoints and a few search spellings.
+  for (const path of ["/featured", "/trending", "/search/naruto", `/search/${encodeURIComponent("jujutsu-kaisen")}`, "/search?q=naruto", "/search?keyword=naruto"]) {
+    const r = await tryJson(`${BASE}${path}`);
+    const n = Array.isArray(r.body) ? r.body.length : Array.isArray(r.body?.data) ? r.body.data.length : Array.isArray(r.body?.results) ? r.body.results.length : "?";
+    console.log(`  GET ${path} -> ${r.status} (${r.ct})  items=${n}` + (r.status >= 500 ? `  [${String(r.body).slice(0, 40)}]` : ""));
+    await sleep(400);
+  }
+  const title = "naruto";
   try {
     const s = await tryJson(`${BASE}/search/${encodeURIComponent(title)}`);
     console.log(`  search "${title}" -> ${s.status} (${s.ct})`);
