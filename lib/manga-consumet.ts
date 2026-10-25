@@ -14,8 +14,10 @@ const API = "/api/consumet";
 // Chapter ids from this source are tagged so getChapterPages knows to read them
 // from Consumet instead of MangaDex's at-home servers.
 export const CONSUMET_PREFIX = "cmgr:";
-// English-strong scrapers that need no login, tried in order until one hits.
-const PROVIDERS = ["mangapill", "mangahere", "mangakakalot"];
+// English-strong sources, tried in order until one hits. ComicK (comick.io) has
+// the broadest embeddable English catalogue, so it leads; the others are
+// fallbacks (and cover ComicK if the container build predates that provider).
+const PROVIDERS = ["comick", "mangapill", "mangahere", "mangakakalot"];
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const titleOf = (t: unknown): string =>
