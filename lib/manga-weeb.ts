@@ -68,9 +68,12 @@ export async function weebEnglishChapters(title: string, alt?: string): Promise<
 export async function weebChapterPages(encodedId: string): Promise<string[]> {
   const chapterUrl = dec(encodedId.slice(WEEB_PREFIX.length));
   if (!chapterUrl) return [];
+  // weebcentral loads the pages from a separate /images endpoint (the bare
+  // chapter page only has the first image), so fetch that.
+  const imagesUrl = `${chapterUrl.replace(/\/+$/, "")}/images?is_prev=False&current_page=1&reading_style=long_strip`;
   let html = "";
   try {
-    const r = await fetch(`${API}/api/proxy/html?url=${encodeURIComponent(chapterUrl)}`);
+    const r = await fetch(`${API}/api/proxy/html?url=${encodeURIComponent(imagesUrl)}`);
     if (r.ok) html = await r.text();
   } catch {
     return [];
