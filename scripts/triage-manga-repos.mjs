@@ -1,29 +1,26 @@
-// Pass 4: dump the API contract of VortexScansAPI and mangareader-api only, so
-// the frontend adapters map their real response fields.
+// Pass 5 (final): print exactly the router + the chapter/page-image handler for
+// mangareader-api and VortexScansAPI, so adapters hit the right paths.
 import { execSync } from "node:child_process";
 import { readFileSync, readdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const TARGETS = [
-  { repo: "Shineii86/VortexScansAPI", dirs: ["api", "src", ""] },
-  { repo: "stabldev/mangareader-api", dirs: ["app", ""] },
+  { repo: "stabldev/mangareader-api", pick: /(router|read|image|page|chapter|constants)\.py$/i, dirs: ["app"] },
+  { repo: "Shineii86/VortexScansAPI", pick: /(rout|index|chapter|read|page|series|manga|handler)\.(js|ts)$/i, dirs: ["api", "src", ""] },
 ];
 const read = (p) => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
-
 function walk(root, rel, out, depth) {
-  if (depth > 3) return;
-  let entries = [];
-  try { entries = readdirSync(join(root, rel)); } catch { return; }
+  if (depth > 4) return;
+  let entries = []; try { entries = readdirSync(join(root, rel)); } catch { return; }
   for (const e of entries) {
     const r = rel ? join(rel, e) : e;
     let st; try { st = statSync(join(root, r)); } catch { continue; }
-    if (st.isDirectory()) { if (!/node_modules|\.git|public|static|docs|tests|__pycache__|templates/.test(e)) walk(root, r, out, depth + 1); }
-    else if (/\.(js|ts|py)$/.test(e) && !/\.test\.|\.spec\.|config|rate|cache|utils|__init__/.test(e)) out.push(r);
+    if (st.isDirectory()) { if (!/node_modules|\.git|public|static|docs|tests|__pycache__|templates|node/.test(e)) walk(root, r, out, depth + 1); }
+    else out.push(r);
   }
 }
-
-for (const { repo, dirs } of TARGETS) {
+for (const { repo, pick, dirs } of TARGETS) {
   console.log("\n######## " + repo + " ########");
   const dir = mkdtempSync(join(tmpdir(), "c-"));
   try { execSync(`git clone --depth 1 https://github.com/${repo}.git "${dir}/r" 2>/dev/null`, { stdio: "ignore" }); }
@@ -31,12 +28,11 @@ for (const { repo, dirs } of TARGETS) {
   const r = join(dir, "r");
   const files = [];
   for (const d of dirs) walk(r, d, files, 0);
-  const uniq = [...new Set(files)].filter((f) => /rout|controller|handler|manga|chapter|search|series|read|scrap|server|main|api/i.test(f)).slice(0, 12);
-  for (const f of uniq) {
+  for (const f of [...new Set(files)].filter((f) => pick.test(f)).slice(0, 10)) {
     const body = read(join(r, f));
     if (!body.trim()) continue;
     console.log(`\n--- ${f} ---`);
-    console.log(body.split("\n").slice(0, 60).join("\n"));
+    console.log(body.split("\n").slice(0, 55).join("\n"));
   }
 }
 console.log("\nDone.");
