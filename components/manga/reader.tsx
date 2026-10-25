@@ -21,6 +21,7 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [info, setInfo] = useState<{ title: string; cover: string | null }>({ title: "", cover: null });
   const [idx, setIdx] = useState(0);
+  const [reloadN, setReloadN] = useState(0);
   const [mode, setMode] = usePref<Mode>("manga:mode", "strip");
   const [fitH, setFitH] = usePref<"0" | "1">("manga:fitH", "0");
   const [auto, setAuto] = useState(false);
@@ -48,7 +49,7 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
       if (on && d?.progress?.chapter_id === chapterId) resumeTo.current = d.progress.page;
     }).catch(() => {});
     return () => { on = false; };
-  }, [mangaId, chapterId]);
+  }, [mangaId, chapterId, reloadN]);
 
   // MangaDex's at-home nodes are rate-limited per IP and occasionally flaky, so a
   // page or two in a chapter can fail. On the first failure we fetch ONE fresh
@@ -180,7 +181,13 @@ export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId
         {pages === null ? (
           <div className="grid h-full place-items-center"><Loader2 className="size-10 animate-spin text-frost" /></div>
         ) : pages.length === 0 ? (
-          <div className="grid h-full place-items-center p-8 text-center text-[15px] font-bold text-white/80">This chapter has no readable pages here.</div>
+          <div className="grid h-full place-items-center p-8">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <p className="text-[15px] font-bold text-white/80">this chapter didn’t load.</p>
+              <p className="max-w-[320px] text-[12.5px] font-medium text-white/50">the source can be slow to wake up. give it a second and try again.</p>
+              <button type="button" onClick={() => { setPages(null); setReloadN((n) => n + 1); }} className="rounded-full bg-frost px-6 py-2.5 text-[13.5px] font-extrabold text-frost-ink">try again</button>
+            </div>
+          </div>
         ) : mode === "strip" ? (
           <div className="mx-auto flex max-w-[920px] flex-col items-center">
             {pages.map((src, n) => (

@@ -289,12 +289,31 @@ function startsEarly(chs: Chapter[]): boolean {
   return !Number.isFinite(min) || min <= 3;
 }
 
+// The second sources (weeb/comick/consumet) are scraper containers that scale to
+// zero, so a cold start or a flaky upstream node can return empty on the first
+// try even when the chapter's pages exist and are reachable. Retry a few times,
+// backing off, before giving up — otherwise the reader dead-ends on "no readable
+// pages here" for a chapter that is actually fine. Safe: a genuinely empty
+// chapter still ends up [], just a few seconds slower in that rare case.
+async function withRetry(fn: () => Promise<string[]>, tries = 4): Promise<string[]> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const pages = await fn();
+      if (pages.length) return pages;
+    } catch {
+      /* fall through to the backoff + retry */
+    }
+    if (i < tries - 1) await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+  }
+  return [];
+}
+
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */
 export async function getChapterPages(chapterId: string, saver = false): Promise<string[]> {
   // Chapters from a second source carry a tag → read their pages from it.
-  if (chapterId.startsWith(WEEB_PREFIX)) return weebChapterPages(chapterId);
-  if (chapterId.startsWith(COMICK_PREFIX)) return comickChapterPages(chapterId);
-  if (chapterId.startsWith(CONSUMET_PREFIX)) return consumetChapterPages(chapterId);
+  if (chapterId.startsWith(WEEB_PREFIX)) return withRetry(() => weebChapterPages(chapterId));
+  if (chapterId.startsWith(COMICK_PREFIX)) return withRetry(() => comickChapterPages(chapterId));
+  if (chapterId.startsWith(CONSUMET_PREFIX)) return withRetry(() => consumetChapterPages(chapterId));
   const d = await get(`/at-home/server/${chapterId}`);
   const base = d.baseUrl, hash = d.chapter?.hash;
   const files: string[] = (saver ? d.chapter?.dataSaver : d.chapter?.data) ?? [];
