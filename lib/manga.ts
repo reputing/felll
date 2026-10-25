@@ -9,6 +9,7 @@
 // cover + page images load straight from the CDN (an <img> needs no CORS).
 import { CONSUMET_PREFIX, consumetChapterPages, consumetEnglishChapters } from "./manga-consumet";
 import { COMICK_PREFIX, comickChapterPages, comickEnglishChapters } from "./manga-comick";
+import { WEEB_PREFIX, weebChapterPages, weebEnglishChapters } from "./manga-weeb";
 
 const API = "/api/md";
 const UPLOADS = "https://uploads.mangadex.org";
@@ -245,7 +246,10 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
   if (m) {
     // comick.io first (broadest English), then the Consumet providers. Each is
     // independently guarded so one failing never skips the other.
-    second = await comickEnglishChapters(m.title, m.altTitle).catch(() => []);
+    // weebcentral (container) is the most reliable for licensed manhwa WITH
+    // pages; then comick.io; then the Consumet providers.
+    second = await weebEnglishChapters(m.title, m.altTitle).catch(() => []);
+    if (!second.length) second = await comickEnglishChapters(m.title, m.altTitle).catch(() => []);
     if (!second.length) second = await consumetEnglishChapters(m.title, m.altTitle).catch(() => []);
   }
   if (second.length && second.length >= enHosted.length) return second;
@@ -288,6 +292,7 @@ function startsEarly(chs: Chapter[]): boolean {
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */
 export async function getChapterPages(chapterId: string, saver = false): Promise<string[]> {
   // Chapters from a second source carry a tag → read their pages from it.
+  if (chapterId.startsWith(WEEB_PREFIX)) return weebChapterPages(chapterId);
   if (chapterId.startsWith(COMICK_PREFIX)) return comickChapterPages(chapterId);
   if (chapterId.startsWith(CONSUMET_PREFIX)) return consumetChapterPages(chapterId);
   const d = await get(`/at-home/server/${chapterId}`);

@@ -53,6 +53,8 @@
     "ANIVEXA_API_URL": "https://anivexa-api.matthewsjakael.workers.dev",
     // Second manga source (English fallback) for the main reader.
     "CONSUMET_API_URL": "https://consumet-api.matthewsjakael.workers.dev",
+    // weebcentral via the comick-source-api container (licensed manhwa WITH pages).
+    "WEEB_API_URL": "https://comick-api.matthewsjakael.workers.dev",
     // Per-source browse sections at /read/<source>. Omega is adult (18+), gated
     // in the UI + proxy.
     "VORTEXSCANS_API_URL": "https://vortexscans-api.matthewsjakael.workers.dev",
