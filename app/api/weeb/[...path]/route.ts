@@ -22,20 +22,30 @@ async function forward(req: Request, path: string[]): Promise<Response> {
   const b = await base();
   if (!b) return Response.json({ error: "not configured" }, { status: 503 });
   const url = `${b}/${path.join("/")}${new URL(req.url).search}`;
-  const init: RequestInit = { method: req.method, signal: AbortSignal.timeout(50_000) };
-  if (req.method === "POST") {
-    init.body = await req.text();
-    init.headers = { "content-type": "application/json", accept: "application/json" };
-  }
+  const reqBody = req.method === "POST" ? await req.text() : undefined;
+  const init: RequestInit = {
+    method: req.method,
+    signal: AbortSignal.timeout(50_000),
+    ...(reqBody !== undefined ? { body: reqBody, headers: { "content-type": "application/json", accept: "application/json" } } : {}),
+  };
+  // The container scales to zero; the first hit returns a "no Container instance
+  // available" provisioning message. Wait for it to spin up and retry.
   let upstream: Response;
-  try {
-    upstream = await fetch(url, init);
-  } catch {
-    return Response.json({ error: "unreachable" }, { status: 502 });
+  let body = "";
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      upstream = await fetch(url, init);
+    } catch {
+      return Response.json({ error: "unreachable" }, { status: 502 });
+    }
+    body = await upstream.text();
+    if (!/no Container instance available|currently provisioning/i.test(body)) {
+      const ct = upstream.headers.get("content-type") || "application/json";
+      return new Response(body, { status: upstream.status, headers: { "content-type": ct, "cache-control": upstream.ok ? "public, max-age=120" : "no-store" } });
+    }
+    await new Promise((r) => setTimeout(r, 2500));
   }
-  const body = await upstream.text();
-  const ct = upstream.headers.get("content-type") || "application/json";
-  return new Response(body, { status: upstream.status, headers: { "content-type": ct, "cache-control": upstream.ok ? "public, max-age=120" : "no-store" } });
+  return Response.json({ error: "provisioning" }, { status: 503 });
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ path: string[] }> }) {
