@@ -1,4 +1,4 @@
-import { memberOr401 } from "@/lib/auth";
+import { isAdmin, memberOr401 } from "@/lib/auth";
 import { all, db, first } from "@/lib/db";
 
 // Admin-only: manage which members can view adult (18+) sources (users.adult_ok).
@@ -6,7 +6,7 @@ import { all, db, first } from "@/lib/db";
 export async function GET() {
   const me = await memberOr401();
   if (me instanceof Response) return me;
-  if (!me.is_admin) return Response.json({ error: "admins only" }, { status: 403 });
+  if (!(await isAdmin(me))) return Response.json({ error: "admins only" }, { status: 403 });
   const rows = await all<{ id: string; handle: string; display_name: string; avatar_url: string | null; adult_ok: number }>(
     "select id, handle, display_name, avatar_url, adult_ok from users order by adult_ok desc, handle asc limit 500",
   );
@@ -16,7 +16,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
-  if (!me.is_admin) return Response.json({ error: "admins only" }, { status: 403 });
+  if (!(await isAdmin(me))) return Response.json({ error: "admins only" }, { status: 403 });
   const b = (await req.json().catch(() => ({}))) as { handle?: string; approve?: boolean };
   const handle = String(b.handle ?? "").trim();
   if (!handle) return Response.json({ error: "which member?" }, { status: 400 });

@@ -88,6 +88,18 @@ export const currentUser = cache(async (): Promise<User | null> => {
 });
 
 /** For pages: the member, or off to the portal. */
+/** Admin if flagged on the row OR their handle is in ADMIN_HANDLES right now
+ *  (so granting admin takes effect without waiting for a fresh sign-in). */
+export async function isAdmin(u: User | null | undefined): Promise<boolean> {
+  if (!u) return false;
+  if (u.is_admin === 1) return true;
+  try {
+    return (await kuroConfig()).admins.includes(u.handle.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 export async function requireMember(next?: string): Promise<User> {
   const u = await currentUser();
   if (!u) redirect(next ? `/?next=${encodeURIComponent(next)}` : "/");
