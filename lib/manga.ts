@@ -227,30 +227,33 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
     if (chosen.length) return chosen;
     // nothing hosted in that language → fall through to the default resolution
   }
-  // English by default, as strongly as possible: hosted English first, then
-  // English official/external links — we'd rather show English links than dump
-  // the reader into Italian/Spanish/etc. for a title that's popular in English.
+  // English by default, as strongly as possible. A COMPLETE English run on
+  // MangaDex (one that includes the early chapters) wins outright.
   const enFeed = await fetchFeed(id, "&translatedLanguage[]=en");
   const enHosted = buildChapters(enFeed);
-  if (enHosted.length) return enHosted;
+  if (enHosted.length && startsEarly(enHosted)) return enHosted;
+
+  // Otherwise reach for the second source (Consumet), which usually carries the
+  // full series readable in-app. This covers two cases the reader hates:
+  //  - English exists only as external official links (webnovel/mangaplus) — we
+  //    embed Consumet's pages instead of bouncing the reader to another site.
+  //  - MangaDex's English is a sparse partial upload missing the early chapters.
+  // No-op when the provider isn't configured (proxy 503 → we fall through).
+  let consumet: Chapter[] = [];
+  try {
+    const m = await getManga(id);
+    if (m) consumet = await consumetEnglishChapters(m.title, m.altTitle);
+  } catch {
+    /* provider off or a miss */
+  }
+  if (consumet.length && consumet.length >= enHosted.length) return consumet;
+  if (enHosted.length) return enHosted; // keep MangaDex's partial run over nothing
+
+  // No readable English anywhere → surface the official/external English links.
   const enExternal = buildChapters(enFeed, true);
   if (enExternal.length) return enExternal;
 
-  // Still no English on MangaDex. Before dropping the reader into another
-  // language, try the second English source (the Consumet container). This is a
-  // no-op when that provider isn't configured — the proxy answers 503 and we
-  // fall through. We need the title to search it, so pull the (memoised) detail.
-  try {
-    const m = await getManga(id);
-    if (m) {
-      const chs = await consumetEnglishChapters(m.title, m.altTitle);
-      if (chs.length) return chs;
-    }
-  } catch {
-    /* provider off or a miss → MangaDex fallbacks below */
-  }
-
-  // No English anywhere. Fall back to the language with the most readable
+  // No English at all. Fall back to the language with the most readable
   // chapters, and failing that any official/external links.
   const all = await fetchFeed(id, "");
   const byLang = new Map<string, Raw[]>();
@@ -266,6 +269,18 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
   if (bestChapters.length) return bestChapters;
 
   return buildChapters(all, true);
+}
+
+// Does this run include the early chapters, or is it a partial upload that
+// starts absurdly high (e.g. only chapters 74+)? Oneshots (no chapter numbers)
+// count as complete.
+function startsEarly(chs: Chapter[]): boolean {
+  let min = Infinity;
+  for (const c of chs) {
+    const n = parseFloat(c.chapter);
+    if (Number.isFinite(n) && n < min) min = n;
+  }
+  return !Number.isFinite(min) || min <= 3;
 }
 
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */

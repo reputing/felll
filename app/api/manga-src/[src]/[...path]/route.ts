@@ -44,13 +44,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ src: str
   const url = `${b}/${path.join("/")}${new URL(req.url).search}`;
   let upstream: Response;
   try {
-    upstream = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20_000) });
+    // The container scales to zero; a cold start can take ~30s, so give it room
+    // rather than aborting and making "Load more" look like the end of the list.
+    upstream = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(50_000) });
   } catch {
     return Response.json({ error: "source unreachable" }, { status: 502 });
   }
   const body = await upstream.text();
   return new Response(body, {
     status: upstream.status,
-    headers: { "content-type": "application/json", "cache-control": "public, max-age=120" },
+    // Never cache a failure (a cold-start 5xx mustn't stick for 2 minutes).
+    headers: { "content-type": "application/json", "cache-control": upstream.ok ? "public, max-age=120" : "no-store" },
   });
 }

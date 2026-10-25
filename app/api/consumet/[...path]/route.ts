@@ -26,13 +26,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ path: st
   const url = `${b}/${p}${new URL(req.url).search}`;
   let upstream: Response;
   try {
-    upstream = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20_000) });
+    // The container scales to zero; a cold start + scrape can take ~30s, so give
+    // it room rather than aborting mid-cold-start and showing an empty chapter.
+    upstream = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(50_000) });
   } catch {
     return Response.json({ error: "provider unreachable" }, { status: 502 });
   }
   const body = await upstream.text();
   return new Response(body, {
     status: upstream.status,
-    headers: { "content-type": "application/json", "cache-control": "public, max-age=120" },
+    // Never cache a failure (a cold-start 5xx mustn't stick for 2 minutes).
+    headers: { "content-type": "application/json", "cache-control": upstream.ok ? "public, max-age=120" : "no-store" },
   });
 }
