@@ -23,29 +23,35 @@ async function forward(req: Request, path: string[]): Promise<Response> {
   if (!b) return Response.json({ error: "not configured" }, { status: 503 });
   const url = `${b}/${path.join("/")}${new URL(req.url).search}`;
   const reqBody = req.method === "POST" ? await req.text() : undefined;
-  const init: RequestInit = {
+  const mkInit = (): RequestInit => ({
     method: req.method,
-    signal: AbortSignal.timeout(50_000),
+    signal: AbortSignal.timeout(20_000),
     ...(reqBody !== undefined ? { body: reqBody, headers: { "content-type": "application/json", accept: "application/json" } } : {}),
-  };
-  // The container scales to zero; the first hit returns a "no Container instance
-  // available" provisioning message. Wait for it to spin up and retry.
-  let upstream: Response;
+  });
+  // The container scales to zero; a cold Next.js start takes ~40s and the first
+  // hits return a "no Container instance available" provisioning message. Keep
+  // retrying (a fresh signal each time) until it's up — up to ~75s.
   let body = "";
-  for (let attempt = 0; attempt < 6; attempt++) {
+  let status = 502;
+  let ct = "application/json";
+  for (let attempt = 0; attempt < 16; attempt++) {
+    let upstream: Response;
     try {
-      upstream = await fetch(url, init);
+      upstream = await fetch(url, mkInit());
     } catch {
-      return Response.json({ error: "unreachable" }, { status: 502 });
+      await new Promise((r) => setTimeout(r, 2000));
+      continue;
     }
     body = await upstream.text();
-    if (!/no Container instance available|currently provisioning/i.test(body)) {
-      const ct = upstream.headers.get("content-type") || "application/json";
-      return new Response(body, { status: upstream.status, headers: { "content-type": ct, "cache-control": upstream.ok ? "public, max-age=120" : "no-store" } });
+    status = upstream.status;
+    ct = upstream.headers.get("content-type") || "application/json";
+    const provisioning = /no Container instance available|currently provisioning/i.test(body);
+    if (!provisioning && upstream.ok) {
+      return new Response(body, { status, headers: { "content-type": ct, "cache-control": "public, max-age=300" } });
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
-  return Response.json({ error: "provisioning" }, { status: 503 });
+  return new Response(body || JSON.stringify({ error: "provisioning" }), { status: status === 502 ? 503 : status, headers: { "content-type": ct, "cache-control": "no-store" } });
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ path: string[] }> }) {

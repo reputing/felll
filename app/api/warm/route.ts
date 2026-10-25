@@ -1,7 +1,20 @@
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { currentSeason, getGenres, getHome, getScheduleDay, getSeason, WEEKDAYS } from "@/lib/jikan";
 import { run } from "@/lib/db";
 import { runAiringCheck } from "@/lib/airing";
 import { backfillAvatars } from "@/lib/kuro";
+
+// Keep the weebcentral (comick-source-api) container warm so readers never pay a
+// ~40s cold start (it sleeps after 30m; this cron runs every 20m).
+async function warmWeeb() {
+  try {
+    const env = (await getCloudflareContext({ async: true })).env as unknown as { WEEB_API_URL?: string };
+    const url = (env?.WEEB_API_URL || process.env.WEEB_API_URL || "").replace(/\/+$/, "");
+    if (url) await fetch(`${url}/api/sources`, { signal: AbortSignal.timeout(25_000) });
+  } catch {
+    /* best effort */
+  }
+}
 
 // Called by the cron in worker.ts (never reachable from outside: only the
 // cron's internal request has this host). Touches the busiest Jikan lists so
@@ -15,6 +28,7 @@ export async function GET(req: Request) {
   await getGenres();
   await runAiringCheck().catch(() => {});
   await backfillAvatars().catch(() => {});
+  await warmWeeb();
   await Promise.allSettled([
     run("delete from presence where updated_at < unixepoch() - 86400"),
     run("delete from sessions where expires_at < unixepoch()"),
