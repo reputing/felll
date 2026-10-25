@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "mangareader-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // Built from the Dockerfile here (clones stabldev/mangareader-api, a Python
+  // FastAPI scraper). wrangler builds + pushes it on
+  // `npm run mangareader:container:deploy`.
+  "containers": [
+    {
+      "class_name": "MangaReaderContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "MangaReaderContainer", "name": "MANGAREADER_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MangaReaderContainer"] }],
+  "observability": { "enabled": true }
+}

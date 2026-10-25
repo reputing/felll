@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "omega-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // Built from the Dockerfile here (clones Shineii86/OmegaAPI, a Next.js app).
+  // wrangler builds + pushes it on `npm run omega:container:deploy`.
+  // ADULT source — see container-worker.js.
+  "containers": [
+    {
+      "class_name": "OmegaContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "OmegaContainer", "name": "OMEGA_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OmegaContainer"] }],
+  "observability": { "enabled": true }
+}

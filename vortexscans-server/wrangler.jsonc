@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "vortexscans-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // Built from the Dockerfile here (clones Shineii86/VortexScansAPI, Node). The
+  // repo ships Vercel serverless handlers plus a server.js that routes to them
+  // for self-hosting. wrangler builds + pushes it on
+  // `npm run vortexscans:container:deploy`.
+  "containers": [
+    {
+      "class_name": "VortexScansContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "VortexScansContainer", "name": "VORTEXSCANS_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VortexScansContainer"] }],
+  "observability": { "enabled": true }
+}
