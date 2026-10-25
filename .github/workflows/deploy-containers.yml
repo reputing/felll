@@ -1,0 +1,62 @@
+# Deploys the sidecar containers (manga sources, anivexa, moviebox) from CI, so
+# nobody needs Docker on their own machine — the GitHub runner has Docker, and
+# wrangler builds + pushes the container image from here.
+#
+# Run it from the Actions tab (pick a target), or have it triggered for you.
+# Uses the same account secrets as the site deploy:
+#   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
+# The token must also allow container/image deploys — if a run fails with a
+# permissions error, widen it to include Workers Scripts: Edit + Cloudflare
+# Containers/Images.
+name: Deploy container
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which container to build + deploy
+        type: choice
+        default: vortexscans
+        options:
+          - vortexscans
+          - omega
+          - consumet
+          - mangareader
+          - manga-id
+          - mango
+          - anivexa
+          - moviebox
+          - all-manga-sources
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          deploy() { echo "::group::deploy $1"; npx wrangler deploy -c "$1/wrangler.jsonc"; echo "::endgroup::"; }
+          case "${{ inputs.target }}" in
+            vortexscans) deploy vortexscans-server ;;
+            omega)       deploy omega-server ;;
+            consumet)    deploy consumet-server ;;
+            mangareader) deploy mangareader-server ;;
+            manga-id)    deploy manga-id-server ;;
+            mango)       deploy mango-server ;;
+            anivexa)     deploy anivexa-server ;;
+            moviebox)    deploy moviebox-server ;;
+            all-manga-sources)
+              for d in consumet-server vortexscans-server omega-server mangareader-server manga-id-server mango-server; do deploy "$d"; done ;;
+            *) echo "unknown target"; exit 1 ;;
+          esac
+          echo "Done. Copy the printed *.workers.dev URL(s) into wrangler.jsonc vars."
