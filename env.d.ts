@@ -71,6 +71,8 @@ interface CloudflareEnv {
    *  English source, used only when MangaDex has no English for a title. Unset
    *  = disabled, manga falls back to MangaDex. */
   CONSUMET_API_URL?: string;
+  /** weebcentral via the comick-source-api container (licensed manhwa with pages). */
+  WEEB_API_URL?: string;
   /** Self-hosted VortexScans API (Cloudflare Container) — powers the
    *  /read/vortexscans browse section. Unset = section shows "not enabled". */
   VORTEXSCANS_API_URL?: string;
