@@ -56,6 +56,12 @@ function img(u: string | null | undefined, referer: string): string | null {
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
+// First of several fields that is actually non-empty (an empty string must not
+// win a ?? chain — Omega sends index:"" and the number lives in name:"Chapter 5").
+const firstStr = (...vals: unknown[]): string => {
+  for (const v of vals) { const s = str(v).trim(); if (s) return s; }
+  return "";
+};
 const firstArray = (...cands: unknown[]): any[] => {
   for (const c of cands) if (Array.isArray(c)) return c;
   return [];
@@ -75,7 +81,7 @@ function mapCard(src: SourceId, o: any): SrcCard | null {
 function mapChapter(o: any): SrcChapter | null {
   const slug = str(o?.slug) || str(o?.id) || str(o?.chapterSlug) || (typeof o?.url === "string" ? o.url.split("/").filter(Boolean).pop() : "");
   if (!slug) return null;
-  const number = str(o?.number ?? o?.chapter ?? o?.chapterNumber ?? o?.index ?? o?.name).replace(/^chapter\s*/i, "").trim();
+  const number = firstStr(o?.number, o?.chapter, o?.chapterNumber, o?.index, o?.name).replace(/^chapter\s*/i, "").trim();
   return { slug, number, title: str(o?.title) };
 }
 
