@@ -295,6 +295,17 @@ function startsEarly(chs: Chapter[]): boolean {
 // backing off, before giving up — otherwise the reader dead-ends on "no readable
 // pages here" for a chapter that is actually fine. Safe: a genuinely empty
 // chapter still ends up [], just a few seconds slower in that rare case.
+// A chapter id can reach us percent-encoded from the URL (the "wc:"/"cm:" source
+// prefix's colon becomes "%3A"). Decode it so prefix checks and list lookups
+// match; a plain MangaDex uuid has no escapes, so this is a no-op for those.
+export function safeDecode(id: string): string {
+  try {
+    return decodeURIComponent(id);
+  } catch {
+    return id;
+  }
+}
+
 async function withRetry(fn: () => Promise<string[]>, tries = 4): Promise<string[]> {
   for (let i = 0; i < tries; i++) {
     try {
@@ -309,7 +320,12 @@ async function withRetry(fn: () => Promise<string[]>, tries = 4): Promise<string
 }
 
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */
-export async function getChapterPages(chapterId: string, saver = false): Promise<string[]> {
+export async function getChapterPages(rawChapterId: string, saver = false): Promise<string[]> {
+  // The id can arrive percent-encoded from the URL (Next's <Link> turns the "wc:"
+  // / "cm:" source prefix's colon into "%3A"), which would skip the prefix checks
+  // below and wrongly route a second-source chapter to MangaDex (→ 404 → empty).
+  // Decode first so "wc%3A…" is recognised as "wc:…".
+  const chapterId = safeDecode(rawChapterId);
   // Chapters from a second source carry a tag → read their pages from it.
   if (chapterId.startsWith(WEEB_PREFIX)) return withRetry(() => weebChapterPages(chapterId));
   if (chapterId.startsWith(COMICK_PREFIX)) return withRetry(() => comickChapterPages(chapterId));

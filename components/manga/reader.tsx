@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Columns2, Gauge, Loader2, Maximize, Rows3, ScrollText, Square } from "lucide-react";
-import { getChapterPages, getChapters, getManga, type Chapter } from "@/lib/manga";
+import { getChapterPages, getChapters, getManga, safeDecode, type Chapter } from "@/lib/manga";
 import { setReading } from "@/components/shell/presence";
 import { cn } from "@/lib/utils";
 
@@ -15,8 +15,11 @@ function usePref<T extends string>(key: string, fallback: T): [T, (v: T) => void
   return [v, useCallback((n: T) => { setV(n); try { localStorage.setItem(key, n); } catch { /* */ } }, [key])];
 }
 
-export function MangaReader({ mangaId, chapterId }: { mangaId: string; chapterId: string }) {
+export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: string; chapterId: string }) {
   const router = useRouter();
+  // The colon in the "wc:"/"cm:" source prefix arrives percent-encoded ("wc%3A…")
+  // from the route, which breaks both the chapter lookup below and page loading.
+  const chapterId = safeDecode(rawChapterId);
   const [pages, setPages] = useState<string[] | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [info, setInfo] = useState<{ title: string; cover: string | null }>({ title: "", cover: null });
