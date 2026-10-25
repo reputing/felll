@@ -43,6 +43,8 @@
     "NEXT_PUBLIC_SITE_NAME": "cupcake.gg",
     "KURO_URL": "https://kuro.rip",
     "REQUIRE_KURO_PLUS": "0",
+    // Comma-separated kuro handles with admin rights (approve 18+ access, etc.).
+    "ADMIN_HANDLES": "dead",
     // The catalog comes from `npm run sync` (AniList/Kitsu), never live Jikan.
     // This makes any stray live call fail fast instead of hanging on a timeout.
     "JIKAN_DISABLED": "1",

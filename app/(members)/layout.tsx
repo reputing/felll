@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireMember } from "@/lib/auth";
+import { isAdmin, requireMember } from "@/lib/auth";
 import type { Entry } from "@/lib/store";
 import { SiteHeader } from "@/components/shell/site-header";
 import { SiteFooter } from "@/components/shell/site-footer";
@@ -27,7 +27,7 @@ export default async function MembersLayout({ children }: { children: React.Reac
     <div className="flex min-h-svh flex-col">
       <StoreSeed lib={entries} />
       <SiteHeader
-        user={{ handle: user.handle, display_name: user.display_name, avatar_url: user.avatar_url, is_plus: user.is_plus, is_admin: user.is_admin, accent: user.accent }}
+        user={{ handle: user.handle, display_name: user.display_name, avatar_url: user.avatar_url, is_plus: user.is_plus, is_admin: (await isAdmin(user)) ? 1 : 0, accent: user.accent }}
         unread={Number((unread.results[0] as { n: number })?.n ?? 0)}
       />
       <div className="flex-1">{children}</div>
