@@ -84,12 +84,20 @@ async function searchProviders(title: string, want: string, wantAlt: string): Pr
     const search = await cj(`/manga/${provider}/${encodeURIComponent(title)}`);
     const results: { id?: string; title?: unknown }[] = search?.results ?? [];
     if (!results.length) continue;
-    // Require a real title overlap, so we never show the wrong manga.
+    // Match tightly, or we pick the wrong entry — e.g. "Solo Leveling" search
+    // returns the light NOVEL first, which has no readable manga pages. Drop
+    // novel results (unless the query itself is a novel) and require an exact /
+    // prefix / close-length match rather than any loose substring.
+    const wantsNovel = /\bnovel\b/.test(want);
+    const cands = results
+      .map((r) => ({ r, t: norm(titleOf(r.title)) }))
+      .filter((x) => x.t && (wantsNovel || !/\bnovel\b/.test(x.t)));
+    const near = (t: string) => (t.includes(want) || want.includes(t)) && Math.abs(t.length - want.length) <= 6;
     const match =
-      results.find((r) => {
-        const t = norm(titleOf(r.title));
-        return t && (t === want || t === wantAlt || (t.length > 3 && (t.includes(want) || want.includes(t))));
-      }) ?? null;
+      (cands.find((x) => x.t === want) ||
+        cands.find((x) => wantAlt && x.t === wantAlt) ||
+        cands.find((x) => x.t.startsWith(want) || want.startsWith(x.t)) ||
+        cands.find((x) => near(x.t)))?.r ?? null;
     if (!match?.id) continue;
 
     const info = await cj(`/manga/${provider}/info?id=${encodeURIComponent(match.id)}`);
