@@ -1,0 +1,17 @@
+# Clones the candidate manga repos and reports what each one actually is, so we
+# containerize only the real self-host servers. Run from the Actions tab.
+name: Triage manga repos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/triage-manga-repos.mjs
