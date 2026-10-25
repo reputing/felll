@@ -7,6 +7,8 @@
 
 // JSON goes through our own origin (/api/md/*) to dodge MangaDex's browser CORS;
 // cover + page images load straight from the CDN (an <img> needs no CORS).
+import { CONSUMET_PREFIX, consumetChapterPages, consumetEnglishChapters } from "./manga-consumet";
+
 const API = "/api/md";
 const UPLOADS = "https://uploads.mangadex.org";
 // Keep it to non-pornographic ratings.
@@ -234,8 +236,22 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
   const enExternal = buildChapters(enFeed, true);
   if (enExternal.length) return enExternal;
 
-  // No English at all (not even official links). Fall back to the language with
-  // the most readable chapters, and failing that any official/external links.
+  // Still no English on MangaDex. Before dropping the reader into another
+  // language, try the second English source (the Consumet container). This is a
+  // no-op when that provider isn't configured — the proxy answers 503 and we
+  // fall through. We need the title to search it, so pull the (memoised) detail.
+  try {
+    const m = await getManga(id);
+    if (m) {
+      const chs = await consumetEnglishChapters(m.title, m.altTitle);
+      if (chs.length) return chs;
+    }
+  } catch {
+    /* provider off or a miss → MangaDex fallbacks below */
+  }
+
+  // No English anywhere. Fall back to the language with the most readable
+  // chapters, and failing that any official/external links.
   const all = await fetchFeed(id, "");
   const byLang = new Map<string, Raw[]>();
   for (const c of all) {
@@ -254,6 +270,8 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
 
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */
 export async function getChapterPages(chapterId: string, saver = false): Promise<string[]> {
+  // Chapters from the second source carry a tag → read them from Consumet.
+  if (chapterId.startsWith(CONSUMET_PREFIX)) return consumetChapterPages(chapterId);
   const d = await get(`/at-home/server/${chapterId}`);
   const base = d.baseUrl, hash = d.chapter?.hash;
   const files: string[] = (saver ? d.chapter?.dataSaver : d.chapter?.data) ?? [];
