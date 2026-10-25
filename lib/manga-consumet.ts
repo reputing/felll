@@ -73,17 +73,22 @@ interface CChapter {
 export async function consumetEnglishChapters(title: string, alt?: string): Promise<Chapter[]> {
   const want = norm(title);
   const wantAlt = alt ? norm(alt) : "";
+  // Search with BOTH the primary title and the English alt. Manhwa often have a
+  // romanised Korean primary on MangaDex (e.g. "Na Honjaman Level-Up") that the
+  // providers don't index — the alt ("Solo Leveling") is what finds them.
+  const queries = [...new Set([title, alt].filter((s): s is string => !!s && s.trim().length > 0))];
   try {
-    return await searchProviders(title, want, wantAlt);
+    return await searchProviders(queries, want, wantAlt);
   } catch {
     // ProviderOff (not configured) or any transient error → no second source.
     return [];
   }
 }
 
-async function searchProviders(title: string, want: string, wantAlt: string): Promise<Chapter[]> {
+async function searchProviders(queries: string[], want: string, wantAlt: string): Promise<Chapter[]> {
   for (const provider of PROVIDERS) {
-    const search = await cj(`/manga/${provider}/${encodeURIComponent(title)}`);
+    for (const query of queries) {
+    const search = await cj(`/manga/${provider}/${encodeURIComponent(query)}`);
     const results: { id?: string; title?: unknown }[] = search?.results ?? [];
     if (!results.length) continue;
     // Match tightly, or we pick the wrong entry — e.g. "Solo Leveling" search
@@ -128,6 +133,7 @@ async function searchProviders(title: string, want: string, wantAlt: string): Pr
     // Consumet tends to return newest-first; our reader wants chapter 1 at the top.
     chapters.sort((a, b) => (parseFloat(a.chapter) || 0) - (parseFloat(b.chapter) || 0));
     if (chapters.length) return chapters;
+    }
   }
   return [];
 }

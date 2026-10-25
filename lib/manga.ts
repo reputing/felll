@@ -241,15 +241,12 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
   //  - MangaDex's English is a sparse partial upload missing the early chapters.
   // No-op when the provider isn't configured (proxy 503 → we fall through).
   let second: Chapter[] = [];
-  try {
-    const m = await getManga(id);
-    if (m) {
-      // comick.io first (broadest English), then the Consumet providers.
-      second = await comickEnglishChapters(m.title, m.altTitle);
-      if (!second.length) second = await consumetEnglishChapters(m.title, m.altTitle);
-    }
-  } catch {
-    /* provider off or a miss */
+  const m = await getManga(id).catch(() => null);
+  if (m) {
+    // comick.io first (broadest English), then the Consumet providers. Each is
+    // independently guarded so one failing never skips the other.
+    second = await comickEnglishChapters(m.title, m.altTitle).catch(() => []);
+    if (!second.length) second = await consumetEnglishChapters(m.title, m.altTitle).catch(() => []);
   }
   if (second.length && second.length >= enHosted.length) return second;
   if (enHosted.length) return enHosted; // keep MangaDex's partial run over nothing

@@ -28,8 +28,16 @@ async function cj(path: string): Promise<any | null> {
 export async function comickEnglishChapters(title: string, alt?: string): Promise<Chapter[]> {
   const want = norm(title);
   const wantAlt = alt ? norm(alt) : "";
-  const res = await cj(`/v1.0/search?q=${encodeURIComponent(title)}&limit=10&t=false`);
-  const list: any[] = Array.isArray(res) ? res : res?.data ?? [];
+  // Search with BOTH the primary title and the English alt — manhwa often have a
+  // romanised Korean primary on MangaDex (e.g. "Na Honjaman Level-Up") that
+  // comick doesn't index; the alt ("Solo Leveling") is what finds them.
+  const queries = [...new Set([title, alt].filter((s): s is string => !!s && s.trim().length > 0))];
+  const list: any[] = [];
+  for (const q of queries) {
+    const res = await cj(`/v1.0/search?q=${encodeURIComponent(q)}&limit=10&t=false`);
+    const part: any[] = Array.isArray(res) ? res : res?.data ?? [];
+    if (part.length) list.push(...part);
+  }
   if (!list.length) return [];
 
   // Tight match, dropping novels (comick lists light novels too).
