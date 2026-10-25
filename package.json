@@ -19,7 +19,12 @@
     "anivexa:deploy": "wrangler deploy -c anivexa/wrangler.jsonc",
     "anivexa:container:deploy": "wrangler deploy -c anivexa-server/wrangler.jsonc",
     "moviebox:container:deploy": "wrangler deploy -c moviebox-server/wrangler.jsonc",
-    "consumet:container:deploy": "wrangler deploy -c consumet-server/wrangler.jsonc"
+    "consumet:container:deploy": "wrangler deploy -c consumet-server/wrangler.jsonc",
+    "vortexscans:container:deploy": "wrangler deploy -c vortexscans-server/wrangler.jsonc",
+    "mangareader:container:deploy": "wrangler deploy -c mangareader-server/wrangler.jsonc",
+    "manga-id:container:deploy": "wrangler deploy -c manga-id-server/wrangler.jsonc",
+    "mango:container:deploy": "wrangler deploy -c mango-server/wrangler.jsonc",
+    "omega:container:deploy": "wrangler deploy -c omega-server/wrangler.jsonc"
   },
   "dependencies": {
     "@cloudflare/containers": "0.3.7",
