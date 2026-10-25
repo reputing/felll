@@ -24,7 +24,8 @@
     "mangareader:container:deploy": "wrangler deploy -c mangareader-server/wrangler.jsonc",
     "manga-id:container:deploy": "wrangler deploy -c manga-id-server/wrangler.jsonc",
     "mango:container:deploy": "wrangler deploy -c mango-server/wrangler.jsonc",
-    "omega:container:deploy": "wrangler deploy -c omega-server/wrangler.jsonc"
+    "omega:container:deploy": "wrangler deploy -c omega-server/wrangler.jsonc",
+    "comick:container:deploy": "wrangler deploy -c comick-server/wrangler.jsonc"
   },
   "dependencies": {
     "@cloudflare/containers": "0.3.7",

@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "comick-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // Built from the Dockerfile here (clones GooglyBlox/comick-source-api, Next.js).
+  // wrangler builds + pushes it on the "Deploy container" CI workflow (target
+  // comick) or `npm run comick:container:deploy`.
+  "containers": [
+    {
+      "class_name": "ComickContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "ComickContainer", "name": "COMICK_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ComickContainer"] }],
+  "observability": { "enabled": true }
+}

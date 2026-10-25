@@ -19,6 +19,7 @@ on:
         default: vortexscans
         options:
           - vortexscans
+          - comick
           - omega
           - consumet
           - mangareader
@@ -48,6 +49,7 @@ jobs:
           deploy() { echo "::group::deploy $1"; npx wrangler deploy -c "$1/wrangler.jsonc"; echo "::endgroup::"; }
           case "${{ inputs.target }}" in
             vortexscans) deploy vortexscans-server ;;
+            comick)      deploy comick-server ;;
             omega)       deploy omega-server ;;
             consumet)    deploy consumet-server ;;
             mangareader) deploy mangareader-server ;;
