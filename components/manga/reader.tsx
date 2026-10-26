@@ -243,19 +243,21 @@ function Page({ n, dataN, src, altSrc, onReqAlt, eager, className }: {
   const [url, setUrl] = useState(src);
   const tries = useRef(0);
   useEffect(() => { setUrl(src); tries.current = 0; }, [src]);
-  // An image can fail transiently (a CDN rate-limit on one page). The old retry
-  // swapped in altSrc, but for the container sources altSrc === src, so it never
-  // actually re-requested. Retry the SAME image a few times with a cache-busting
-  // param (forces a real re-fetch past the browser's failed-load cache), ask for
-  // a fresh at-home server once (helps MangaDex), then fall back to altSrc.
+  // An image can fail to load direct from the MangaDex CDN. This is the norm for
+  // ADULT titles: they stay on MangaDex (the SFW scraper containers don't carry
+  // them), and those at-home nodes 404 the user's browser even though the exact
+  // URL is fetchable server-side. So the reliable fallback is to pull the SAME
+  // image through our own origin (/api/manga-img fetches it server-side, where it
+  // works, and streams the bytes back). Order: one quick cache-bust retry for a
+  // transient blip, then the same-origin proxy, then a fresh at-home server.
   const onError = () => {
     tries.current += 1;
-    if (tries.current === 1) onReqAlt();
-    if (tries.current <= 3) {
-      const bust = `${src.includes("?") ? "&" : "?"}cb=${tries.current}`;
-      const t = tries.current;
-      setTimeout(() => setUrl(src + bust), 500 * t);
-    } else if (altSrc && altSrc !== src) {
+    if (tries.current === 1) {
+      onReqAlt();
+      setTimeout(() => setUrl(`${src}${src.includes("?") ? "&" : "?"}cb=1`), 350);
+    } else if (tries.current === 2 && /^https?:\/\//.test(src)) {
+      setUrl(`/api/manga-img?u=${encodeURIComponent(src)}`);
+    } else if (tries.current === 3 && altSrc && altSrc !== src) {
       setUrl(altSrc);
     }
   };

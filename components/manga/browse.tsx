@@ -22,15 +22,14 @@ function Card({ m }: { m: MangaCard }) {
   );
 }
 
-export function MangaBrowse({ adultOk }: { adultOk: boolean }) {
+export function MangaBrowse({ adult = false }: { adult?: boolean }) {
   const [q, setQ] = useState("");
   const [f, setF] = useState<Omit<BrowseParams, "q" | "limit" | "offset" | "adult">>({});
-  // 18+ view. Only offered to members an admin has granted adult access; off by
-  // default, and never sent for anyone else (the proxy filters it out too).
-  const [adult, setAdult] = useState(false);
-  // How many 18+ titles exist, shown next to the toggle (fetched once).
+  // The 18+ (pornographic) catalogue is its own gated section (/manga/18): this
+  // browse shows it when `adult` is set, with the total count. The main /manga
+  // page passes nothing, so it stays SFW with no 18+ anything on it.
   const [adultCount, setAdultCount] = useState<number | null>(null);
-  useEffect(() => { if (adultOk) adultMangaCount().then(setAdultCount).catch(() => {}); }, [adultOk]);
+  useEffect(() => { if (adult) adultMangaCount().then(setAdultCount).catch(() => {}); }, [adult]);
   const [items, setItems] = useState<MangaCard[] | null>(null);
   const [total, setTotal] = useState(0);
   const [more, setMore] = useState(false);
@@ -96,15 +95,6 @@ export function MangaBrowse({ adultOk }: { adultOk: boolean }) {
         {pick("status", "Status", [["ongoing", "Ongoing"], ["completed", "Completed"], ["hiatus", "Hiatus"], ["cancelled", "Cancelled"]].map(([value, label]) => ({ value, label })))}
         {pick("demographic", "Demographic", [["shounen", "Shounen"], ["shoujo", "Shoujo"], ["seinen", "Seinen"], ["josei", "Josei"]].map(([value, label]) => ({ value, label })))}
         {pick("year", "Year", YEARS.map((y) => ({ value: String(y), label: String(y) })))}
-        {adultOk && (
-          <button type="button" onClick={() => setAdult((v) => !v)} aria-pressed={adult}
-            title={adult ? "hide 18+ results" : "show 18+ results"}
-            className={cn("flex h-[42px] items-center gap-1.5 rounded-full border-1.5 px-4 text-[13px] font-extrabold tracking-[.04em] transition",
-              adult ? "border-frost-hot bg-cream-blush text-frost-deep" : "border-line text-plum-muted hover:border-frost-hot")}>
-            18+
-            {adultCount != null && <span className="rounded-full bg-frost-hot/15 px-1.5 py-0.5 font-mono text-[10.5px] tracking-normal text-frost-text">{adultCount.toLocaleString()}</span>}
-          </button>
-        )}
         <span className="flex-1" />
         {pick("order", "Sort", [["popular", "Most popular"], ["rating", "Top rated"], ["latest", "Latest"], ["newest", "Newest"], ["title", "A–Z"]].map(([value, label]) => ({ value, label })))}
         {active > 0 && (
@@ -133,7 +123,10 @@ export function MangaBrowse({ adultOk }: { adultOk: boolean }) {
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between px-1">
-          <div className="eyebrow">{q.trim() || active ? "Results" : "Popular now"}</div>
+          <div className="flex items-center gap-2">
+            <div className="eyebrow">{q.trim() || active ? "Results" : "Popular now"}</div>
+            {adult && adultCount != null && <span className="rounded-full bg-frost-hot/15 px-2 py-0.5 font-mono text-[11px] text-frost-text">{adultCount.toLocaleString()} 18+</span>}
+          </div>
           {items && <div className="text-[12.5px] font-semibold text-plum-muted">{items.length.toLocaleString()} of {total.toLocaleString()}</div>}
         </div>
         {items === null ? (

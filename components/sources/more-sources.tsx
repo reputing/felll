@@ -2,16 +2,24 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { SOURCES } from "@/lib/manga-sources";
 
-// Links to the extra per-source catalogues (VortexScans). These live in their
-// own sections because they have their own catalogues, separate from the
-// MangaDex browse above (18+ included) which has its own search and filters.
+// The extra catalogues that live in their own sections (their own search/grid),
+// separate from the SFW MangaDex browse above. The 18+ ones — MangaDex's adult
+// catalogue and the doujin source — are gated behind the adult check on their
+// own pages, so the main manga page stays clean.
+const EXTRAS = [
+  // MangaDex's 18+ catalogue, as its own gated section rather than a toggle on
+  // the main browse.
+  { href: "/manga/18", name: "18+ manga", blurb: "Explicit manga & manhwa, read in-app. 18+ only.", adult: true },
+  ...Object.values(SOURCES).map((s) => ({ href: `/read/${s.id}`, name: s.name, blurb: s.blurb, adult: s.adult })),
+];
+
 export function MoreSources() {
   return (
     <section className="flex flex-col gap-3">
       <div className="eyebrow px-1">More sources</div>
       <div className="grid gap-3 sm:grid-cols-2">
-        {Object.values(SOURCES).map((s) => (
-          <Link key={s.id} href={`/read/${s.id}`}
+        {EXTRAS.map((s) => (
+          <Link key={s.href} href={s.href}
             className="group flex items-center gap-3 rounded-box border-1.5 border-line bg-cream-card p-4 transition hover:border-frost-hot">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">

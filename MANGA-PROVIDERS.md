@@ -24,16 +24,22 @@ needed), never by bouncing the reader to another site.
 ## 18+ (adult) manga
 
 18+ is served by **MangaDex itself**, which hosts a large adult catalogue
-(hentai, doujinshi, adult manhwa) under its `pornographic` content rating. The
-reader reads every page of it in-app from MangaDex's CDN — same as any other
-title, no redirect.
+(hentai, adult manhwa) under its `pornographic` content rating. The reader reads
+every page of it in-app from MangaDex's CDN.
 
-- The SFW browse (`safe` / `suggestive` / `erotica`) is the default everywhere.
-- Members an admin has approved (`users.adult_ok`, set at `/admin/manhwa`) get an
-  **18+ toggle** on the manga page (`components/manga/browse.tsx`). Turning it on
-  adds `pornographic` to search / popular / browse.
-- Chapter feeds always allow every rating, so once you've opened any title you
-  can read it whatever its rating.
+- The main `/manga` page is **SFW only** (`safe` / `suggestive` / `erotica`) —
+  no 18+ toggle, nothing adult surfaces there.
+- The 18+ catalogue is its **own gated section at `/manga/18`** (linked from
+  "More sources" next to the doujin section), behind the adult gate
+  (`users.adult_ok`, granted at `/admin/manhwa`). It's `pornographic`-only, with
+  a live count of how many such titles exist (`adultMangaCount`).
+- Chapter feeds always allow every rating (`FEED_RATINGS`), so once a title is
+  opened it reads whatever its rating.
+- **Page images:** adult titles stay on MangaDex (the SFW scraper containers
+  don't carry them), and those at-home nodes 404 the user's browser even though
+  the exact URL is fetchable server-side. So the reader's page `onError` falls
+  back to the same-origin proxy (`/api/manga-img`), which fetches the image
+  server-side and streams it — without that, 18+ pages load blank.
 
 This replaced **OmegaAPI** (omegascans), which was an unreliable adult scraper
 container in its own `/read/omega` section. It's been retired: MangaDex's adult

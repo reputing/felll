@@ -13,16 +13,16 @@ import { WEEB_PREFIX, weebChapterPages, weebEnglishChapters } from "./manga-weeb
 
 const API = "/api/md";
 const UPLOADS = "https://uploads.mangadex.org";
-// Content ratings for browse / search / popular. The SFW default stays
-// non-pornographic; the 18+ view (members an admin has granted adult access via
-// users.adult_ok) adds `pornographic`, which surfaces MangaDex's large adult
-// catalogue — hentai, doujinshi and adult manhwa — every page of it read in-app
-// from MangaDex's own CDN, so there's no redirect off the site. Chapter feeds
-// (fetchFeed) always allow every rating: once you've opened a title you're meant
-// to be able to read it, whatever its rating.
+// Content ratings for browse / search / popular. The SFW default (the main
+// /manga page) stays non-pornographic. The 18+ section (/manga/18, behind the
+// adult gate) is the OPPOSITE: pornographic-only, so it's the explicit catalogue
+// — hentai and adult manhwa — read in-app from MangaDex's own CDN, no redirect.
+// Chapter feeds (fetchFeed) always allow EVERY rating: once a title is opened it
+// must read whatever its rating, so FEED_RATINGS is used there, not this.
 const SFW = ["safe", "suggestive", "erotica"];
-const ADULT = ["safe", "suggestive", "erotica", "pornographic"];
+const ADULT = ["pornographic"];
 const ratingParam = (adult = false): string => (adult ? ADULT : SFW).map((r) => `contentRating[]=${r}`).join("&");
+const FEED_RATINGS = ["safe", "suggestive", "erotica", "pornographic"].map((r) => `contentRating[]=${r}`).join("&");
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Raw = any;
@@ -215,7 +215,7 @@ async function fetchManga(id: string): Promise<MangaFull | null> {
 async function fetchFeed(id: string, extraQs: string): Promise<Raw[]> {
   const out: Raw[] = [];
   for (let offset = 0; offset < 2000; offset += 500) {
-    const d = await get(`/manga/${id}/feed?limit=500&offset=${offset}&order[volume]=asc&order[chapter]=asc&includes[]=scanlation_group&${ratingParam(true)}${extraQs}`);
+    const d = await get(`/manga/${id}/feed?limit=500&offset=${offset}&order[volume]=asc&order[chapter]=asc&includes[]=scanlation_group&${FEED_RATINGS}${extraQs}`);
     out.push(...(d.data ?? []));
     if (!d.data?.length || offset + 500 >= (d.total ?? 0)) break;
   }
