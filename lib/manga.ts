@@ -33,6 +33,7 @@ export interface MangaFull extends MangaCard {
   tags: string[];
   author: string;
   languages: string[]; // translated languages available on MangaDex
+  names: string[];     // every title variant (en/romaji/native) for source search
 }
 
 const LANG_NAMES: Record<string, string> = {
@@ -59,6 +60,22 @@ const pick = (m: Raw): string => (m ? m.en || m["en-us"] || m.ja_ro || m.ja || O
 function coverUrl(mangaId: string, rels: Raw[], size: 256 | 512 = 512): string | null {
   const f = rels?.find((r) => r.type === "cover_art")?.attributes?.fileName;
   return f ? `${UPLOADS}/covers/${mangaId}/${f}.${size}.jpg` : null;
+}
+
+// Every title a series is known by, for searching the second sources: the
+// primary title (any language) plus the English, romaji and native alt titles.
+// Other languages are left out — they add noise and wrong matches, not reach.
+function searchNames(attrs: Raw): string[] {
+  const out: string[] = [];
+  const push = (v: unknown) => { if (typeof v === "string" && v.trim()) out.push(v.trim()); };
+  for (const v of Object.values(attrs?.title ?? {})) push(v);
+  for (const a of (attrs?.altTitles ?? []) as Raw[]) {
+    push(a?.en); push(a?.["en-us"]); push(a?.["ja-ro"]); push(a?.ja_ro); push(a?.ja);
+  }
+  const seen = new Set<string>();
+  const uniq: string[] = [];
+  for (const n of out) { const k = n.toLowerCase(); if (!seen.has(k)) { seen.add(k); uniq.push(n); } }
+  return uniq.slice(0, 6); // cap so we don't hammer the containers with searches
 }
 
 function toCard(m: Raw): MangaCard {
@@ -169,6 +186,7 @@ async function fetchManga(id: string): Promise<MangaFull | null> {
     tags: (m.attributes.tags ?? []).map((t: Raw) => pick(t.attributes?.name)).filter(Boolean),
     author,
     languages: (m.attributes.availableTranslatedLanguages ?? []).filter((l: unknown): l is string => typeof l === "string"),
+    names: searchNames(m.attributes),
   };
 }
 
@@ -280,9 +298,9 @@ async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
     // independently guarded so one failing never skips the other.
     // weebcentral (container) is the most reliable for licensed manhwa WITH
     // pages; then comick.io; then the Consumet providers.
-    second = await weebEnglishChapters(m.title, m.altTitle).catch(() => []);
-    if (!second.length) second = await comickEnglishChapters(m.title, m.altTitle).catch(() => []);
-    if (!second.length) second = await consumetEnglishChapters(m.title, m.altTitle).catch(() => []);
+    second = await weebEnglishChapters(m.title, m.altTitle, m.names).catch(() => []);
+    if (!second.length) second = await comickEnglishChapters(m.title, m.altTitle, m.names).catch(() => []);
+    if (!second.length) second = await consumetEnglishChapters(m.title, m.altTitle, m.names).catch(() => []);
   }
   if (second.length && second.length >= enHosted.length) return second;
   if (enHosted.length) return enHosted; // keep MangaDex's partial run over nothing

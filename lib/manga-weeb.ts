@@ -4,6 +4,7 @@
 // every call returns [] on any miss, so the resolver falls through.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Chapter } from "./manga";
+import { pickMatch, searchQueries } from "./manga-match";
 
 const API = "/api/weeb";
 const SOURCE = "weebcentral";
@@ -26,26 +27,22 @@ async function post(path: string, body: any): Promise<any | null> {
 const WEEB_BASE = "https://weebcentral.com/chapters/";
 const ulidOf = (url: string) => (url.split(/[?#]/)[0].split("/").filter(Boolean).pop() || "");
 
-export async function weebEnglishChapters(title: string, alt?: string): Promise<Chapter[]> {
-  const want = norm(title);
-  const wantAlt = alt ? norm(alt) : "";
-  const queries = [...new Set([title, alt].filter((s): s is string => !!s && !!s.trim()))];
-  // Fire the title + alt-title searches at once rather than one-then-the-other:
-  // the container round trip is the slow part, so overlapping them halves the
-  // wait when the first query doesn't match. Matching still prefers the first
-  // query's results (queries/searches stay in order).
-  const searches = await Promise.all(queries.map((q) => post("/api/search", { query: q, source: SOURCE })));
+export async function weebEnglishChapters(title: string, alt?: string, extra: string[] = []): Promise<Chapter[]> {
+  // Search by EVERY name the title is known by (en / romaji / native). An
+  // aggregator indexes by one of them and not the others, so one name alone
+  // misses — e.g. weebcentral finds "Sono Bisque Doll wa Koi o Suru" but not
+  // "My Dress-Up Darling".
+  const names = [...new Set([title, alt, ...extra].filter((s): s is string => !!s && !!s.trim()))];
+  // Fire the searches at once rather than one-then-the-other: the container
+  // round trip is the slow part, so overlapping them cuts the wait. Matching
+  // still prefers the first query's results (searches stay in order).
+  const searches = await Promise.all(searchQueries(names).map((q) => post("/api/search", { query: q, source: SOURCE })));
   let url = "";
   for (const s of searches) {
     const results: any[] = s?.results ?? [];
     if (!results.length) continue;
     const cands = results.map((r) => ({ r, t: norm(r?.title) })).filter((x) => x.t && !/\bnovel\b/.test(x.t));
-    const near = (t: string) => (t.includes(want) || want.includes(t)) && Math.abs(t.length - want.length) <= 6;
-    const m =
-      cands.find((x) => x.t === want) ||
-      cands.find((x) => wantAlt && x.t === wantAlt) ||
-      cands.find((x) => x.t.startsWith(want) || want.startsWith(x.t)) ||
-      cands.find((x) => near(x.t));
+    const m = pickMatch(cands, names);
     if (m?.r?.url) { url = m.r.url; break; }
   }
   if (!url) return [];

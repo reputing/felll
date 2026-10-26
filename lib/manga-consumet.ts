@@ -9,6 +9,7 @@
 // anonymised in the UI (branded "Cupcake"), like the anime providers.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Chapter } from "./manga";
+import { pickMatch, searchQueries } from "./manga-match";
 
 const API = "/api/consumet";
 // Chapter ids from this source are tagged so getChapterPages knows to read them
@@ -70,41 +71,34 @@ interface CChapter {
 
 /** English chapters for a title from the first Consumet provider that has it
  *  with a confident title match. Empty when the provider is off or has no match. */
-export async function consumetEnglishChapters(title: string, alt?: string): Promise<Chapter[]> {
-  const want = norm(title);
-  const wantAlt = alt ? norm(alt) : "";
-  // Search with BOTH the primary title and the English alt. Manhwa often have a
-  // romanised Korean primary on MangaDex (e.g. "Na Honjaman Level-Up") that the
-  // providers don't index — the alt ("Solo Leveling") is what finds them.
-  const queries = [...new Set([title, alt].filter((s): s is string => !!s && s.trim().length > 0))];
+export async function consumetEnglishChapters(title: string, alt?: string, extra: string[] = []): Promise<Chapter[]> {
+  // Search by every name the title is known by (en / romaji / native); each
+  // provider indexes by a different one, so a single name misses titles they
+  // actually carry.
+  const names = [...new Set([title, alt, ...extra].filter((s): s is string => !!s && s.trim().length > 0))];
   try {
-    return await searchProviders(queries, want, wantAlt);
+    return await searchProviders(names);
   } catch {
     // ProviderOff (not configured) or any transient error → no second source.
     return [];
   }
 }
 
-async function searchProviders(queries: string[], want: string, wantAlt: string): Promise<Chapter[]> {
+async function searchProviders(names: string[]): Promise<Chapter[]> {
+  const wantsNovel = names.some((n) => /\bnovel\b/.test(norm(n)));
+  const queries = searchQueries(names);
   for (const provider of PROVIDERS) {
     for (const query of queries) {
     const search = await cj(`/manga/${provider}/${encodeURIComponent(query)}`);
     const results: { id?: string; title?: unknown }[] = search?.results ?? [];
     if (!results.length) continue;
-    // Match tightly, or we pick the wrong entry — e.g. "Solo Leveling" search
-    // returns the light NOVEL first, which has no readable manga pages. Drop
-    // novel results (unless the query itself is a novel) and require an exact /
-    // prefix / close-length match rather than any loose substring.
-    const wantsNovel = /\bnovel\b/.test(want);
+    // Match tightly against any of the names, or we pick the wrong entry — e.g.
+    // "Solo Leveling" search returns the light NOVEL first, which has no readable
+    // manga pages. Drop novel results (unless the title itself is a novel).
     const cands = results
       .map((r) => ({ r, t: norm(titleOf(r.title)) }))
       .filter((x) => x.t && (wantsNovel || !/\bnovel\b/.test(x.t)));
-    const near = (t: string) => (t.includes(want) || want.includes(t)) && Math.abs(t.length - want.length) <= 6;
-    const match =
-      (cands.find((x) => x.t === want) ||
-        cands.find((x) => wantAlt && x.t === wantAlt) ||
-        cands.find((x) => x.t.startsWith(want) || want.startsWith(x.t)) ||
-        cands.find((x) => near(x.t)))?.r ?? null;
+    const match = pickMatch(cands, names)?.r ?? null;
     if (!match?.id) continue;
 
     const info = await cj(`/manga/${provider}/info?id=${encodeURIComponent(match.id)}`);

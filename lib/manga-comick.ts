@@ -8,6 +8,7 @@
 // the reader.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Chapter } from "./manga";
+import { pickMatch, searchQueries } from "./manga-match";
 
 const API = "/api/comick";
 const IMG = "https://meo.comick.pictures";
@@ -25,29 +26,23 @@ async function cj(path: string): Promise<any | null> {
   }
 }
 
-export async function comickEnglishChapters(title: string, alt?: string): Promise<Chapter[]> {
-  const want = norm(title);
-  const wantAlt = alt ? norm(alt) : "";
-  // Search with BOTH the primary title and the English alt — manhwa often have a
-  // romanised Korean primary on MangaDex (e.g. "Na Honjaman Level-Up") that
-  // comick doesn't index; the alt ("Solo Leveling") is what finds them.
-  const queries = [...new Set([title, alt].filter((s): s is string => !!s && s.trim().length > 0))];
+export async function comickEnglishChapters(title: string, alt?: string, extra: string[] = []): Promise<Chapter[]> {
+  // Search by every name the title is known by (en / romaji / native): comick
+  // and the other aggregators each index by a different one, so a single name
+  // misses titles the source actually carries.
+  const names = [...new Set([title, alt, ...extra].filter((s): s is string => !!s && s.trim().length > 0))];
+  const searches = await Promise.all(searchQueries(names).map((q) => cj(`/v1.0/search?q=${encodeURIComponent(q)}&limit=10&t=false`)));
   const list: any[] = [];
-  for (const q of queries) {
-    const res = await cj(`/v1.0/search?q=${encodeURIComponent(q)}&limit=10&t=false`);
+  for (const res of searches) {
     const part: any[] = Array.isArray(res) ? res : res?.data ?? [];
     if (part.length) list.push(...part);
   }
   if (!list.length) return [];
 
-  // Tight match, dropping novels (comick lists light novels too).
+  // Tight match against any of the names, dropping novels (comick lists light
+  // novels too).
   const cands = list.map((x) => ({ x, t: norm(x?.title) })).filter((c) => c.t && !/\bnovel\b/.test(c.t));
-  const near = (t: string) => (t.includes(want) || want.includes(t)) && Math.abs(t.length - want.length) <= 6;
-  const match =
-    cands.find((c) => c.t === want) ||
-    cands.find((c) => wantAlt && c.t === wantAlt) ||
-    cands.find((c) => c.t.startsWith(want) || want.startsWith(c.t)) ||
-    cands.find((c) => near(c.t));
+  const match = pickMatch(cands, names);
   const slug: string | undefined = match?.x?.slug || match?.x?.hid;
   if (!slug) return [];
 
