@@ -14,8 +14,6 @@ const API = "/api/comick";
 const IMG = "https://meo.comick.pictures";
 export const COMICK_PREFIX = "cmk:";
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-
 async function cj(path: string): Promise<any | null> {
   try {
     const r = await fetch(API + path, { headers: { accept: "application/json" } });
@@ -41,7 +39,7 @@ export async function comickEnglishChapters(title: string, alt?: string, extra: 
 
   // Tight match against any of the names, dropping novels (comick lists light
   // novels too).
-  const cands = list.map((x) => ({ x, t: norm(x?.title) })).filter((c) => c.t && !/\bnovel\b/.test(c.t));
+  const cands = list.map((x) => ({ x, raw: String(x?.title ?? "") })).filter((c) => c.raw && !/\bnovel\b/i.test(c.raw));
   const match = pickMatch(cands, names);
   const slug: string | undefined = match?.x?.slug || match?.x?.hid;
   if (!slug) return [];

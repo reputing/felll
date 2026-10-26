@@ -246,6 +246,11 @@ export function cachedChapters(id: string, lang?: string): Chapter[] | null {
 }
 function storeChapters(key: string, chs: Chapter[]): void {
   if (!chs.length) return;
+  // Never cache the all-external "read on official site" fallback: it's what we
+  // return when the second sources miss, which can be a transient container
+  // cold-start. Caching it would make that miss stick on the next visit instead
+  // of re-resolving to the readable source once it's back up.
+  if (chs.every((c) => c.external)) return;
   try {
     localStorage.setItem(CH_STORE(key), JSON.stringify({ at: Date.now(), chs }));
   } catch {

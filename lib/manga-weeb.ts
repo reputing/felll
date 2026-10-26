@@ -10,8 +10,6 @@ const API = "/api/weeb";
 const SOURCE = "weebcentral";
 export const WEEB_PREFIX = "wc:";
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-
 async function post(path: string, body: any): Promise<any | null> {
   try {
     const r = await fetch(API + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -41,7 +39,7 @@ export async function weebEnglishChapters(title: string, alt?: string, extra: st
   for (const s of searches) {
     const results: any[] = s?.results ?? [];
     if (!results.length) continue;
-    const cands = results.map((r) => ({ r, t: norm(r?.title) })).filter((x) => x.t && !/\bnovel\b/.test(x.t));
+    const cands = results.map((r) => ({ r, raw: String(r?.title ?? "") })).filter((x) => x.raw && !/\bnovel\b/i.test(x.raw));
     const m = pickMatch(cands, names);
     if (m?.r?.url) { url = m.r.url; break; }
   }

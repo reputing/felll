@@ -96,8 +96,8 @@ async function searchProviders(names: string[]): Promise<Chapter[]> {
     // "Solo Leveling" search returns the light NOVEL first, which has no readable
     // manga pages. Drop novel results (unless the title itself is a novel).
     const cands = results
-      .map((r) => ({ r, t: norm(titleOf(r.title)) }))
-      .filter((x) => x.t && (wantsNovel || !/\bnovel\b/.test(x.t)));
+      .map((r) => ({ r, raw: titleOf(r.title) }))
+      .filter((x) => x.raw && (wantsNovel || !/\bnovel\b/i.test(x.raw)));
     const match = pickMatch(cands, names)?.r ?? null;
     if (!match?.id) continue;
 
