@@ -149,6 +149,19 @@ export async function browseManga(p: BrowseParams): Promise<{ items: MangaCard[]
   return { items: (d.data ?? []).map(toCard), total: d.total ?? 0 };
 }
 
+// How many 18+ (pornographic-rated) titles with readable chapters MangaDex has —
+// the "how much adult manga is there" counter. Memoised per session; a failure
+// returns 0 rather than throwing.
+let adultCountCache: Promise<number> | null = null;
+export function adultMangaCount(): Promise<number> {
+  if (!adultCountCache) {
+    adultCountCache = get(`/manga?limit=1&contentRating[]=pornographic&hasAvailableChapters=true`)
+      .then((d) => d.total ?? 0)
+      .catch(() => { adultCountCache = null; return 0; });
+  }
+  return adultCountCache;
+}
+
 export interface MangaTag { id: string; name: string }
 let tagCache: MangaTag[] | null = null;
 /** The genre tags, for the filter dropdown (cached per session). */

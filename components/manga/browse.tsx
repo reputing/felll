@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen, Search, SlidersHorizontal, X } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { browseManga, getMangaTags, type BrowseParams, type MangaCard, type MangaTag } from "@/lib/manga";
+import { adultMangaCount, browseManga, getMangaTags, type BrowseParams, type MangaCard, type MangaTag } from "@/lib/manga";
 import { cn } from "@/lib/utils";
 
 interface Reading { manga_id: string; chapter_id: string; chapter_num: string; page: number; title: string; cover: string | null }
@@ -28,6 +28,9 @@ export function MangaBrowse({ adultOk }: { adultOk: boolean }) {
   // 18+ view. Only offered to members an admin has granted adult access; off by
   // default, and never sent for anyone else (the proxy filters it out too).
   const [adult, setAdult] = useState(false);
+  // How many 18+ titles exist, shown next to the toggle (fetched once).
+  const [adultCount, setAdultCount] = useState<number | null>(null);
+  useEffect(() => { if (adultOk) adultMangaCount().then(setAdultCount).catch(() => {}); }, [adultOk]);
   const [items, setItems] = useState<MangaCard[] | null>(null);
   const [total, setTotal] = useState(0);
   const [more, setMore] = useState(false);
@@ -96,9 +99,10 @@ export function MangaBrowse({ adultOk }: { adultOk: boolean }) {
         {adultOk && (
           <button type="button" onClick={() => setAdult((v) => !v)} aria-pressed={adult}
             title={adult ? "hide 18+ results" : "show 18+ results"}
-            className={cn("flex h-[42px] items-center rounded-full border-1.5 px-4 text-[13px] font-extrabold tracking-[.04em] transition",
+            className={cn("flex h-[42px] items-center gap-1.5 rounded-full border-1.5 px-4 text-[13px] font-extrabold tracking-[.04em] transition",
               adult ? "border-frost-hot bg-cream-blush text-frost-deep" : "border-line text-plum-muted hover:border-frost-hot")}>
             18+
+            {adultCount != null && <span className="rounded-full bg-frost-hot/15 px-1.5 py-0.5 font-mono text-[10.5px] tracking-normal text-frost-text">{adultCount.toLocaleString()}</span>}
           </button>
         )}
         <span className="flex-1" />
