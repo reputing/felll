@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Crown, Medal, MessageSquare, Star, Tv } from "lucide-react";
+import { Clock, Crown, Medal, MessageSquare, Star, Tv } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { ago, cn } from "@/lib/utils";
@@ -108,6 +108,15 @@ async function Members({ q }: { q?: string }) {
   );
 }
 
+// seconds → a compact "3d 5h" / "12h 30m" / "45m" duration.
+function fmtDur(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  if (h >= 1) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 async function Board() {
   const since = Math.floor(Date.now() / 1000) - 30 * 86400;
   const q = (kind: string) =>
@@ -116,7 +125,12 @@ async function Board() {
        where a.kind = ? and a.created_at > ? group by a.user_id order by n desc limit 10`,
       kind, since,
     );
-  const [eps, cms, rates] = await Promise.all([q("finished_episode"), q("comment"), q("rated")]);
+  const time = all<{ handle: string; display_name: string; avatar_url: string | null; accent: string; n: number }>(
+    `select u.handle, u.display_name, u.avatar_url, u.accent, coalesce(sum(t.seconds), 0) as n
+     from time_spent t join users u on u.id = t.user_id
+     where t.day >= date('now', '-30 days') group by t.user_id order by n desc limit 10`,
+  ).catch(() => []);
+  const [eps, cms, rates, mins] = await Promise.all([q("finished_episode"), q("comment"), q("rated"), time]);
   const boards = [
     { title: "Most episodes", unit: "eps", Icon: Tv, rows: eps },
     { title: "Chattiest", unit: "comments", Icon: MessageSquare, rows: cms },
@@ -125,6 +139,25 @@ async function Board() {
   return (
     <div className="flex flex-col gap-3">
       <p className="px-1 text-[13px] font-semibold text-plum-muted">The last 30 days.</p>
+      <section className="rounded-box border-1.5 border-line bg-cream-card p-4 sm:p-5">
+        <h2 className="mb-3 flex items-center gap-2 px-1 text-[18px] font-extrabold"><Clock className="size-5 text-frost-hot" />Time on cupcake</h2>
+        {mins.length === 0 ? (
+          <p className="px-1 py-4 text-[13px] text-plum-muted">Up for grabs — hang around and climb.</p>
+        ) : (
+          <ol className="grid gap-1 sm:grid-cols-2">
+            {mins.map((r, i) => (
+              <li key={r.handle}>
+                <Link href={`/u/${r.handle}`} className="grid grid-cols-[28px_40px_1fr_auto] items-center gap-2.5 rounded-2xl p-1.5 hover:bg-cream-tint">
+                  <span className="grid place-items-center">{i < 3 ? <Medal className={cn("size-5", ["text-sprinkle-star", "text-plum-faint", "text-sprinkle-peach"][i])} /> : <span className="font-mono text-[13px] text-plum-faint">{i + 1}</span>}</span>
+                  <Avatar src={r.avatar_url} name={r.handle} size={40} ring={r.accent} />
+                  <span className="truncate text-[14px] font-extrabold">{r.display_name}</span>
+                  <span className="font-mono text-[13.5px] text-frost-text">{fmtDur(Number(r.n))}</span>
+                </Link>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
       <div className="grid gap-4 lg:grid-cols-3">
         {boards.map(({ title, unit, Icon, rows }) => (
           <section key={title} className="rounded-box border-1.5 border-line bg-cream-card p-4">

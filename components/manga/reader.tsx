@@ -23,6 +23,11 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
   const [pages, setPages] = useState<string[] | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [info, setInfo] = useState<{ title: string; cover: string | null }>({ title: "", cover: null });
+  // Pornographic titles: (1) their MangaDex at-home pages 404 the browser (they
+  // load through our origin instead, see Page), and (2) reading them must stay
+  // private — no "reading X" in the online list, no progress on the public
+  // profile — same as the doujin reader, which broadcasts nothing.
+  const [adult, setAdult] = useState(false);
   const [idx, setIdx] = useState(0);
   const [reloadN, setReloadN] = useState(0);
   const [mode, setMode] = usePref<Mode>("manga:mode", "strip");
@@ -45,7 +50,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
     let on = true;
     let lang = "en";
     try { lang = localStorage.getItem("manga:lang") || "en"; } catch { /* storage off */ }
-    getManga(mangaId).then((m) => { if (on && m) setInfo({ title: m.title, cover: m.cover }); }).catch(() => {});
+    getManga(mangaId).then((m) => { if (on && m) { setInfo({ title: m.title, cover: m.cover }); setAdult(m.rating === "pornographic"); } }).catch(() => {});
     const cachedChs = cachedChapters(mangaId, lang);
     if (cachedChs) setChapters(cachedChs); // instant prev/next + chapter number
     getChapters(mangaId, lang).then((c) => { if (on) setChapters(c); }).catch(() => {});
@@ -75,12 +80,14 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
       fetch("/api/manga-progress", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mangaId, chapterId, chapterNum: cur?.chapter ?? "", page, title: info.title, cover: info.cover }) }).catch(() => {});
     }, 1200);
   }, [mangaId, chapterId, cur, info]);
-  useEffect(() => { if (pages?.length) save(idx); }, [idx, pages, save]);
+  // Adult titles save no progress — it would surface on the public profile.
+  useEffect(() => { if (pages?.length && !adult) save(idx); }, [idx, pages, save, adult]);
   useEffect(() => {
+    if (adult) return;
     const onHide = () => { if (document.visibilityState === "hidden") navigator.sendBeacon?.("/api/manga-progress", new Blob([JSON.stringify({ mangaId, chapterId, chapterNum: cur?.chapter ?? "", page: idx, title: info.title, cover: info.cover })], { type: "application/json" })); };
     document.addEventListener("visibilitychange", onHide);
     return () => document.removeEventListener("visibilitychange", onHide);
-  }, [mangaId, chapterId, cur, idx, info]);
+  }, [mangaId, chapterId, cur, idx, info, adult]);
 
   // Strip mode: which page is centred → idx (for progress + the counter).
   useEffect(() => {
@@ -105,9 +112,9 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
   // Tell presence we're reading this title, so it shows "reading X" in the
   // online list; clear it when the reader closes.
   useEffect(() => {
-    if (info.title) setReading({ mangaId, title: info.title });
+    if (info.title && !adult) setReading({ mangaId, title: info.title });
     return () => setReading(null);
-  }, [mangaId, info.title]);
+  }, [mangaId, info.title, adult]);
 
   // Prefetch the next chapter's first pages once you're near the end, so the
   // flip to the next chapter is instant.
@@ -196,7 +203,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
         ) : mode === "strip" ? (
           <div className="mx-auto flex max-w-[920px] flex-col items-center">
             {pages.map((src, n) => (
-              <Page key={n} n={n} dataN={n} src={src} altSrc={altPages?.[n]} onReqAlt={requestAlt} eager={n < 2} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
+              <Page key={n} n={n} dataN={n} src={src} altSrc={altPages?.[n]} onReqAlt={requestAlt} eager={n < 2} proxy={adult} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
             ))}
             <div className="flex w-full flex-col items-center gap-3 py-10 text-center">
               {next ? (
@@ -211,7 +218,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
           <div className="relative grid h-full place-items-center">
             <div className={cn("flex h-full items-center justify-center", mode === "dual" && "gap-1")}>
               {[idx, ...(mode === "dual" && idx + 1 < pages.length ? [idx + 1] : [])].map((n) => (
-                <Page key={n} n={n} src={pages[n]} altSrc={altPages?.[n]} onReqAlt={requestAlt} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
+                <Page key={n} n={n} src={pages[n]} altSrc={altPages?.[n]} onReqAlt={requestAlt} proxy={adult} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
               ))}
             </div>
             {/* tap zones */}
@@ -233,33 +240,27 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
   );
 }
 
-// One manga page image. Loads direct from the MangaDex CDN with no referrer
-// (like the covers, which work). If it fails, it retries once from a fresh
-// at-home server (requested via onReqAlt) — on its own, so pages that loaded
-// fine are untouched.
-function Page({ n, dataN, src, altSrc, onReqAlt, eager, className }: {
-  n: number; dataN?: number; src: string; altSrc?: string; onReqAlt: () => void; eager?: boolean; className?: string;
+// One manga page image. It can be delivered two ways: direct from the MangaDex
+// CDN (fast, the default), or through our own origin (/api/manga-img fetches it
+// server-side and streams the bytes). Adult titles stay on MangaDex, and those
+// at-home nodes 404 the user's browser even though the exact URL is fetchable
+// server-side — so for them we go through the proxy FIRST (`proxy`). onError
+// falls through to the other delivery path, then a cache-bust, then a fresh
+// at-home server, so a page that loads fine is never disturbed.
+function Page({ n, dataN, src, altSrc, onReqAlt, eager, proxy, className }: {
+  n: number; dataN?: number; src: string; altSrc?: string; onReqAlt: () => void; eager?: boolean; proxy?: boolean; className?: string;
 }) {
-  const [url, setUrl] = useState(src);
+  const viaProxy = (u: string) => (/^https?:\/\//.test(u) ? `/api/manga-img?u=${encodeURIComponent(u)}` : u);
+  const primary = proxy ? viaProxy(src) : src;
+  const secondary = proxy ? src : viaProxy(src);
+  const [url, setUrl] = useState(primary);
   const tries = useRef(0);
-  useEffect(() => { setUrl(src); tries.current = 0; }, [src]);
-  // An image can fail to load direct from the MangaDex CDN. This is the norm for
-  // ADULT titles: they stay on MangaDex (the SFW scraper containers don't carry
-  // them), and those at-home nodes 404 the user's browser even though the exact
-  // URL is fetchable server-side. So the reliable fallback is to pull the SAME
-  // image through our own origin (/api/manga-img fetches it server-side, where it
-  // works, and streams the bytes back). Order: one quick cache-bust retry for a
-  // transient blip, then the same-origin proxy, then a fresh at-home server.
+  useEffect(() => { setUrl(primary); tries.current = 0; }, [primary]);
   const onError = () => {
     tries.current += 1;
-    if (tries.current === 1) {
-      onReqAlt();
-      setTimeout(() => setUrl(`${src}${src.includes("?") ? "&" : "?"}cb=1`), 350);
-    } else if (tries.current === 2 && /^https?:\/\//.test(src)) {
-      setUrl(`/api/manga-img?u=${encodeURIComponent(src)}`);
-    } else if (tries.current === 3 && altSrc && altSrc !== src) {
-      setUrl(altSrc);
-    }
+    if (tries.current === 1) { onReqAlt(); setUrl(secondary); }
+    else if (tries.current === 2) { setUrl(`${primary}${primary.includes("?") ? "&" : "?"}cb=${Date.now()}`); }
+    else if (tries.current === 3 && altSrc && altSrc !== src) { setUrl(proxy ? viaProxy(altSrc) : altSrc); }
   };
   return (
     // eslint-disable-next-line @next/next/no-img-element
