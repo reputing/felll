@@ -16,7 +16,9 @@ export const COMICK_PREFIX = "cmk:";
 
 async function cj(path: string): Promise<any | null> {
   try {
-    const r = await fetch(API + path, { headers: { accept: "application/json" } });
+    // Bound each call so a slow proxy can't hang resolution; on timeout the
+    // resolver just falls through.
+    const r = await fetch(API + path, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (!r.ok) return null;
     return await r.json();
   } catch {

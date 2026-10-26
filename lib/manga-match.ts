@@ -57,7 +57,10 @@ export function searchQueries(names: string[]): string[] {
     out.push(n);
     if (/[×✕╳]/.test(n)) out.push(n.replace(/[×✕╳]/g, " x "));
     const w = words(n);
-    for (const k of [1, 2, 3]) if (w.length > k) out.push(w.slice(0, k).join(" "));
+    // 1- and 2-word prefixes cover the finicky cases (Komi, Nagatoro, Omniscient
+    // Reader); 3-word was rarely the deciding query and just doubled container
+    // load, so it's dropped. Capped so one title can't fan out into many hits.
+    for (const k of [1, 2]) if (w.length > k) out.push(w.slice(0, k).join(" "));
   }
-  return [...new Set(out.map((s) => s.replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, 12);
+  return [...new Set(out.map((s) => s.replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, 8);
 }

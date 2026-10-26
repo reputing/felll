@@ -10,9 +10,12 @@ const API = "/api/weeb";
 const SOURCE = "weebcentral";
 export const WEEB_PREFIX = "wc:";
 
-async function post(path: string, body: any): Promise<any | null> {
+// A client-side timeout so a slow or stuck container can't hang the whole
+// chapter-list resolution: on timeout the call just returns null and the
+// resolver falls through to comick / MangaDex instead of waiting indefinitely.
+async function post(path: string, body: any, timeout = 18_000): Promise<any | null> {
   try {
-    const r = await fetch(API + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(API + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeout) });
     if (!r.ok) return null;
     return await r.json();
   } catch {
@@ -45,7 +48,7 @@ export async function weebEnglishChapters(title: string, alt?: string, extra: st
   }
   if (!url) return [];
 
-  const d = await post("/api/chapters", { url, source: SOURCE });
+  const d = await post("/api/chapters", { url, source: SOURCE }, 25_000);
   const raw: any[] = d?.chapters ?? [];
   if (!raw.length) return [];
   const out: Chapter[] = [];
@@ -73,7 +76,7 @@ export async function weebChapterPages(encodedId: string): Promise<string[]> {
   const imagesUrl = `${WEEB_BASE}${ulid}/images?is_prev=False&current_page=1&reading_style=long_strip`;
   let html = "";
   try {
-    const r = await fetch(`${API}/api/proxy/html?url=${encodeURIComponent(imagesUrl)}`);
+    const r = await fetch(`${API}/api/proxy/html?url=${encodeURIComponent(imagesUrl)}`, { signal: AbortSignal.timeout(20_000) });
     if (r.ok) html = await r.text();
   } catch {
     return [];

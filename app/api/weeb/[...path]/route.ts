@@ -25,20 +25,26 @@ async function forward(req: Request, path: string[]): Promise<Response> {
   const reqBody = req.method === "POST" ? await req.text() : undefined;
   const mkInit = (): RequestInit => ({
     method: req.method,
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(15_000),
     ...(reqBody !== undefined ? { body: reqBody, headers: { "content-type": "application/json", accept: "application/json" } } : {}),
   });
-  // The container scales to zero; a cold Next.js start takes ~40s and the first
-  // hits return a "no Container instance available" provisioning message. Keep
-  // retrying (a fresh signal each time) until it's up — up to ~75s.
+  // The container scales to zero; a cold start returns a "no Container instance
+  // available" provisioning message. We wait that out — but ONLY that. A real
+  // response (ok, OR an error like 500/429 from an overloaded container) is
+  // handed straight back: retrying every error just hammers a struggling
+  // container for minutes and makes the overload worse. Bounded by a deadline so
+  // this can never run away.
+  const deadline = Date.now() + 50_000;
   let body = "";
   let status = 502;
   let ct = "application/json";
-  for (let attempt = 0; attempt < 16; attempt++) {
+  while (Date.now() < deadline) {
     let upstream: Response;
     try {
       upstream = await fetch(url, mkInit());
     } catch {
+      // network error / our own timeout — one short pause, then retry if time left
+      if (Date.now() + 2500 >= deadline) break;
       await new Promise((r) => setTimeout(r, 2000));
       continue;
     }
@@ -46,10 +52,11 @@ async function forward(req: Request, path: string[]): Promise<Response> {
     status = upstream.status;
     ct = upstream.headers.get("content-type") || "application/json";
     const provisioning = /no Container instance available|currently provisioning/i.test(body);
-    if (!provisioning && upstream.ok) {
-      return new Response(body, { status, headers: { "content-type": ct, "cache-control": "public, max-age=300" } });
+    if (!provisioning) {
+      // A real answer (success or error) — return it; don't keep hitting the box.
+      return new Response(body, { status, headers: { "content-type": ct, "cache-control": upstream.ok ? "public, max-age=300" : "no-store" } });
     }
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, 2500)); // still booting → wait for cold start
   }
   return new Response(body || JSON.stringify({ error: "provisioning" }), { status: status === 502 ? 503 : status, headers: { "content-type": ct, "cache-control": "no-store" } });
 }

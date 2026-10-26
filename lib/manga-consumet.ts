@@ -30,7 +30,7 @@ class ProviderOff extends Error {}
 async function cj(path: string): Promise<any | null> {
   let r: Response;
   try {
-    r = await fetch(API + path, { headers: { accept: "application/json" } });
+    r = await fetch(API + path, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
   } catch {
     return null;
   }
