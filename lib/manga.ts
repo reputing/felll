@@ -233,7 +233,10 @@ const chKey = (id: string, lang?: string) => `${id}|${lang || "auto"}`;
 // wiped on every full page load, so persist the resolved list to localStorage
 // too: the detail/reader paint it instantly on a revisit while a fresh fetch
 // revalidates in the background.
-const CH_STORE = (key: string) => `cupcake:chs:${key}`;
+// The version suffix invalidates every cached list when the resolution logic
+// changes — otherwise a title resolved by the old logic (e.g. Blue Lock's single
+// stray MangaDex chapter) would keep painting from cache even after a fix.
+const CH_STORE = (key: string) => `cupcake:chs:v2:${key}`;
 export function cachedChapters(id: string, lang?: string): Chapter[] | null {
   try {
     const raw = localStorage.getItem(CH_STORE(chKey(id, lang)));
