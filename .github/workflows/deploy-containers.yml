@@ -20,7 +20,7 @@ on:
         options:
           - vortexscans
           - comick
-          - omega
+          - doujin
           - consumet
           - mangareader
           - manga-id
@@ -50,7 +50,7 @@ jobs:
           case "${{ inputs.target }}" in
             vortexscans) deploy vortexscans-server ;;
             comick)      deploy comick-server ;;
-            omega)       deploy omega-server ;;
+            doujin)      deploy jandapress-server ;;
             consumet)    deploy consumet-server ;;
             mangareader) deploy mangareader-server ;;
             manga-id)    deploy manga-id-server ;;
@@ -58,7 +58,7 @@ jobs:
             anivexa)     deploy anivexa-server ;;
             moviebox)    deploy moviebox-server ;;
             all-manga-sources)
-              for d in consumet-server vortexscans-server omega-server mangareader-server manga-id-server mango-server; do deploy "$d"; done ;;
+              for d in consumet-server vortexscans-server jandapress-server mangareader-server manga-id-server mango-server; do deploy "$d"; done ;;
             *) echo "unknown target"; exit 1 ;;
           esac
           echo "Done. Copy the printed *.workers.dev URL(s) into wrangler.jsonc vars."
