@@ -22,6 +22,7 @@ export default async function Box() {
     { k: "Hours (approx)", v: stats.hours },
     { k: "Mean score", v: stats.mean ?? "–" },
     { k: "Day streak", v: stats.streak },
+    { k: "Manga read", v: stats.mangaRead },
   ];
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">

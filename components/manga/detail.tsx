@@ -6,6 +6,7 @@ import { Poster } from "@/components/poster";
 import { Button } from "@/components/ui/button";
 import { Comments } from "@/components/comments/comments";
 import { MangaSaveButton } from "@/components/manga/save-button";
+import { AddToCollection } from "@/components/collections/add-button";
 import { cachedChapters, getChapterThumb, getChapters, getManga, langName, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
 
 export function MangaDetail({ id }: { id: string }) {
@@ -76,6 +77,7 @@ export function MangaDetail({ id }: { id: string }) {
                 </Button>
               ) : null}
               <MangaSaveButton manga={m} />
+              <AddToCollection kind="manga" refId={m.id} title={m.title} cover={m.cover} className="h-11 rounded-xl border-night-edge bg-night/40 text-[13.5px] text-night-text backdrop-blur hover:border-frost" />
             </div>
           </div>
         </div>

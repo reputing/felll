@@ -16,6 +16,7 @@ import { TrailerButton } from "@/components/trailer";
 import { LibraryControls } from "@/components/anime/library-controls";
 import { FollowShow } from "@/components/anime/follow-show";
 import { QueueButton } from "@/components/queue/queue-button";
+import { AddToCollection } from "@/components/collections/add-button";
 import { RatingPicker } from "@/components/anime/rating";
 import { Comments } from "@/components/comments/comments";
 import { ShareButton } from "@/components/share";
@@ -124,6 +125,7 @@ export default async function AnimePage({ params, searchParams }: Props) {
               )}
               {a.airing && <FollowShow malId={a.id} initial={following} />}
               <QueueButton item={{ id: a.id, title: a.title, image: a.poster }} />
+              <AddToCollection kind="anime" refId={String(a.id)} title={a.title} cover={a.poster} className="h-11 rounded-xl border-night-edge bg-night/40 text-[13.5px] text-night-text backdrop-blur hover:border-frost" />
               <ShareButton path={`/anime/${a.id}`} title={a.title} />
             </div>
           </div>

@@ -5,6 +5,7 @@ import { requireMember } from "@/lib/auth";
 import { all, db, first } from "@/lib/db";
 import { getCachedAnime } from "@/lib/jikan";
 import { memberStats } from "@/lib/stats";
+import { ProfileCollections } from "@/components/collections/profile-collections";
 import { computeBadges } from "@/lib/badges";
 import { BadgeIcon } from "@/components/badge-icon";
 import { ago, cn } from "@/lib/utils";
@@ -80,6 +81,7 @@ export default async function Profile({ params }: Props) {
     { k: "Mean score", v: stats.mean ?? "–" },
     { k: "Ratings", v: stats.rated },
     { k: "Comments", v: stats.comments },
+    { k: "Manga read", v: stats.mangaRead },
   ];
 
   return (
@@ -104,6 +106,7 @@ export default async function Profile({ params }: Props) {
               <span className="flex items-center gap-1"><CalendarDays className="size-3.5" />joined {new Date(u.created_at * 1000).toLocaleDateString("en", { month: "short", year: "numeric" })}</span>
               <span><b className="text-night-text">{c.followers}</b> followers · <b className="text-night-text">{c.following}</b> following</span>
               {stats.streak > 1 && <span className="flex items-center gap-1 text-sprinkle-peach"><Flame className="size-3.5" />{stats.streak}-day streak</span>}
+              {stats.readStreak > 1 && <span className="flex items-center gap-1 text-frost"><BookOpen className="size-3.5" />{stats.readStreak}-day reading</span>}
             </div>
           </div>
           <div className="flex gap-2 pb-1">
@@ -168,6 +171,8 @@ export default async function Profile({ params }: Props) {
           ))}
         </div>
       </section>
+
+      <ProfileCollections handle={u.handle} self={self} />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px] lg:items-start">
         <div className="flex min-w-0 flex-col gap-6">

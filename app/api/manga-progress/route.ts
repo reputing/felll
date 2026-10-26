@@ -41,3 +41,15 @@ export async function POST(req: Request) {
   }
   return Response.json({ ok: true });
 }
+
+// Clear the member's reading history (resume points). Lists stay.
+export async function DELETE() {
+  const me = await memberOr401();
+  if (me instanceof Response) return me;
+  try {
+    await run("delete from manga_progress where user_id = ?", me.id);
+  } catch {
+    return Response.json({ error: "unavailable" }, { status: 503 });
+  }
+  return Response.json({ ok: true });
+}

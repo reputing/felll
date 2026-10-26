@@ -1,8 +1,18 @@
 import { all, first } from "./db";
 
-/** Numbers for a member's page and box header. Two queries, no Jikan. */
+// Consecutive days present in `rows` (as 'YYYY-MM-DD'), ending today or yesterday.
+function streakFromDays(rows: { day: string }[]): number {
+  const days = new Set(rows.map((r) => r.day));
+  let run = 0;
+  const d = new Date();
+  if (!days.has(d.toISOString().slice(0, 10))) d.setUTCDate(d.getUTCDate() - 1);
+  while (days.has(d.toISOString().slice(0, 10))) { run++; d.setUTCDate(d.getUTCDate() - 1); }
+  return run;
+}
+
+/** Numbers for a member's page and box header. No Jikan. */
 export async function memberStats(userId: string) {
-  const [s, streak] = await Promise.all([
+  const [s, watchDays, mangaRow, mangaDays] = await Promise.all([
     first<{ entries: number; completed: number; watching: number; episodes: number; mean: number | null; favs: number; comments: number; rated: number }>(
       `select count(*) as entries,
               sum(status = 'completed') as completed,
@@ -19,13 +29,14 @@ export async function memberStats(userId: string) {
       `select distinct date(updated_at, 'unixepoch') as day from watch_progress where user_id = ? order by day desc limit 120`,
       userId,
     ),
+    // Manga read = distinct titles opened (18+ titles save no progress, so they
+    // never count here). Read streak = consecutive days with a chapter opened.
+    first<{ n: number }>(`select count(*) as n from manga_progress where user_id = ?`, userId).catch(() => null),
+    all<{ day: string }>(
+      `select distinct date(updated_at, 'unixepoch') as day from manga_progress where user_id = ? order by day desc limit 120`,
+      userId,
+    ).catch(() => []),
   ]);
-  // consecutive days with something watched, ending today or yesterday
-  let run = 0;
-  const days = new Set(streak.map((d) => d.day));
-  const d = new Date();
-  if (!days.has(d.toISOString().slice(0, 10))) d.setUTCDate(d.getUTCDate() - 1);
-  while (days.has(d.toISOString().slice(0, 10))) { run++; d.setUTCDate(d.getUTCDate() - 1); }
   const episodes = Number(s?.episodes ?? 0);
   return {
     entries: Number(s?.entries ?? 0),
@@ -37,6 +48,8 @@ export async function memberStats(userId: string) {
     favs: Number(s?.favs ?? 0),
     comments: Number(s?.comments ?? 0),
     rated: Number(s?.rated ?? 0),
-    streak: run,
+    streak: streakFromDays(watchDays),
+    mangaRead: Number(mangaRow?.n ?? 0),
+    readStreak: streakFromDays(mangaDays),
   };
 }
