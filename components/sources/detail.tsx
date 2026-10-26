@@ -22,7 +22,7 @@ export function SourceDetail({ source, slug }: { source: SourceId; slug: string 
           <Poster src={m.cover} className="mx-auto aspect-[2/3] w-[170px] rounded-[20px] border-1.5 border-night-edge shadow-[0_24px_40px_-18px_rgba(0,0,0,.8)] md:w-[200px]" />
           <div className="flex min-w-0 flex-col justify-end gap-3">
             <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-bold uppercase tracking-[.14em] text-frost">
-              <span>Manhwa</span>
+              <span>{SOURCES[source].kind}</span>
               {m.status && <span className="rounded-full border border-night-edge px-2 py-0.5 text-night-text">{m.status}</span>}
               <span className="rounded-full border border-night-edge px-2 py-0.5 text-night-text">via {SOURCES[source].name}</span>
             </div>

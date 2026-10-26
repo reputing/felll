@@ -76,6 +76,10 @@ interface CloudflareEnv {
   /** Self-hosted VortexScans API (Cloudflare Container) — powers the
    *  /read/vortexscans browse section. Unset = section shows "not enabled". */
   VORTEXSCANS_API_URL?: string;
+  /** Self-hosted jandapress API (Cloudflare Container, jandapress-server/) —
+   *  powers the /read/doujin section (nhentai + other doujin sites). ADULT
+   *  (18+), gated on users.adult_ok. Unset = section shows "not enabled". */
+  DOUJIN_API_URL?: string;
   /** TMDB v3 API key — powers the movies & series catalog and embed players */
   TMDB_API_KEY?: string;
   /** A self-hosted 8Stream API (github.com/himanshu8443/8StreamApi) for movie HLS */

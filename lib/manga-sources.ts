@@ -8,27 +8,30 @@
 // require an 18+ cookie (set by the age gate), which the proxy enforces.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// Omega (omegascans, adult) used to live here as a second adult source. It was
-// an unreliable scraper container, and 18+ manga now lives in the main MangaDex
-// reader (lib/manga.ts), which carries a large adult catalogue read fully in-app
-// from MangaDex's own CDN — no separate container, no redirect. So this is down
-// to the one SFW own-catalogue source; adding a doujin source here (jandapress)
-// is the natural next addition, see MANGA-PROVIDERS.md.
-export type SourceId = "vortexscans";
+// Omega (omegascans, adult manhwa) used to live here. It was an unreliable
+// scraper container, and adult manhwa now lives in the main MangaDex reader
+// (lib/manga.ts) — read fully in-app from MangaDex's own CDN, no extra
+// container, no redirect. `doujin` (jandapress → nhentai + other doujin sites)
+// is the adult own-catalogue source that replaced it; deploy jandapress-server/
+// and point DOUJIN_API_URL at it (see MANGA-PROVIDERS.md).
+export type SourceId = "vortexscans" | "doujin";
 
 export interface SourceMeta {
   id: SourceId;
-  name: string;        // shown in the UI (anonymised, like the anime providers)
+  name: string;         // shown in the UI (anonymised, like the anime providers)
   blurb: string;
+  kind: string;         // content-kind label on the detail hero ("Manhwa", "Doujin")
   adult: boolean;
-  site: string;        // used as the image Referer when proxying
+  site: string;         // used as the image Referer when proxying
+  searchFirst?: boolean; // source has no plain listing — the browse starts from a search
 }
 
 export const SOURCES: Record<SourceId, SourceMeta> = {
-  vortexscans: { id: "vortexscans", name: "VortexScans", blurb: "Action & fantasy manhwa, in English.", adult: false, site: "https://vortexscans.org" },
+  vortexscans: { id: "vortexscans", name: "VortexScans", blurb: "Action & fantasy manhwa, in English.", kind: "Manhwa", adult: false, site: "https://vortexscans.org" },
+  doujin: { id: "doujin", name: "Doujin", blurb: "Doujinshi. 18+ only.", kind: "Doujin", adult: true, site: "https://nhentai.net", searchFirst: true },
 };
 
-export const isSourceId = (s: string): s is SourceId => s === "vortexscans";
+export const isSourceId = (s: string): s is SourceId => s === "vortexscans" || s === "doujin";
 
 export interface SrcCard { slug: string; title: string; cover: string | null }
 export interface SrcChapter { slug: string; number: string; title: string }
@@ -96,20 +99,59 @@ const cardsFrom = (src: SourceId, data: any): SrcCard[] =>
     .map((o) => mapCard(src, o))
     .filter((x): x is SrcCard => !!x);
 
+// ---- doujin (jandapress / nhentai) — a different shape from the manhwa sources:
+// titles are {english,japanese,pretty} objects, each gallery is a single book
+// (no chapter list), and page images are a flat `image` array of full URLs. ----
+
+// A gallery title is a string on `get` (the pretty title) and an object on
+// `search`; accept both.
+const doujinTitle = (t: any, fallback: string): string =>
+  (typeof t === "string" && t.trim() ? t.trim() : str(t?.pretty) || str(t?.english) || str(t?.japanese)) || fallback;
+
+function mapDoujinCard(o: any): SrcCard | null {
+  const slug = str(o?.id);
+  const title = doujinTitle(o?.title, "");
+  if (!slug || !title) return null;
+  const rawCover = o?.cover ?? o?.thumbnail ?? o?.image ?? null;
+  return { slug, title, cover: img(typeof rawCover === "string" ? rawCover : null, SOURCES.doujin.site) };
+}
+
+const doujinCards = (data: any): SrcCard[] =>
+  firstArray(data?.data).map(mapDoujinCard).filter((x): x is SrcCard => !!x);
+
 // ---- public API, keyed by source ----
 
 export async function listSource(src: SourceId, page = 1): Promise<SrcCard[]> {
+  if (src === "doujin") return []; // search-first: nhentai has no plain listing
   return cardsFrom(src, await sj(src, `/api/manga?page=${page}`));
 }
 
 export async function searchSource(src: SourceId, q: string, page = 1): Promise<SrcCard[]> {
   if (!q.trim()) return listSource(src, page);
   const query = encodeURIComponent(q.trim());
+  if (src === "doujin") return doujinCards(await sj(src, `/nhentai/search?key=${query}&page=${page}&sort=popular`));
   return cardsFrom(src, await sj(src, `/api/manga?q=${query}&search=${query}&page=${page}`));
 }
 
 export async function sourceDetail(src: SourceId, slug: string): Promise<SrcDetail | null> {
   const s = encodeURIComponent(slug);
+  if (src === "doujin") {
+    // One gallery = one book, so it maps onto the reader as a single chapter.
+    const d = await sj(src, `/nhentai/get?book=${s}`);
+    const m = d?.data ?? d;
+    if (!m) return null;
+    const images = firstArray(m?.image, m?.images).map(str).filter(Boolean);
+    const tags = firstArray(m?.tags).map(str).filter(Boolean);
+    const pages = typeof m?.num_pages === "number" ? m.num_pages : images.length || parseFloat(str(m?.total)) || 0;
+    return {
+      slug,
+      title: doujinTitle(m?.title, slug),
+      cover: img(images[0] ?? null, SOURCES.doujin.site),
+      description: tags.length ? `tags: ${tags.join(", ")}` : "",
+      status: pages ? `${pages} pages` : "",
+      chapters: [{ slug, number: "", title: "Read" }],
+    };
+  }
   // vortexscans: detail + chapters are separate calls
   const d = await sj(src, `/api/manga?slug=${s}`);
   const m = d?.data ?? d;
@@ -122,6 +164,16 @@ export async function sourceDetail(src: SourceId, slug: string): Promise<SrcDeta
 
 export async function sourcePages(src: SourceId, slug: string, chapterSlug: string): Promise<string[]> {
   const s = encodeURIComponent(slug), c = encodeURIComponent(chapterSlug);
+  if (src === "doujin") {
+    // The gallery is the book; chapterSlug == slug. Pages are a flat `image` array.
+    const d = await sj(src, `/nhentai/get?book=${s}`);
+    const node = d?.data ?? d;
+    return firstArray(node?.image, node?.images)
+      .map(str)
+      .filter(Boolean)
+      .map((u) => img(u, SOURCES.doujin.site))
+      .filter((x): x is string => !!x);
+  }
   const d = await sj(src, `/api/chapter?slug=${s}&chapter=${c}`);
   const node = d?.data ?? d;
   const raw = firstArray(node?.images, node?.pages, node?.data, Array.isArray(node) ? node : null);

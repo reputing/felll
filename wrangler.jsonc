@@ -55,9 +55,12 @@
     "CONSUMET_API_URL": "https://consumet-api.matthewsjakael.workers.dev",
     // weebcentral via the comick-source-api container (licensed manhwa WITH pages).
     "WEEB_API_URL": "https://comick-api.matthewsjakael.workers.dev",
-    // Per-source browse section at /read/vortexscans (its own catalogue). 18+
-    // manga now lives in the main MangaDex reader, gated on users.adult_ok.
+    // Per-source browse sections at /read/<source> (each its own catalogue).
+    // Adult 18+ manga also lives in the main MangaDex reader (gated on adult_ok);
+    // `doujin` (jandapress → nhentai) is the adult own-catalogue source, 18+ gated
+    // in the UI + proxy. Deploy jandapress-server/ and smoke-test before relying.
     "VORTEXSCANS_API_URL": "https://vortexscans-api.matthewsjakael.workers.dev",
+    "DOUJIN_API_URL": "https://doujin-api.matthewsjakael.workers.dev",
     // Embed host for the movie players (overridable since it moves).
     "VIDCORE_EMBED_BASE": "https://vidcore.org"
   }

@@ -39,6 +39,15 @@ This replaced **OmegaAPI** (omegascans), which was an unreliable adult scraper
 container in its own `/read/omega` section. It's been retired: MangaDex's adult
 catalogue is larger, reads in-app, and needs no extra container.
 
+**Doujinshi** is a separate 18+ category MangaDex carries less of, served by its
+own source at `/read/doujin` (jandapress → nhentai + other doujin sites, see
+`jandapress-server/`). It's 18+ gated the same way (`users.adult_ok`, enforced
+in the `/api/manga-src` proxy), reads in-app through `/api/manga-img`, and is
+**search-first** (nhentai has no plain listing). Each gallery is one book, so it
+maps onto the reader as a single-chapter title. ⚠️ Deploy `jandapress-server/`
+and **smoke-test `/nhentai/search` from the Worker** before relying on it —
+nhentai can greylist busy datacenter IPs even via its official API.
+
 ## Live today
 
 - **MangaDex** — primary source, SFW + 18+, English by default (`lib/manga.ts`).
@@ -48,6 +57,8 @@ catalogue is larger, reads in-app, and needs no extra container.
   further English fallbacks.
 - **VortexScans** (`vortexscans-server/`, var `VORTEXSCANS_API_URL`) — SFW manhwa
   with its own catalogue, at `/read/vortexscans`.
+- **Doujin** (`jandapress-server/`, var `DOUJIN_API_URL`) — doujinshi (18+) at
+  `/read/doujin`, gated on `adult_ok`. Wired; needs a deploy + smoke-test.
 
 ## Self-host server containers
 
@@ -61,32 +72,33 @@ image). Point the frontend at one by setting its `*_API_URL` var in the root
 | `comick-server/` | comick-source-api → weebcentral + 60-odd sites | English | `npm run comick:container:deploy` | ✅ first second-source (weeb) |
 | `consumet-server/` | Consumet (many English sites) | English | `npm run consumet:container:deploy` | ✅ English fallback |
 | `vortexscans-server/` | VortexScansAPI → vortexscans.org | English manhwa | `npm run vortexscans:container:deploy` | ✅ own section `/read/vortexscans` |
+| `jandapress-server/` | jandapress → nhentai + other doujin sites | English | `npm run doujin:container:deploy` | ✅ own section `/read/doujin` (18+); needs deploy + smoke-test |
 | `mangareader-server/` | stabldev/mangareader-api | English | `npm run mangareader:container:deploy` | ❌ no page-image endpoint; Consumet covers this site |
 | `manga-id-server/` | febryardiansyah/manga-api | Indonesian | `npm run manga-id:container:deploy` | ⬜ non-English |
 | `mango-server/` | la-lo-go/man-go | Spanish (WIP) | `npm run mango:container:deploy` | ⬜ non-English |
 
 The own-catalogue source machinery (`lib/manga-sources.ts`, the `/read/<source>`
-pages, the `/api/manga-src` proxy with the adult gate) is still in place and is
-where a new own-catalogue source — including a doujin one, see below — gets
-wired.
+pages, the `/api/manga-src` proxy with the adult gate) now carries VortexScans
+(SFW) and Doujin (18+); add another own-catalogue source by extending `SOURCES`
+there.
 
 ## Candidate providers (evaluated 2026-10)
 
 These were reviewed as replacements for omega and as extra sources. Verdicts:
 
-**Worth adding**
+**Added**
 
 - **sinkaroid/jandapress** — Rust/Axum, has a Dockerfile, self-hostable. Scrapes
   nhentai (via nhentai's official `/api/v2`, so no Cloudflare bypass) plus
   pururin / hentaifox / asmhentai / 3hentai / hentai2read / simply-hentai. The
-  best **doujin** API of the list, and the natural way to add doujinshi as an
-  own-catalogue 18+ source (`/read/doujin`). Shape: `GET /nhentai/search?key=&page=&sort=`
-  → `{data:[{id,title:{pretty},cover,total}]}`; `GET /nhentai/get?book=<id>` →
-  `{data:{id,title,image:[<page urls on i.nhentai.net>],num_pages}}`. Each gallery
-  is a single "chapter", so it maps onto the existing source reader as a
-  one-chapter title. **Caveat:** not yet deployed/smoke-tested here, and nhentai
-  can rate-limit/greylist shared datacenter IPs, so it needs a post-deploy check
-  before being surfaced.
+  best **doujin** API of the list. **Now wired** as the `doujin` own-catalogue
+  18+ source (`jandapress-server/`, `/read/doujin`). Shape used:
+  `GET /nhentai/search?key=&page=&sort=popular` → `{data:[{id,title:{pretty},cover,total}]}`;
+  `GET /nhentai/get?book=<id>` → `{data:{id,title,image:[<page urls on i.nhentai.net>],num_pages}}`.
+  Each gallery is a single "chapter", so it maps onto the source reader as a
+  one-chapter title. **Still needs:** a deploy (`npm run doujin:container:deploy`)
+  + a `/nhentai/search` smoke-test from the Worker, since nhentai can greylist
+  shared datacenter IPs even through its official API.
 - **GooglyBlox/comick-source-api** — already what `comick-server/` runs (69
   sources, actively maintained, the most reliable of the scrapers). Headroom:
   wire more of its sources as additional second-source fallbacks.

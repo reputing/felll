@@ -17,8 +17,11 @@ function Card({ source, m }: { source: SourceId; m: SrcCard }) {
 }
 
 export function SourceBrowse({ source }: { source: SourceId }) {
+  // Some sources (nhentai/doujin) have no plain listing — start them empty and
+  // only load once the viewer searches, rather than showing a broken grid.
+  const searchFirst = !!SOURCES[source].searchFirst;
   const [q, setQ] = useState("");
-  const [items, setItems] = useState<SrcCard[] | null>(null);
+  const [items, setItems] = useState<SrcCard[] | null>(searchFirst ? [] : null);
   const [page, setPage] = useState(1);
   const [more, setMore] = useState(false);
   const [end, setEnd] = useState(false);
@@ -37,9 +40,11 @@ export function SourceBrowse({ source }: { source: SourceId }) {
   useEffect(() => {
     clearTimeout(qTimer.current);
     setPage(1);
+    // Search-first sources: an empty query shows the prompt, no request.
+    if (searchFirst && !q.trim()) { setItems([]); setEnd(true); return; }
     qTimer.current = setTimeout(() => load(q, 1, false), q.trim() ? 350 : 0);
     return () => clearTimeout(qTimer.current);
-  }, [q, load]);
+  }, [q, load, searchFirst]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -50,7 +55,7 @@ export function SourceBrowse({ source }: { source: SourceId }) {
       </div>
 
       <section className="flex flex-col gap-3">
-        <div className="eyebrow px-1">{q.trim() ? "Results" : "Latest"}</div>
+        <div className="eyebrow px-1">{q.trim() ? "Results" : searchFirst ? "Search" : "Latest"}</div>
         {items === null ? (
           <div className="grid grid-cols-3 gap-3.5 sm:grid-cols-4 lg:grid-cols-6">
             {Array.from({ length: 12 }).map((_, i) => <div key={i} className="aspect-[2/3] animate-pulse rounded-2xl bg-cream-card" />)}
@@ -58,7 +63,7 @@ export function SourceBrowse({ source }: { source: SourceId }) {
         ) : items.length ? (
           <>
             <div className="grid grid-cols-3 gap-3.5 sm:grid-cols-4 lg:grid-cols-6">{items.map((m) => <Card key={m.slug} source={source} m={m} />)}</div>
-            {!end && !q.trim() && (
+            {!end && (
               <button type="button" disabled={more}
                 onClick={async () => { setMore(true); const np = page + 1; setPage(np); await load(q, np, true); setMore(false); }}
                 className="mx-auto mt-2 flex items-center gap-2 rounded-full border-1.5 border-line bg-cream-card px-6 py-3 text-[14px] font-bold text-frost-text hover:border-frost-hot disabled:opacity-60">
@@ -68,7 +73,11 @@ export function SourceBrowse({ source }: { source: SourceId }) {
           </>
         ) : (
           <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">
-            {q.trim() ? "Nothing matches that." : `No titles yet — ${SOURCES[source].name} may not be deployed/enabled. See MANGA-PROVIDERS.md.`}
+            {q.trim()
+              ? "Nothing matches that."
+              : searchFirst
+                ? `Search ${SOURCES[source].name} to begin.`
+                : `No titles yet — ${SOURCES[source].name} may not be deployed/enabled. See MANGA-PROVIDERS.md.`}
           </p>
         )}
       </section>

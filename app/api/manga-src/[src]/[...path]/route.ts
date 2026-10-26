@@ -8,11 +8,10 @@ import { currentUser } from "@/lib/auth";
 // here server-side — not a cookie the viewer can set themselves.
 const ENV_VAR: Record<string, string> = {
   vortexscans: "VORTEXSCANS_API_URL",
+  doujin: "DOUJIN_API_URL",
 };
-// Adult own-catalogue sources (gated on users.adult_ok). None right now — 18+
-// manga lives in the main MangaDex reader; this set stays wired for when a
-// doujin source (jandapress) is added here.
-const ADULT = new Set<string>([]);
+// Adult own-catalogue sources — gated on users.adult_ok, enforced below.
+const ADULT = new Set(["doujin"]);
 
 async function baseFor(src: string): Promise<string | null> {
   const key = ENV_VAR[src];
