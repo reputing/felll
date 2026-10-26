@@ -22,9 +22,12 @@ function Card({ m }: { m: MangaCard }) {
   );
 }
 
-export function MangaBrowse() {
+export function MangaBrowse({ adultOk }: { adultOk: boolean }) {
   const [q, setQ] = useState("");
-  const [f, setF] = useState<Omit<BrowseParams, "q" | "limit" | "offset">>({});
+  const [f, setF] = useState<Omit<BrowseParams, "q" | "limit" | "offset" | "adult">>({});
+  // 18+ view. Only offered to members an admin has granted adult access; off by
+  // default, and never sent for anyone else (the proxy filters it out too).
+  const [adult, setAdult] = useState(false);
   const [items, setItems] = useState<MangaCard[] | null>(null);
   const [total, setTotal] = useState(0);
   const [more, setMore] = useState(false);
@@ -59,9 +62,9 @@ export function MangaBrowse() {
   // refetch on filter change (q debounced)
   useEffect(() => {
     clearTimeout(qTimer.current);
-    qTimer.current = setTimeout(() => load({ q, ...f }, false), q.trim() ? 350 : 0);
+    qTimer.current = setTimeout(() => load({ q, ...f, adult }, false), q.trim() ? 350 : 0);
     return () => clearTimeout(qTimer.current);
-  }, [q, f, load]);
+  }, [q, f, adult, load]);
 
   const set = (patch: Partial<typeof f>) => setF((p) => ({ ...p, ...patch }));
   const active = Object.values(f).filter(Boolean).length + (q.trim() ? 1 : 0);
@@ -90,6 +93,14 @@ export function MangaBrowse() {
         {pick("status", "Status", [["ongoing", "Ongoing"], ["completed", "Completed"], ["hiatus", "Hiatus"], ["cancelled", "Cancelled"]].map(([value, label]) => ({ value, label })))}
         {pick("demographic", "Demographic", [["shounen", "Shounen"], ["shoujo", "Shoujo"], ["seinen", "Seinen"], ["josei", "Josei"]].map(([value, label]) => ({ value, label })))}
         {pick("year", "Year", YEARS.map((y) => ({ value: String(y), label: String(y) })))}
+        {adultOk && (
+          <button type="button" onClick={() => setAdult((v) => !v)} aria-pressed={adult}
+            title={adult ? "hide 18+ results" : "show 18+ results"}
+            className={cn("flex h-[42px] items-center rounded-full border-1.5 px-4 text-[13px] font-extrabold tracking-[.04em] transition",
+              adult ? "border-frost-hot bg-cream-blush text-frost-deep" : "border-line text-plum-muted hover:border-frost-hot")}>
+            18+
+          </button>
+        )}
         <span className="flex-1" />
         {pick("order", "Sort", [["popular", "Most popular"], ["rating", "Top rated"], ["latest", "Latest"], ["newest", "Newest"], ["title", "A–Z"]].map(([value, label]) => ({ value, label })))}
         {active > 0 && (
@@ -130,7 +141,7 @@ export function MangaBrowse() {
             <div className="grid grid-cols-3 gap-3.5 sm:grid-cols-4 lg:grid-cols-6">{items.map((m) => <Card key={m.id} m={m} />)}</div>
             {items.length < total && (
               <button type="button" disabled={more}
-                onClick={async () => { setMore(true); await load({ q, ...f }, true); setMore(false); }}
+                onClick={async () => { setMore(true); await load({ q, ...f, adult }, true); setMore(false); }}
                 className="mx-auto mt-2 flex items-center gap-2 rounded-full border-1.5 border-line bg-cream-card px-6 py-3 text-[14px] font-bold text-frost-text hover:border-frost-hot disabled:opacity-60">
                 {more ? "Loading…" : `Load more · ${(total - items.length).toLocaleString()} left`}
               </button>

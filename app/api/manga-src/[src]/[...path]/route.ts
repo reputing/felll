@@ -1,16 +1,18 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { currentUser } from "@/lib/auth";
 
-// Same-origin proxy for the extra manga source containers (VortexScans, Omega).
+// Same-origin proxy for the extra own-catalogue manga source containers.
 // Members only. Each source maps to its own *_API_URL var; unset = 503 so the
 // /read/<source> page shows an "isn't enabled" state. Adult sources additionally
 // require the viewer to have admin-granted 18+ access (users.adult_ok), enforced
 // here server-side — not a cookie the viewer can set themselves.
 const ENV_VAR: Record<string, string> = {
   vortexscans: "VORTEXSCANS_API_URL",
-  omega: "OMEGA_API_URL",
 };
-const ADULT = new Set(["omega"]);
+// Adult own-catalogue sources (gated on users.adult_ok). None right now — 18+
+// manga lives in the main MangaDex reader; this set stays wired for when a
+// doujin source (jandapress) is added here.
+const ADULT = new Set<string>([]);
 
 async function baseFor(src: string): Promise<string | null> {
   const key = ENV_VAR[src];

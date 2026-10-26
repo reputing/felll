@@ -2,9 +2,9 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { SOURCES } from "@/lib/manga-sources";
 
-// Links to the extra per-source catalogues (VortexScans, Omega). These live in
-// their own sections because they have their own catalogues, separate from the
-// MangaDex browse above.
+// Links to the extra per-source catalogues (VortexScans). These live in their
+// own sections because they have their own catalogues, separate from the
+// MangaDex browse above (18+ included) which has its own search and filters.
 export function MoreSources() {
   return (
     <section className="flex flex-col gap-3">

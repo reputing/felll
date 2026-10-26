@@ -13,8 +13,16 @@ import { WEEB_PREFIX, weebChapterPages, weebEnglishChapters } from "./manga-weeb
 
 const API = "/api/md";
 const UPLOADS = "https://uploads.mangadex.org";
-// Keep it to non-pornographic ratings.
-const RATING = "contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica";
+// Content ratings for browse / search / popular. The SFW default stays
+// non-pornographic; the 18+ view (members an admin has granted adult access via
+// users.adult_ok) adds `pornographic`, which surfaces MangaDex's large adult
+// catalogue — hentai, doujinshi and adult manhwa — every page of it read in-app
+// from MangaDex's own CDN, so there's no redirect off the site. Chapter feeds
+// (fetchFeed) always allow every rating: once you've opened a title you're meant
+// to be able to read it, whatever its rating.
+const SFW = ["safe", "suggestive", "erotica"];
+const ADULT = ["safe", "suggestive", "erotica", "pornographic"];
+const ratingParam = (adult = false): string => (adult ? ADULT : SFW).map((r) => `contentRating[]=${r}`).join("&");
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Raw = any;
@@ -95,16 +103,16 @@ async function get(path: string): Promise<Raw> {
   return res.json();
 }
 
-/** Popular manga (most followed), for the browse landing. */
-export async function popularManga(limit = 30, offset = 0): Promise<MangaCard[]> {
-  const d = await get(`/manga?limit=${limit}&offset=${offset}&includes[]=cover_art&${RATING}&order[followedCount]=desc&hasAvailableChapters=true`);
+/** Popular manga (most followed), for the browse landing. `adult` adds 18+. */
+export async function popularManga(limit = 30, offset = 0, adult = false): Promise<MangaCard[]> {
+  const d = await get(`/manga?limit=${limit}&offset=${offset}&includes[]=cover_art&${ratingParam(adult)}&order[followedCount]=desc&hasAvailableChapters=true`);
   return (d.data ?? []).map(toCard);
 }
 
-/** Title search. */
-export async function searchManga(q: string, limit = 30): Promise<MangaCard[]> {
-  if (!q.trim()) return popularManga(limit);
-  const d = await get(`/manga?title=${encodeURIComponent(q.trim())}&limit=${limit}&includes[]=cover_art&${RATING}&order[relevance]=desc&hasAvailableChapters=true`);
+/** Title search. `adult` adds 18+ results. */
+export async function searchManga(q: string, limit = 30, adult = false): Promise<MangaCard[]> {
+  if (!q.trim()) return popularManga(limit, 0, adult);
+  const d = await get(`/manga?title=${encodeURIComponent(q.trim())}&limit=${limit}&includes[]=cover_art&${ratingParam(adult)}&order[relevance]=desc&hasAvailableChapters=true`);
   return (d.data ?? []).map(toCard);
 }
 
@@ -115,6 +123,7 @@ export interface BrowseParams {
   demographic?: string;  // shounen | shoujo | seinen | josei
   year?: string;
   order?: string;        // popular | latest | rating | newest | title
+  adult?: boolean;       // include 18+ (pornographic) results — gated on adult_ok
   limit?: number;
   offset?: number;
 }
@@ -129,7 +138,7 @@ const ORDER: Record<string, string> = {
 
 /** Filtered browse → cards plus the total count MangaDex reports. */
 export async function browseManga(p: BrowseParams): Promise<{ items: MangaCard[]; total: number }> {
-  const qs = [`limit=${p.limit ?? 36}`, `offset=${p.offset ?? 0}`, "includes[]=cover_art", RATING, "hasAvailableChapters=true"];
+  const qs = [`limit=${p.limit ?? 36}`, `offset=${p.offset ?? 0}`, "includes[]=cover_art", ratingParam(!!p.adult), "hasAvailableChapters=true"];
   if (p.q?.trim()) qs.push(`title=${encodeURIComponent(p.q.trim())}`);
   if (p.tag) qs.push(`includedTags[]=${p.tag}`);
   if (p.status) qs.push(`status[]=${p.status}`);
@@ -193,7 +202,7 @@ async function fetchManga(id: string): Promise<MangaFull | null> {
 async function fetchFeed(id: string, extraQs: string): Promise<Raw[]> {
   const out: Raw[] = [];
   for (let offset = 0; offset < 2000; offset += 500) {
-    const d = await get(`/manga/${id}/feed?limit=500&offset=${offset}&order[volume]=asc&order[chapter]=asc&includes[]=scanlation_group&${RATING}${extraQs}`);
+    const d = await get(`/manga/${id}/feed?limit=500&offset=${offset}&order[volume]=asc&order[chapter]=asc&includes[]=scanlation_group&${ratingParam(true)}${extraQs}`);
     out.push(...(d.data ?? []));
     if (!d.data?.length || offset + 500 >= (d.total ?? 0)) break;
   }

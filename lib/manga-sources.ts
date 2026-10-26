@@ -8,7 +8,13 @@
 // require an 18+ cookie (set by the age gate), which the proxy enforces.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export type SourceId = "vortexscans" | "omega";
+// Omega (omegascans, adult) used to live here as a second adult source. It was
+// an unreliable scraper container, and 18+ manga now lives in the main MangaDex
+// reader (lib/manga.ts), which carries a large adult catalogue read fully in-app
+// from MangaDex's own CDN — no separate container, no redirect. So this is down
+// to the one SFW own-catalogue source; adding a doujin source here (jandapress)
+// is the natural next addition, see MANGA-PROVIDERS.md.
+export type SourceId = "vortexscans";
 
 export interface SourceMeta {
   id: SourceId;
@@ -20,10 +26,9 @@ export interface SourceMeta {
 
 export const SOURCES: Record<SourceId, SourceMeta> = {
   vortexscans: { id: "vortexscans", name: "VortexScans", blurb: "Action & fantasy manhwa, in English.", adult: false, site: "https://vortexscans.org" },
-  omega: { id: "omega", name: "Omega", blurb: "Adult manhwa. 18+ only.", adult: true, site: "https://omegascans.org" },
 };
 
-export const isSourceId = (s: string): s is SourceId => s === "vortexscans" || s === "omega";
+export const isSourceId = (s: string): s is SourceId => s === "vortexscans";
 
 export interface SrcCard { slug: string; title: string; cover: string | null }
 export interface SrcChapter { slug: string; number: string; title: string }
@@ -57,7 +62,7 @@ function img(u: string | null | undefined, referer: string): string | null {
 
 const str = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
 // First of several fields that is actually non-empty (an empty string must not
-// win a ?? chain — Omega sends index:"" and the number lives in name:"Chapter 5").
+// win a ?? chain — some sources send index:"" with the number in name:"Chapter 5").
 const firstStr = (...vals: unknown[]): string => {
   for (const v of vals) { const s = str(v).trim(); if (s) return s; }
   return "";
@@ -94,27 +99,17 @@ const cardsFrom = (src: SourceId, data: any): SrcCard[] =>
 // ---- public API, keyed by source ----
 
 export async function listSource(src: SourceId, page = 1): Promise<SrcCard[]> {
-  const path = src === "omega" ? `/api/v1/series?perPage=30&page=${page}` : `/api/manga?page=${page}`;
-  return cardsFrom(src, await sj(src, path));
+  return cardsFrom(src, await sj(src, `/api/manga?page=${page}`));
 }
 
 export async function searchSource(src: SourceId, q: string, page = 1): Promise<SrcCard[]> {
   if (!q.trim()) return listSource(src, page);
   const query = encodeURIComponent(q.trim());
-  const path = src === "omega" ? `/api/v1/series?q=${query}&perPage=30&page=${page}` : `/api/manga?q=${query}&search=${query}&page=${page}`;
-  return cardsFrom(src, await sj(src, path));
+  return cardsFrom(src, await sj(src, `/api/manga?q=${query}&search=${query}&page=${page}`));
 }
 
 export async function sourceDetail(src: SourceId, slug: string): Promise<SrcDetail | null> {
   const s = encodeURIComponent(slug);
-  if (src === "omega") {
-    const d = await sj(src, `/api/v1/series/${s}?include=chapters`);
-    const m = d?.data ?? d;
-    if (!m) return null;
-    const chapters = firstArray(m?.chapters, m?.chapterList).map(mapChapter).filter((x): x is SrcChapter => !!x);
-    chapters.sort((a, b) => (parseFloat(a.number) || 0) - (parseFloat(b.number) || 0));
-    return { slug, title: titleOf(m) || slug, cover: img(m?.thumbnail ?? m?.cover, SOURCES[src].site), description: str(m?.description), status: str(m?.status), chapters };
-  }
   // vortexscans: detail + chapters are separate calls
   const d = await sj(src, `/api/manga?slug=${s}`);
   const m = d?.data ?? d;
@@ -127,9 +122,7 @@ export async function sourceDetail(src: SourceId, slug: string): Promise<SrcDeta
 
 export async function sourcePages(src: SourceId, slug: string, chapterSlug: string): Promise<string[]> {
   const s = encodeURIComponent(slug), c = encodeURIComponent(chapterSlug);
-  const d = src === "omega"
-    ? await sj(src, `/api/v1/chapter/${s}/${c}`)
-    : await sj(src, `/api/chapter?slug=${s}&chapter=${c}`);
+  const d = await sj(src, `/api/chapter?slug=${s}&chapter=${c}`);
   const node = d?.data ?? d;
   const raw = firstArray(node?.images, node?.pages, node?.data, Array.isArray(node) ? node : null);
   return raw

@@ -10,7 +10,7 @@ export default async function AdultAccessPage() {
   if (!(await isAdmin(user))) notFound();
   return (
     <div className="mx-auto flex max-w-[900px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
-      <PageHead eyebrow="Cupcake / admin" title="18+ access" sub="Approve members to view adult manhwa (the Omega section)." />
+      <PageHead eyebrow="Cupcake / admin" title="18+ access" sub="Approve members to see 18+ manga in the reader (the 18+ toggle on the manga page)." />
       <AdultAccessAdmin />
     </div>
   );
