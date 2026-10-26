@@ -1,12 +1,12 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BookOpen, Play } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { Button } from "@/components/ui/button";
 import { Comments } from "@/components/comments/comments";
 import { MangaSaveButton } from "@/components/manga/save-button";
-import { cachedChapters, getChapters, getManga, langName, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
+import { cachedChapters, getChapterThumb, getChapters, getManga, langName, mangaStatusLabel, type Chapter, type MangaFull } from "@/lib/manga";
 
 export function MangaDetail({ id }: { id: string }) {
   const [m, setM] = useState<MangaFull | null | "loading">("loading");
@@ -109,7 +109,7 @@ export function MangaDetail({ id }: { id: string }) {
               const read = resume?.chapter_id === c.id;
               const inner = (
                 <>
-                  <span className="grid size-9 flex-none place-items-center rounded-lg bg-cream-tint font-mono text-[12.5px] text-frost-text">{c.chapter || "–"}</span>
+                  <ChapterThumb c={c} />
                   <span className="min-w-0">
                     <span className="block truncate text-[13.5px] font-extrabold">{c.title || `Chapter ${c.chapter || "?"}`}</span>
                     <span className="block truncate text-[11.5px] font-semibold text-plum-muted">{c.external ? "Official release ↗" : c.pages ? `${c.pages} pages${c.group ? ` · ${c.group}` : ""}` : c.group || "Read"}</span>
@@ -131,6 +131,39 @@ export function MangaDetail({ id }: { id: string }) {
 
       <Comments api="/api/manga/comments" scope={{ mangaId: m.id }} title={m.title} image={m.cover} heading={`${m.title} talk`} />
     </div>
+  );
+}
+
+// The little square at the start of a chapter row. Lazily loads the chapter's
+// first page as a thumbnail once the row scrolls near view (so a 280-chapter
+// list doesn't fetch everything at once), with the chapter number laid over it.
+// Falls back to just the number — or "–" when a chapter has none — while the
+// thumb loads, if it fails, or for external "official release" chapters.
+function ChapterThumb({ c }: { c: Chapter }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (c.external) return; // external chapters have no readable pages to thumbnail
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver((ents) => {
+      if (ents.some((e) => e.isIntersecting)) {
+        io.disconnect();
+        getChapterThumb(c.id).then((u) => { if (u) setSrc(u); }).catch(() => {});
+      }
+    }, { rootMargin: "300px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [c.id, c.external]);
+  return (
+    <span ref={ref} className="relative grid size-9 flex-none place-items-center overflow-hidden rounded-lg bg-cream-tint font-mono text-[12.5px] text-frost-text">
+      {src && <img src={src} alt="" referrerPolicy="no-referrer" loading="lazy" className="absolute inset-0 size-full object-cover" />}
+      {c.chapter ? (
+        <span className={src ? "relative rounded bg-black/55 px-1 text-[10px] font-bold text-white" : "relative"}>{c.chapter}</span>
+      ) : (
+        !src && <span className="relative">–</span>
+      )}
+    </span>
   );
 }
 

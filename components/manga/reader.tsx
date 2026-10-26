@@ -241,9 +241,24 @@ function Page({ n, dataN, src, altSrc, onReqAlt, eager, className }: {
   n: number; dataN?: number; src: string; altSrc?: string; onReqAlt: () => void; eager?: boolean; className?: string;
 }) {
   const [url, setUrl] = useState(src);
-  const failed = useRef(false);
-  useEffect(() => { setUrl(src); failed.current = false; }, [src]);
-  useEffect(() => { if (failed.current && altSrc && url !== altSrc) setUrl(altSrc); }, [altSrc, url]);
+  const tries = useRef(0);
+  useEffect(() => { setUrl(src); tries.current = 0; }, [src]);
+  // An image can fail transiently (a CDN rate-limit on one page). The old retry
+  // swapped in altSrc, but for the container sources altSrc === src, so it never
+  // actually re-requested. Retry the SAME image a few times with a cache-busting
+  // param (forces a real re-fetch past the browser's failed-load cache), ask for
+  // a fresh at-home server once (helps MangaDex), then fall back to altSrc.
+  const onError = () => {
+    tries.current += 1;
+    if (tries.current === 1) onReqAlt();
+    if (tries.current <= 3) {
+      const bust = `${src.includes("?") ? "&" : "?"}cb=${tries.current}`;
+      const t = tries.current;
+      setTimeout(() => setUrl(src + bust), 500 * t);
+    } else if (altSrc && altSrc !== src) {
+      setUrl(altSrc);
+    }
+  };
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
@@ -252,7 +267,7 @@ function Page({ n, dataN, src, altSrc, onReqAlt, eager, className }: {
       alt={`Page ${n + 1}`}
       loading={eager ? "eager" : "lazy"}
       referrerPolicy="no-referrer"
-      onError={() => { if (!failed.current) { failed.current = true; onReqAlt(); if (altSrc) setUrl(altSrc); } }}
+      onError={onError}
       className={className}
     />
   );

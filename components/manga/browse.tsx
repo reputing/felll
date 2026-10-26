@@ -44,7 +44,13 @@ export function MangaBrowse() {
       if (id !== reqId.current) return; // a newer query won
       offset.current = (append ? offset.current : 0) + got.length;
       setTotal(t);
-      setItems((prev) => (append && prev ? [...prev, ...got] : got));
+      // MangaDex's popularity ordering can repeat a title across pages; dedupe on
+      // append so we don't render duplicate cards (React key collisions).
+      setItems((prev) => {
+        if (!append || !prev) return got;
+        const seen = new Set(prev.map((x) => x.id));
+        return [...prev, ...got.filter((x) => !seen.has(x.id))];
+      });
     } catch {
       if (id === reqId.current) setItems((prev) => (append ? prev : []));
     }

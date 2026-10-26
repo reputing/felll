@@ -18,7 +18,11 @@ export async function GET(req: Request) {
   }
   if (target.protocol !== "https:" && target.protocol !== "http:") return new Response("bad url", { status: 400 });
 
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    // A browser-ish UA; some manga CDNs 403 the default Workers fetch agent.
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    accept: "image/avif,image/webp,image/png,image/*,*/*;q=0.8",
+  };
   const r = sp.get("r");
   if (r) {
     try {
@@ -28,15 +32,28 @@ export async function GET(req: Request) {
     }
   }
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(target.toString(), { headers, signal: AbortSignal.timeout(20_000) });
-  } catch {
-    return new Response("image unreachable", { status: 502 });
+  // These CDNs rate-limit a busy datacenter IP, so a page or two in a chapter can
+  // come back 429/5xx while the rest load. Retry those a couple of times before
+  // giving up — and, crucially, only cache a SUCCESS. Caching a transient error
+  // (the old code cached every status for a day) left random pages dead for 24h.
+  let upstream: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      upstream = await fetch(target.toString(), { headers, signal: AbortSignal.timeout(20_000) });
+    } catch {
+      upstream = null;
+    }
+    if (upstream && upstream.ok) break;
+    // 404/403 won't change on retry; only retry rate-limits, 5xx and network drops.
+    if (upstream && upstream.status !== 429 && upstream.status < 500) break;
+    if (attempt < 2) await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
   }
+  if (!upstream) return new Response("image unreachable", { status: 502, headers: { "cache-control": "no-store" } });
+
   const ct = upstream.headers.get("content-type") || "image/jpeg";
-  return new Response(upstream.body, {
+  const cache = upstream.ok ? "public, max-age=86400, immutable" : "no-store";
+  return new Response(upstream.ok ? upstream.body : null, {
     status: upstream.status,
-    headers: { "content-type": ct, "cache-control": "public, max-age=86400" },
+    headers: { "content-type": ct, "cache-control": cache },
   });
 }

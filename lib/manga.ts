@@ -272,21 +272,19 @@ export function getChapters(id: string, lang?: string): Promise<Chapter[]> {
   return p;
 }
 async function fetchChapters(id: string, lang?: string): Promise<Chapter[]> {
-  // A specific language was chosen (reader/detail language picker).
-  let enFeed: Raw[] | null = null;
-  if (lang) {
-    const feed = await fetchFeed(id, `&translatedLanguage[]=${encodeURIComponent(lang)}`);
-    const chosen = buildChapters(feed);
+  // A specific NON-English language was chosen → use it directly when hosted.
+  // English always runs the full resolution below: a partial English upload on
+  // MangaDex must NOT pre-empt the fuller second-source run. (Blue Lock has one
+  // stray readable English chapter here but ~280 on weebcentral — returning the
+  // single MangaDex chapter was the "only 1 chapter" bug.)
+  if (lang && lang !== "en") {
+    const chosen = buildChapters(await fetchFeed(id, `&translatedLanguage[]=${encodeURIComponent(lang)}`));
     if (chosen.length) return chosen;
-    // Nothing readable in that language → fall through to the default
-    // resolution. When the chosen language is English, reuse this feed rather
-    // than re-fetching the identical English feed below (the slow, common path
-    // for licensed manhwa that has no readable English on MangaDex).
-    if (lang === "en") enFeed = feed;
+    // nothing hosted in that language → fall through to the English resolution
   }
-  // English by default, as strongly as possible. A COMPLETE English run on
-  // MangaDex (one that includes the early chapters) wins outright.
-  if (!enFeed) enFeed = await fetchFeed(id, "&translatedLanguage[]=en");
+  // English, as strongly as possible. A COMPLETE English run on MangaDex (one
+  // that includes the early chapters) wins outright.
+  const enFeed = await fetchFeed(id, "&translatedLanguage[]=en");
   const enHosted = buildChapters(enFeed);
   if (enHosted.length && startsEarly(enHosted)) return enHosted;
 
@@ -375,21 +373,36 @@ async function withRetry(fn: () => Promise<string[]>, tries = 4): Promise<string
 }
 
 /** The page image URLs for a chapter (full quality, with a data-saver fallback). */
-export async function getChapterPages(rawChapterId: string, saver = false): Promise<string[]> {
+export async function getChapterPages(rawChapterId: string, saver = false, tries = 4): Promise<string[]> {
   // The id can arrive percent-encoded from the URL (Next's <Link> turns the "wc:"
   // / "cm:" source prefix's colon into "%3A"), which would skip the prefix checks
   // below and wrongly route a second-source chapter to MangaDex (→ 404 → empty).
   // Decode first so "wc%3A…" is recognised as "wc:…".
   const chapterId = safeDecode(rawChapterId);
-  // Chapters from a second source carry a tag → read their pages from it.
-  if (chapterId.startsWith(WEEB_PREFIX)) return withRetry(() => weebChapterPages(chapterId));
-  if (chapterId.startsWith(COMICK_PREFIX)) return withRetry(() => comickChapterPages(chapterId));
-  if (chapterId.startsWith(CONSUMET_PREFIX)) return withRetry(() => consumetChapterPages(chapterId));
+  // Chapters from a second source carry a tag → read their pages from it. `tries`
+  // lets a thumbnail fetch ask for a single attempt (no retry storm on scroll).
+  if (chapterId.startsWith(WEEB_PREFIX)) return withRetry(() => weebChapterPages(chapterId), tries);
+  if (chapterId.startsWith(COMICK_PREFIX)) return withRetry(() => comickChapterPages(chapterId), tries);
+  if (chapterId.startsWith(CONSUMET_PREFIX)) return withRetry(() => consumetChapterPages(chapterId), tries);
   const d = await get(`/at-home/server/${chapterId}`);
   const base = d.baseUrl, hash = d.chapter?.hash;
   const files: string[] = (saver ? d.chapter?.dataSaver : d.chapter?.data) ?? [];
   const kind = saver ? "data-saver" : "data";
   return files.map((f) => `${base}/${kind}/${hash}/${f}`);
+}
+
+// The first page image of a chapter, for a chapter-list thumbnail. Memoised per
+// session (and deduped) so a given chapter is resolved at most once, however
+// many times a row scrolls in and out of view.
+const thumbCache = new Map<string, Promise<string | null>>();
+export function getChapterThumb(chapterId: string): Promise<string | null> {
+  const id = safeDecode(chapterId);
+  let p = thumbCache.get(id);
+  if (!p) {
+    p = getChapterPages(id, false, 1).then((pages) => pages[0] ?? null).catch(() => null);
+    thumbCache.set(id, p);
+  }
+  return p;
 }
 
 export const mangaStatusLabel = (s: string) => ({ ongoing: "Ongoing", completed: "Completed", hiatus: "Hiatus", cancelled: "Cancelled" }[s] ?? s);
