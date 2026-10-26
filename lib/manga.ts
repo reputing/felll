@@ -233,15 +233,21 @@ const chKey = (id: string, lang?: string) => `${id}|${lang || "auto"}`;
 // wiped on every full page load, so persist the resolved list to localStorage
 // too: the detail/reader paint it instantly on a revisit while a fresh fetch
 // revalidates in the background.
-// The version suffix invalidates every cached list when the resolution logic
-// changes — otherwise a title resolved by the old logic (e.g. Blue Lock's single
-// stray MangaDex chapter) would keep painting from cache even after a fix.
-const CH_STORE = (key: string) => `cupcake:chs:v2:${key}`;
+// The version suffix invalidates every cached list when the resolution logic (or
+// source health) changes — otherwise a title resolved under the old conditions
+// (Blue Lock's single stray MangaDex chapter; or an inferior fallback cached
+// while the main source was briefly down) keeps painting from cache even after a
+// fix. Bumped to v3 to drop lists cached during the container outage.
+const CH_STORE = (key: string) => `cupcake:chs:v3:${key}`;
+// Don't instant-paint a very old cached list; revalidation still runs, but an
+// ancient snapshot shouldn't flash before it.
+const CH_TTL = 12 * 60 * 60 * 1000;
 export function cachedChapters(id: string, lang?: string): Chapter[] | null {
   try {
     const raw = localStorage.getItem(CH_STORE(chKey(id, lang)));
     if (!raw) return null;
     const v = JSON.parse(raw);
+    if (typeof v?.at === "number" && Date.now() - v.at > CH_TTL) return null;
     return Array.isArray(v?.chs) && v.chs.length ? (v.chs as Chapter[]) : null;
   } catch {
     return null;
