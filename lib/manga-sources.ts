@@ -16,6 +16,7 @@
 // and point DOUJIN_API_URL at it (see MANGA-PROVIDERS.md).
 export type SourceId = "vortexscans" | "doujin";
 
+export interface SourceSort { label: string; param: string }
 export interface SourceMeta {
   id: SourceId;
   name: string;         // shown in the UI (anonymised, like the anime providers)
@@ -23,12 +24,25 @@ export interface SourceMeta {
   kind: string;         // content-kind label on the detail hero ("Manhwa", "Doujin")
   adult: boolean;
   site: string;         // used as the image Referer when proxying
-  searchFirst?: boolean; // source has no plain listing — the browse starts from a search
+  feedKey?: string;     // default browse query when nothing is searched (doujin has no plain listing)
+  sorts?: SourceSort[]; // sort tabs — e.g. doujin: popular / trending / new
+  tags?: string[];      // quick tag chips the viewer can tap to search
 }
 
 export const SOURCES: Record<SourceId, SourceMeta> = {
   vortexscans: { id: "vortexscans", name: "VortexScans", blurb: "Action & fantasy manhwa, in English.", kind: "Manhwa", adult: false, site: "https://vortexscans.org" },
-  doujin: { id: "doujin", name: "Doujin", blurb: "Doujinshi. 18+ only.", kind: "Doujin", adult: true, site: "https://nhentai.net", searchFirst: true },
+  doujin: {
+    id: "doujin", name: "Doujin", blurb: "Doujinshi. 18+ only.", kind: "Doujin", adult: true, site: "https://nhentai.net",
+    // nhentai has no plain listing, so the landing is a broad feed (English) that
+    // the sort tabs reorder; tapping a tag chip searches that tag.
+    feedKey: "english",
+    sorts: [
+      { label: "Popular", param: "popular" },
+      { label: "Trending", param: "popular-week" },
+      { label: "New", param: "date" },
+    ],
+    tags: ["vanilla", "romance", "milf", "sole female", "schoolgirl uniform", "glasses", "netorare", "ahegao", "big breasts", "full color", "blowjob", "nakadashi"],
+  },
 };
 
 export const isSourceId = (s: string): s is SourceId => s === "vortexscans" || s === "doujin";
@@ -108,12 +122,24 @@ const cardsFrom = (src: SourceId, data: any): SrcCard[] =>
 const doujinTitle = (t: any, fallback: string): string =>
   (typeof t === "string" && t.trim() ? t.trim() : str(t?.pretty) || str(t?.english) || str(t?.japanese)) || fallback;
 
+// nhentai covers come back as RELATIVE thumb paths ("galleries/<mid>/thumb.jpg")
+// and hotlink straight from the thumb CDN with no referer (Poster sends
+// referrerPolicy=no-referrer), so load them direct rather than routing every
+// cover through our image Worker — that round trip was why the grid was slow.
+// Absolute urls (the full page images from `get`) are returned unchanged.
+const NHENTAI_CDN = "https://t.nhentai.net/";
+function doujinCover(u: unknown): string | null {
+  const s = str(u).trim();
+  if (!s) return null;
+  if (/^https?:\/\//.test(s)) return s;
+  return NHENTAI_CDN + s.replace(/^\/+/, "");
+}
+
 function mapDoujinCard(o: any): SrcCard | null {
   const slug = str(o?.id);
   const title = doujinTitle(o?.title, "");
   if (!slug || !title) return null;
-  const rawCover = o?.cover ?? o?.thumbnail ?? o?.image ?? null;
-  return { slug, title, cover: img(typeof rawCover === "string" ? rawCover : null, SOURCES.doujin.site) };
+  return { slug, title, cover: doujinCover(o?.cover ?? o?.thumbnail ?? o?.image) };
 }
 
 const doujinCards = (data: any): SrcCard[] =>
@@ -121,15 +147,20 @@ const doujinCards = (data: any): SrcCard[] =>
 
 // ---- public API, keyed by source ----
 
-export async function listSource(src: SourceId, page = 1): Promise<SrcCard[]> {
-  if (src === "doujin") return []; // search-first: nhentai has no plain listing
+export async function listSource(src: SourceId, page = 1, sort?: string): Promise<SrcCard[]> {
+  // Sources with no plain listing (doujin) browse a default feed instead.
+  const feed = SOURCES[src].feedKey;
+  if (feed) return searchSource(src, feed, page, sort);
   return cardsFrom(src, await sj(src, `/api/manga?page=${page}`));
 }
 
-export async function searchSource(src: SourceId, q: string, page = 1): Promise<SrcCard[]> {
-  if (!q.trim()) return listSource(src, page);
+export async function searchSource(src: SourceId, q: string, page = 1, sort?: string): Promise<SrcCard[]> {
+  if (!q.trim()) return listSource(src, page, sort);
   const query = encodeURIComponent(q.trim());
-  if (src === "doujin") return doujinCards(await sj(src, `/nhentai/search?key=${query}&page=${page}&sort=popular`));
+  if (src === "doujin") {
+    const s = sort ? `&sort=${encodeURIComponent(sort)}` : "&sort=popular";
+    return doujinCards(await sj(src, `/nhentai/search?key=${query}&page=${page}${s}`));
+  }
   return cardsFrom(src, await sj(src, `/api/manga?q=${query}&search=${query}&page=${page}`));
 }
 
@@ -146,7 +177,7 @@ export async function sourceDetail(src: SourceId, slug: string): Promise<SrcDeta
     return {
       slug,
       title: doujinTitle(m?.title, slug),
-      cover: img(images[0] ?? null, SOURCES.doujin.site),
+      cover: doujinCover(images[0]),
       description: tags.length ? `tags: ${tags.join(", ")}` : "",
       status: pages ? `${pages} pages` : "",
       chapters: [{ slug, number: "", title: "Read" }],

@@ -1,5 +1,5 @@
 "use client";
-import { Check, Crown, ImageIcon, Loader2, Lock, Sparkles, X } from "lucide-react";
+import { Check, Crown, EyeOff, ImageIcon, Loader2, Lock, Sparkles, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Avatar } from "@/components/avatar";
@@ -12,7 +12,7 @@ const ACCENTS = ["#ff4f9a", "#e8679a", "#f28cb3", "#ef8a5c", "#e0a93a", "#4fbf9c
 
 interface Init {
   handle: string; display_name: string; avatar_url: string | null; banner_url: string | null; bio: string; pronouns: string;
-  accent: string; theme: string; status_text: string; showcase: number[]; private_lists: boolean; is_plus: boolean;
+  accent: string; theme: string; status_text: string; showcase: number[]; private_lists: boolean; hide_reading: boolean; is_plus: boolean;
 }
 interface Pick { mal_id: number; title: string; image: string | null }
 
@@ -28,7 +28,7 @@ export function ProfileEditor({ init, library }: { init: Init; library: Pick[] }
     const res = await fetch("/api/profile", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ display_name: f.display_name, bio: f.bio, pronouns: f.pronouns, accent: f.accent, status_text: f.status_text, banner_url: f.banner_url || null, showcase: f.showcase, private_lists: f.private_lists, theme: f.theme }),
+      body: JSON.stringify({ display_name: f.display_name, bio: f.bio, pronouns: f.pronouns, accent: f.accent, status_text: f.status_text, banner_url: f.banner_url || null, showcase: f.showcase, private_lists: f.private_lists, hide_reading: f.hide_reading, theme: f.theme }),
     }).catch(() => null);
     setBusy(false);
     if (!res?.ok) return toast("Couldn’t save, check the banner link");
@@ -106,6 +106,12 @@ export function ProfileEditor({ init, library }: { init: Init; library: Pick[] }
         <label className="flex cursor-pointer items-center justify-between gap-4 rounded-2xl border-1.5 border-line bg-paper px-4 py-3">
           <span><span className="flex items-center gap-1.5 text-[14px] font-extrabold"><Lock className="size-4" />Private lists</span><span className="text-[12.5px] font-semibold text-plum-muted">Others see your page, but not your box.</span></span>
           <input type="checkbox" checked={f.private_lists} onChange={(e) => put("private_lists", e.target.checked)} className="peer sr-only" />
+          <span className="relative h-6 w-11 flex-none rounded-full bg-line transition peer-checked:bg-frost-hot after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-paper after:shadow after:transition-all peer-checked:after:left-[22px]" />
+        </label>
+
+        <label className="flex cursor-pointer items-center justify-between gap-4 rounded-2xl border-1.5 border-line bg-paper px-4 py-3">
+          <span><span className="flex items-center gap-1.5 text-[14px] font-extrabold"><EyeOff className="size-4" />Hide my reading</span><span className="text-[12.5px] font-semibold text-plum-muted">Keep what you're reading off the online list. (18+ reading is always hidden.)</span></span>
+          <input type="checkbox" checked={f.hide_reading} onChange={(e) => put("hide_reading", e.target.checked)} className="peer sr-only" />
           <span className="relative h-6 w-11 flex-none rounded-full bg-line transition peer-checked:bg-frost-hot after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-paper after:shadow after:transition-all peer-checked:after:left-[22px]" />
         </label>
 

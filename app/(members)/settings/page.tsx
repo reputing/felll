@@ -21,7 +21,7 @@ export default async function Settings() {
         library={library}
         init={{
           handle: me.handle, display_name: me.display_name, avatar_url: me.avatar_url, banner_url: me.banner_url, bio: me.bio, pronouns: me.pronouns,
-          accent: me.accent, theme: me.theme, status_text: me.status_text, showcase, private_lists: !!me.private_lists, is_plus: !!me.is_plus,
+          accent: me.accent, theme: me.theme, status_text: me.status_text, showcase, private_lists: !!me.private_lists, hide_reading: !!me.hide_reading, is_plus: !!me.is_plus,
         }}
       />
       <PlaybackSettings />

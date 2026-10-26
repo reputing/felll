@@ -8,8 +8,12 @@ export async function POST(req: Request) {
   const b = (await req.json().catch(() => ({}))) as { path?: string; malId?: number; episode?: number; title?: string; mangaId?: string };
   const malId = Number.isInteger(b.malId) ? b.malId! : null;
   const ep = Number.isInteger(b.episode) ? b.episode! : null;
-  const mangaId = typeof b.mangaId === "string" && b.mangaId ? b.mangaId.slice(0, 80) : null;
-  const title = malId || mangaId ? String(b.title || "").slice(0, 200) : null;
+  let mangaId = typeof b.mangaId === "string" && b.mangaId ? b.mangaId.slice(0, 80) : null;
+  let title = malId || mangaId ? String(b.title || "").slice(0, 200) : null;
+  // "Hide my reading": drop the manga title/id before it's stored, so it never
+  // reaches the online list others see. Anime watching is unaffected. (Adult
+  // /read/* reading is already never sent to presence.)
+  if (me.hide_reading && mangaId && !malId) { mangaId = null; title = null; }
   const d = await db();
   const [, , people] = await d.batch([
     d

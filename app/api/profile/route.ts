@@ -31,6 +31,7 @@ export async function POST(req: Request) {
   if ("avatar_url" in b && b.avatar_url) { const u = httpsUrl(b.avatar_url); if (u) put("avatar_url", u); }
   if (isSkin(b.theme)) put("theme", b.theme);
   if (typeof b.private_lists === "boolean") put("private_lists", b.private_lists ? 1 : 0);
+  if (typeof b.hide_reading === "boolean") put("hide_reading", b.hide_reading ? 1 : 0);
   if (Array.isArray(b.showcase)) {
     const ids = [...new Set(b.showcase.map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 4);
     put("showcase", JSON.stringify(ids));

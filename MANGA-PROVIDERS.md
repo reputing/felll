@@ -42,11 +42,17 @@ catalogue is larger, reads in-app, and needs no extra container.
 **Doujinshi** is a separate 18+ category MangaDex carries less of, served by its
 own source at `/read/doujin` (jandapress → nhentai + other doujin sites, see
 `jandapress-server/`). It's 18+ gated the same way (`users.adult_ok`, enforced
-in the `/api/manga-src` proxy), reads in-app through `/api/manga-img`, and is
-**search-first** (nhentai has no plain listing). Each gallery is one book, so it
-maps onto the reader as a single-chapter title. ⚠️ Deploy `jandapress-server/`
-and **smoke-test `/nhentai/search` from the Worker** before relying on it —
-nhentai can greylist busy datacenter IPs even via its official API.
+in the `/api/manga-src` proxy). nhentai has no plain listing, so the landing is a
+broad default feed (`feedKey: "english"`) reordered by the **sort tabs** (Popular
+/ Trending / New) with tappable **tag chips**, plus free-text search. Each gallery
+is one book, so it maps onto the reader as a single-chapter title. Covers come
+back as relative thumb paths and **hotlink straight from the nhentai thumb CDN**
+(`t.nhentai.net`), not through `/api/manga-img` — that proxy round trip was why
+the grid was slow; chapter page images still proxy. Reading a doujin is **never
+broadcast to presence** (it's adult, and the source reader doesn't call
+`setReading`); members can also hide all reading via the settings toggle. ⚠️
+`/nhentai/search` can be greylisted on busy datacenter IPs even via nhentai's
+official API — smoke-test after deploying.
 
 ## Live today
 
