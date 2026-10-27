@@ -53,13 +53,20 @@ export function GlobalChat({ me }: { me: string }) {
     let reconnect: ReturnType<typeof setTimeout> | undefined;
     let tries = 0;
 
+    let opened = false; // has the socket ever successfully opened?
+
     const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
     const startPoll = () => {
       if (pollRef.current) return;
+      let tick = 0;
       pollRef.current = setInterval(() => {
-        if (document.visibilityState === "visible") {
-          fetch(`/api/chat?after=${lastId.current}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.messages) apply(d.messages); }).catch(() => {});
-        }
+        tick += 1;
+        if (document.visibilityState !== "visible") return;
+        // Open panel → poll every 5s for liveness. Closed → every ~20s, just to
+        // keep the unread badge current. (A working realtime socket supersedes
+        // this entirely via stopPoll.)
+        if (!openRef.current && tick % 4 !== 0) return;
+        fetch(`/api/chat?after=${lastId.current}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.messages) apply(d.messages); }).catch(() => {});
       }, 5000);
     };
 
@@ -71,7 +78,7 @@ export function GlobalChat({ me }: { me: string }) {
         ws = new WebSocket(`${proto}//${location.host}/api/chat/ws`);
       } catch { startPoll(); return; }
       wsRef.current = ws;
-      ws.onopen = () => { tries = 0; setConnected(true); stopPoll(); };
+      ws.onopen = () => { opened = true; tries = 0; setConnected(true); stopPoll(); };
       ws.onmessage = (e) => { try { const d = JSON.parse(e.data as string); if (d.message) apply([d.message]); } catch { /* noise */ } };
       ws.onerror = () => { try { ws.close(); } catch { /* */ } };
       ws.onclose = () => {
@@ -80,6 +87,10 @@ export function GlobalChat({ me }: { me: string }) {
         if (stopped) return;
         startPoll();
         tries = Math.min(tries + 1, 6);
+        // If the socket has never once opened (no realtime backend in this
+        // environment, e.g. the Cloudflare proxy / missing DO), stop hammering
+        // it after a few tries and just rely on the poll — no reconnect storm.
+        if (!opened && tries >= 4) return;
         reconnect = setTimeout(connect, 1000 * tries);
       };
     };

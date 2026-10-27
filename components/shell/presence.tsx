@@ -45,10 +45,18 @@ export function PresenceBeacon() {
     const reader = /^\/manga\/[^/]+\/[^/]+/.test(path);
     let stop = false;
     let t: ReturnType<typeof setTimeout>;
+    let last = 0; // when we last actually POSTed
+    const INTERVAL = 30_000;
     const send = async () => {
       clearTimeout(t);
       if (stop) return;
+      // Mount, a path change, setReading and setWatching all poke this in quick
+      // succession. Coalesce that burst: if we posted a few seconds ago, just
+      // make sure the next heartbeat is scheduled instead of firing again.
+      const since = Date.now() - last;
+      if (last !== 0 && since < 4000) { t = setTimeout(send, INTERVAL - since); return; }
       if (document.visibilityState === "visible") {
+        last = Date.now();
         // What they're doing: watching on /watch, reading on the manga reader.
         const doing = watching && path.startsWith("/watch") ? watching : reader && reading ? reading : {};
         const res = await fetch("/api/presence", {
@@ -62,7 +70,7 @@ export function PresenceBeacon() {
           subs.forEach((f) => f());
         }
       }
-      t = setTimeout(send, 30_000);
+      t = setTimeout(send, INTERVAL);
     };
     beat = send;
     send();

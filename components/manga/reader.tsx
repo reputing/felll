@@ -73,21 +73,38 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
     getChapterPages(chapterId).then((p) => { if (p.length) setAltPages(p); }).catch(() => {});
   }, [chapterId]);
 
-  // Save progress (debounced) whenever the page changes.
+  // Latest chapter/title metadata, read by the (stable) progress savers below so
+  // they don't need `cur`/`info` as deps. Those change reference as the chapter
+  // list and title resolve after mount, which was re-firing the save effect and
+  // churning the /api/manga-progress POST on load.
+  const meta = useRef({ chapterNum: "", title: "", cover: null as string | null });
+  meta.current = { chapterNum: cur?.chapter ?? "", title: info.title, cover: info.cover };
+  const lastSaved = useRef<number | null>(null);
+  useEffect(() => { lastSaved.current = null; }, [chapterId]); // new chapter → allow a fresh save
+
+  // Save progress (debounced) whenever the page changes. Skip a repeat save for
+  // the same page so effect re-runs don't emit duplicate requests.
   const save = useCallback((page: number) => {
+    if (lastSaved.current === page) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      fetch("/api/manga-progress", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mangaId, chapterId, chapterNum: cur?.chapter ?? "", page, title: info.title, cover: info.cover }) }).catch(() => {});
+      lastSaved.current = page;
+      const m = meta.current;
+      fetch("/api/manga-progress", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mangaId, chapterId, chapterNum: m.chapterNum, page, title: m.title, cover: m.cover }) }).catch(() => {});
     }, 1200);
-  }, [mangaId, chapterId, cur, info]);
+  }, [mangaId, chapterId]);
   // Adult titles save no progress — it would surface on the public profile.
   useEffect(() => { if (pages?.length && !adult) save(idx); }, [idx, pages, save, adult]);
   useEffect(() => {
     if (adult) return;
-    const onHide = () => { if (document.visibilityState === "hidden") navigator.sendBeacon?.("/api/manga-progress", new Blob([JSON.stringify({ mangaId, chapterId, chapterNum: cur?.chapter ?? "", page: idx, title: info.title, cover: info.cover })], { type: "application/json" })); };
+    const onHide = () => {
+      if (document.visibilityState !== "hidden") return;
+      const m = meta.current;
+      navigator.sendBeacon?.("/api/manga-progress", new Blob([JSON.stringify({ mangaId, chapterId, chapterNum: m.chapterNum, page: idx, title: m.title, cover: m.cover })], { type: "application/json" }));
+    };
     document.addEventListener("visibilitychange", onHide);
     return () => document.removeEventListener("visibilitychange", onHide);
-  }, [mangaId, chapterId, cur, idx, info, adult]);
+  }, [mangaId, chapterId, idx, adult]);
 
   // Strip mode: which page is centred → idx (for progress + the counter).
   useEffect(() => {
@@ -203,7 +220,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
         ) : mode === "strip" ? (
           <div className="mx-auto flex max-w-[920px] flex-col items-center">
             {pages.map((src, n) => (
-              <Page key={n} n={n} dataN={n} src={src} altSrc={altPages?.[n]} onReqAlt={requestAlt} eager={n < 2} proxy={adult} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
+              <Page key={n} n={n} dataN={n} src={src} altSrc={altPages?.[n]} onReqAlt={requestAlt} eager={n < 2} proxy={adult} mdCh={adult ? chapterId : undefined} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
             ))}
             <div className="flex w-full flex-col items-center gap-3 py-10 text-center">
               {next ? (
@@ -218,7 +235,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
           <div className="relative grid h-full place-items-center">
             <div className={cn("flex h-full items-center justify-center", mode === "dual" && "gap-1")}>
               {[idx, ...(mode === "dual" && idx + 1 < pages.length ? [idx + 1] : [])].map((n) => (
-                <Page key={n} n={n} src={pages[n]} altSrc={altPages?.[n]} onReqAlt={requestAlt} proxy={adult} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
+                <Page key={n} n={n} src={pages[n]} altSrc={altPages?.[n]} onReqAlt={requestAlt} proxy={adult} mdCh={adult ? chapterId : undefined} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
               ))}
             </div>
             {/* tap zones */}
@@ -247,12 +264,16 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
 // server-side — so for them we go through the proxy FIRST (`proxy`). onError
 // falls through to the other delivery path, then a cache-bust, then a fresh
 // at-home server, so a page that loads fine is never disturbed.
-function Page({ n, dataN, src, altSrc, onReqAlt, eager, proxy, className }: {
-  n: number; dataN?: number; src: string; altSrc?: string; onReqAlt: () => void; eager?: boolean; proxy?: boolean; className?: string;
+function Page({ n, dataN, src, altSrc, onReqAlt, eager, proxy, mdCh, className }: {
+  n: number; dataN?: number; src: string; altSrc?: string; onReqAlt: () => void; eager?: boolean; proxy?: boolean; mdCh?: string; className?: string;
 }) {
   const viaProxy = (u: string) => (/^https?:\/\//.test(u) ? `/api/manga-img?u=${encodeURIComponent(u)}` : u);
-  const primary = proxy ? viaProxy(src) : src;
-  const secondary = proxy ? src : viaProxy(src);
+  // Adult MangaDex pages go through /api/md-page, which resolves a FRESH at-home
+  // server per request, so they never 404 from the ~15-min at-home token expiry
+  // on a long chapter. The direct CDN url stays as the fallback.
+  const mdSrc = mdCh ? `/api/md-page?ch=${encodeURIComponent(mdCh)}&p=${n}` : null;
+  const primary = mdSrc ?? (proxy ? viaProxy(src) : src);
+  const secondary = mdSrc ? src : proxy ? src : viaProxy(src);
   const [url, setUrl] = useState(primary);
   const tries = useRef(0);
   useEffect(() => { setUrl(primary); tries.current = 0; }, [primary]);
