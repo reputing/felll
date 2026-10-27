@@ -86,6 +86,12 @@ interface CloudflareEnv {
   STREAM8_API_URL?: string;
   /** Override the VidCore embed host (it moves) */
   VIDCORE_EMBED_BASE?: string;
+  /** The code that unlocks the private AI corner (/shh). Default "SEMINOLE". */
+  SHH_CODE?: string;
+  /** OpenAI-compatible base for /shh (e.g. https://api.llm7.io/v1). Unset =
+   *  pollinations.ai (keyless). With a key, set AI_API_KEY too. */
+  AI_API_URL?: string;
+  AI_API_KEY?: string;
   /** The global chat room Durable Object (live WebSocket fan-out) */
   CHAT: DurableObjectNamespace;
 }

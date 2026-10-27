@@ -29,6 +29,8 @@ export default async function MembersLayout({ children }: { children: React.Reac
       <SiteHeader
         user={{ handle: user.handle, display_name: user.display_name, avatar_url: user.avatar_url, is_plus: user.is_plus, is_admin: (await isAdmin(user)) ? 1 : 0, accent: user.accent }}
         unread={Number((unread.results[0] as { n: number })?.n ?? 0)}
+        shhLabel={user.shh_label}
+        hideSlogan={user.hide_slogan === 1}
       />
       <div className="flex-1">{children}</div>
       <SiteFooter />

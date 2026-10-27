@@ -28,8 +28,12 @@ const MORE = [
 ];
 const ALL = [...PRIMARY, ...MORE];
 
-export function SiteHeader({ user, unread }: { user: MenuUser; unread: number }) {
+export function SiteHeader({ user, unread, shhLabel, hideSlogan }: { user: MenuUser; unread: number; shhLabel?: string | null; hideSlogan?: boolean }) {
   const path = usePathname();
+  // The private AI corner gets its own tab, labelled however the member chose.
+  const shh = { href: "/shh", label: (shhLabel && shhLabel.trim()) || "shh" };
+  const primary = [...PRIMARY, shh];
+  const all = [...ALL, shh];
   const savedN = useBox((s) => Object.values(s.lib).filter((e) => e.status).length);
   const [scrolled, setScrolled] = useState(false);
 
@@ -59,12 +63,14 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
         <Link href="/home" aria-label="cupcake.gg home" className="flex flex-none items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/cupcake.png" alt="" width={40} height={40} className="size-9 flex-none drop-shadow-[0_3px_8px_rgb(var(--glow)/.4)] transition-transform duration-300 hover:-rotate-6 hover:scale-105 sm:size-10" />
-          <span className="hidden text-[23px] font-extrabold leading-none tracking-[-.6px] text-frost-brand sm:inline sm:text-[25px]">
-            cupcake<span className="font-bold text-plum-faint">.gg</span>
-          </span>
+          {!hideSlogan && (
+            <span className="hidden text-[23px] font-extrabold leading-none tracking-[-.6px] text-frost-brand sm:inline sm:text-[25px]">
+              cupcake<span className="font-bold text-plum-faint">.gg</span>
+            </span>
+          )}
         </Link>
         <nav aria-label="main" className="ml-1 hidden items-center gap-0 lg:flex">
-          {PRIMARY.map((n) => {
+          {primary.map((n) => {
             const on = path === n.href || path.startsWith(n.href + "/");
             return (
               <Link key={n.href} href={n.href} aria-current={on ? "page" : undefined}
@@ -111,7 +117,7 @@ export function SiteHeader({ user, unread }: { user: MenuUser; unread: number })
         <UserMenu user={user} />
       </div>
       <nav aria-label="main" className="scrollbar-none mx-auto mt-2 flex max-w-[1560px] gap-1 overflow-x-auto lg:hidden">
-        {ALL.map((n) => {
+        {all.map((n) => {
           const on = path === n.href || path.startsWith(n.href + "/");
           return (
             <Link key={n.href} href={n.href} className={cn("flex h-9 flex-none items-center rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold", on && "border-frost-hot bg-frost text-frost-ink")}>{n.label}</Link>

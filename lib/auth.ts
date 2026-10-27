@@ -27,6 +27,8 @@ export interface User {
   adult_ok: number; // admin-granted access to 18+ sources
   private_lists: number;
   hide_reading: number; // when 1, don't broadcast what they're reading to presence
+  shh_label: string | null; // custom label for the /shh tab
+  hide_slogan: number; // when 1, hide the cupcake.gg wordmark in the header
   created_at: number;
   last_seen: number;
 }

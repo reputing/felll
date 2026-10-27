@@ -32,6 +32,8 @@ export async function POST(req: Request) {
   if (isSkin(b.theme)) put("theme", b.theme);
   if (typeof b.private_lists === "boolean") put("private_lists", b.private_lists ? 1 : 0);
   if (typeof b.hide_reading === "boolean") put("hide_reading", b.hide_reading ? 1 : 0);
+  if (typeof b.hide_slogan === "boolean") put("hide_slogan", b.hide_slogan ? 1 : 0);
+  if ("shh_label" in b) put("shh_label", typeof b.shh_label === "string" && b.shh_label.trim() ? b.shh_label.trim().slice(0, 24) : null);
   if (Array.isArray(b.showcase)) {
     const ids = [...new Set(b.showcase.map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 4);
     put("showcase", JSON.stringify(ids));
