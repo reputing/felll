@@ -88,10 +88,11 @@ interface CloudflareEnv {
   VIDCORE_EMBED_BASE?: string;
   /** The code that unlocks the private AI corner (/shh). Default "SEMINOLE". */
   SHH_CODE?: string;
-  /** OpenAI-compatible base for /shh (e.g. https://api.llm7.io/v1). Unset =
-   *  pollinations.ai (keyless). With a key, set AI_API_KEY too. */
+  /** OpenAI-compatible backend for /shh. Unset = Z.ai (GLM) with glm-5.3-flash,
+   *  which reads images. Override base / key / model here. */
   AI_API_URL?: string;
   AI_API_KEY?: string;
+  AI_MODEL?: string;
   /** The global chat room Durable Object (live WebSocket fan-out) */
   CHAT: DurableObjectNamespace;
 }

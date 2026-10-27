@@ -55,7 +55,7 @@ export function ShhChat() {
     fetch(`/api/shh?code=${encodeURIComponent(code)}`).then((r) => r.json()).then((d) => {
       const list: Model[] = d.models ?? [];
       setModels(list);
-      setModel((m) => m || list.find((x) => x.vision)?.id || list[0]?.id || "openai");
+      setModel((m) => m || d.default || list.find((x) => x.vision)?.id || list[0]?.id || "glm-5.3-flash");
     }).catch(() => {});
   }, [code]);
 
