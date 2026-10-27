@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ImagePlus, Loader2, Lock, Send, Sparkles, Trash2, X } from "lucide-react";
+import { Check, Copy, ImagePlus, Loader2, Lock, RotateCw, Send, Sparkles, Square, Trash2, X } from "lucide-react";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -9,10 +9,10 @@ interface Msg { role: "user" | "assistant"; content: string; images?: string[] }
 
 const CODE_KEY = "shh:code";
 const CONVO_KEY = "shh:convo";
-const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure.";
+const MODEL_KEY = "shh:model";
+const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps.";
 
-// Build the OpenAI-style messages payload (string content, or an array with
-// image_url parts when the user attached pictures).
+// OpenAI-style payload (string content, or an array with image_url parts).
 function toApi(msgs: Msg[]) {
   const out: { role: string; content: unknown }[] = [{ role: "system", content: SYSTEM }];
   for (const m of msgs) {
@@ -23,6 +23,47 @@ function toApi(msgs: Msg[]) {
     }
   }
   return out;
+}
+
+const readImage = (f: File, add: (url: string) => void) => {
+  if (!f.type.startsWith("image/")) return;
+  if (f.size > 8 * 1024 * 1024) { toast("that image is a bit big (8MB max)"); return; }
+  const reader = new FileReader();
+  reader.onload = () => { if (typeof reader.result === "string") add(reader.result); };
+  reader.readAsDataURL(f);
+};
+
+// ---- tiny, safe markdown (no HTML injection): code fences, inline code, bold ----
+function renderInline(s: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const re = /`([^`]+)`|\*\*([^*]+?)\*\*/g;
+  let last = 0, k = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(s))) {
+    if (m.index > last) nodes.push(s.slice(last, m.index));
+    if (m[1] != null) nodes.push(<code key={k++} className="rounded bg-black/10 px-1 py-0.5 font-mono text-[12.5px]">{m[1]}</code>);
+    else nodes.push(<strong key={k++}>{m[2]}</strong>);
+    last = re.lastIndex;
+  }
+  if (last < s.length) nodes.push(s.slice(last));
+  return nodes;
+}
+
+function CodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="relative my-2">
+      <button type="button" onClick={() => navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {})}
+        className="absolute right-2 top-2 grid size-7 place-items-center rounded-lg bg-white/10 text-white/80 hover:bg-white/20" aria-label="Copy code">
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+      <pre className="overflow-x-auto rounded-xl bg-[#17101e] p-3 pr-10 text-[12.5px] leading-relaxed text-white"><code className="font-mono">{code}</code></pre>
+    </div>
+  );
+}
+
+function Markdown({ text }: { text: string }) {
+  const parts = text.split(/```/);
+  return <>{parts.map((p, i) => (i % 2 === 1 ? <CodeBlock key={i} code={p.replace(/^[\w+.-]*\n/, "")} /> : <span key={i} className="whitespace-pre-wrap">{renderInline(p)}</span>))}</>;
 }
 
 export function ShhChat() {
@@ -36,20 +77,20 @@ export function ShhChat() {
   const [input, setInput] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Restore an existing unlock + conversation.
   useEffect(() => {
     try {
-      const c = localStorage.getItem(CODE_KEY);
-      if (c) { setCode(c); }
-      const saved = localStorage.getItem(CONVO_KEY);
-      if (saved) setMsgs(JSON.parse(saved));
+      const c = localStorage.getItem(CODE_KEY); if (c) setCode(c);
+      const saved = localStorage.getItem(CONVO_KEY); if (saved) setMsgs(JSON.parse(saved));
+      const mdl = localStorage.getItem(MODEL_KEY); if (mdl) setModel(mdl);
     } catch { /* storage off */ }
   }, []);
 
-  // Load the model list once unlocked.
   useEffect(() => {
     if (!code) return;
     fetch(`/api/shh?code=${encodeURIComponent(code)}`).then((r) => r.json()).then((d) => {
@@ -59,8 +100,13 @@ export function ShhChat() {
     }).catch(() => {});
   }, [code]);
 
-  useEffect(() => { try { localStorage.setItem(CONVO_KEY, JSON.stringify(msgs.slice(-40))); } catch { /* */ } }, [msgs]);
+  // Persist conversation (text only — base64 images would blow the storage
+  // quota) and the chosen model. History itself is uncapped.
+  useEffect(() => { try { localStorage.setItem(CONVO_KEY, JSON.stringify(msgs.map(({ role, content }) => ({ role, content })))); } catch { /* */ } }, [msgs]);
+  useEffect(() => { if (model) try { localStorage.setItem(MODEL_KEY, model); } catch { /* */ } }, [model]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
+  // auto-grow the composer
+  useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = "0px"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; } }, [input]);
 
   const unlock = async () => {
     const c = codeInput.trim();
@@ -75,36 +121,49 @@ export function ShhChat() {
     setUnlocking(false);
   };
 
-  const attach = (files: FileList | null) => {
-    if (!files) return;
-    for (const f of Array.from(files).slice(0, 4)) {
-      if (!f.type.startsWith("image/")) continue;
-      if (f.size > 5 * 1024 * 1024) { toast("that image is a bit big (5MB max)"); continue; }
-      const reader = new FileReader();
-      reader.onload = () => { if (typeof reader.result === "string") setImages((im) => [...im, reader.result as string].slice(0, 4)); };
-      reader.readAsDataURL(f);
+  const addImage = (url: string) => setImages((im) => [...im, url]);
+
+  // Send a given history to the model and append the reply. Used by send + regenerate.
+  const ask = async (history: Msg[]) => {
+    if (!code) return;
+    setBusy(true);
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+    try {
+      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model, messages: toApi(history) }), signal: ctl.signal });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.content) setMsgs((m) => [...m, { role: "assistant", content: `⚠ ${d.error || "no answer"}` }]);
+      else setMsgs((m) => [...m, { role: "assistant", content: d.content }]);
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") setMsgs((m) => [...m, { role: "assistant", content: "⚠ couldn’t reach the ai" }]);
     }
+    abortRef.current = null;
+    setBusy(false);
   };
 
-  const send = async () => {
+  const send = () => {
     const text = input.trim();
     if ((!text && !images.length) || busy || !code) return;
-    const mine: Msg = { role: "user", content: text, images: images.length ? images : undefined };
-    const next = [...msgs, mine];
+    const next = [...msgs, { role: "user" as const, content: text, images: images.length ? images : undefined }];
     setMsgs(next);
     setInput("");
     setImages([]);
-    setBusy(true);
-    try {
-      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model, messages: toApi(next) }) });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.content) { setMsgs((m) => [...m, { role: "assistant", content: `⚠ ${d.error || "no answer"}` }]); }
-      else setMsgs((m) => [...m, { role: "assistant", content: d.content }]);
-    } catch {
-      setMsgs((m) => [...m, { role: "assistant", content: "⚠ couldn’t reach the ai" }]);
-    }
-    setBusy(false);
+    ask(next);
   };
+
+  const regenerate = () => {
+    if (busy) return;
+    // drop a trailing assistant message, re-ask from the conversation up to the last user turn
+    let end = msgs.length;
+    while (end > 0 && msgs[end - 1].role === "assistant") end--;
+    if (end === 0) return;
+    const history = msgs.slice(0, end);
+    setMsgs(history);
+    ask(history);
+  };
+
+  const stop = () => { abortRef.current?.abort(); };
+  const copyText = (t: string) => navigator.clipboard?.writeText(t).then(() => toast("copied")).catch(() => {});
 
   // ---- locked ----
   if (!code) {
@@ -119,9 +178,14 @@ export function ShhChat() {
     );
   }
 
+  const selVision = models.find((m) => m.id === model)?.vision;
+
   // ---- chat ----
   return (
-    <div className="flex h-[calc(100svh-150px)] flex-col gap-3">
+    <div className="flex h-[calc(100svh-150px)] flex-col gap-3"
+      onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
+      onDrop={(e) => { e.preventDefault(); setDragging(false); for (const f of Array.from(e.dataTransfer.files)) readImage(f, addImage); }}>
       <div className="flex flex-wrap items-center gap-2">
         <select value={model} onChange={(e) => setModel(e.target.value)} className="h-10 max-w-[260px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold outline-none focus:border-frost-hot">
           {models.length === 0 && <option value={model}>{model || "default"}</option>}
@@ -133,23 +197,32 @@ export function ShhChat() {
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto rounded-shell border-1.5 border-line bg-cream-card p-3 sm:p-4">
+      <div className={cn("relative flex flex-1 flex-col gap-3 overflow-y-auto rounded-shell border-1.5 bg-cream-card p-3 transition sm:p-4", dragging ? "border-frost-hot ring-2 ring-frost-hot/30" : "border-line")}>
+        {dragging && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-shell bg-cream-card/80 text-[15px] font-extrabold text-frost-text">drop an image ♡</div>}
         {msgs.length === 0 && (
           <div className="m-auto flex flex-col items-center gap-2 text-center text-plum-muted">
             <Sparkles className="size-7 text-frost-hot" />
-            <p className="text-[14px] font-bold">ask anything. attach an image with a vision model (👁).</p>
+            <p className="text-[14px] font-bold">ask anything. paste, drop or attach an image for a 👁 model.</p>
           </div>
         )}
         {msgs.map((m, i) => (
           <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-            <div className={cn("max-w-[85%] whitespace-pre-wrap break-words rounded-3xl px-4 py-2.5 text-[14.5px] leading-relaxed", m.role === "user" ? "bg-frost text-frost-ink" : "bg-paper text-plum-body")}>
-              {m.images?.length ? (
-                <div className="mb-2 flex flex-wrap gap-1.5">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {m.images.map((src, n) => <img key={n} src={src} alt="" className="h-24 w-auto rounded-xl" />)}
+            <div className="group flex max-w-[85%] flex-col gap-1">
+              <div className={cn("rounded-3xl px-4 py-2.5 text-[14.5px] leading-relaxed", m.role === "user" ? "whitespace-pre-wrap break-words bg-frost text-frost-ink" : "break-words bg-paper text-plum-body")}>
+                {m.images?.length ? (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {m.images.map((src, n) => <img key={n} src={src} alt="" className="h-24 w-auto rounded-xl" />)}
+                  </div>
+                ) : null}
+                {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
+              </div>
+              {m.role === "assistant" && m.content && (
+                <div className="flex gap-1 px-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
+                  <button type="button" onClick={() => copyText(m.content)} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><Copy className="size-3" />copy</button>
+                  {i === msgs.length - 1 && !busy && <button type="button" onClick={regenerate} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><RotateCw className="size-3" />regenerate</button>}
                 </div>
-              ) : null}
-              {m.content}
+              )}
             </div>
           </div>
         ))}
@@ -169,16 +242,22 @@ export function ShhChat() {
         </div>
       )}
 
-      {images.length > 0 && !models.find((m) => m.id === model)?.vision && (
-        <p className="-mt-1 px-1 text-[12px] font-semibold text-plum-muted">this model can’t read images — pick a 👁 model (needs a vision-capable API key).</p>
+      {images.length > 0 && !selVision && (
+        <p className="-mt-1 px-1 text-[12px] font-semibold text-plum-muted">this model can’t read images — pick a 👁 model.</p>
       )}
 
       <div className="flex items-end gap-2">
-        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { attach(e.target.files); e.target.value = ""; }} />
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { for (const f of Array.from(e.target.files ?? [])) readImage(f, addImage); e.target.value = ""; }} />
         <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" className="grid size-12 flex-none place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
-        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="message…"
-          className="max-h-32 min-h-[48px] flex-1 resize-none rounded-3xl border-1.5 border-line bg-cream-card px-5 py-3 text-[15px] font-medium outline-none focus:border-frost-hot" />
-        <button type="button" onClick={send} disabled={busy || (!input.trim() && !images.length)} className="grid size-12 flex-none place-items-center rounded-full bg-frost text-frost-ink disabled:opacity-50">{busy ? <Loader2 className="size-5 animate-spin" /> : <Send className="size-5" />}</button>
+        <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
+          onPaste={(e) => { const imgs = Array.from(e.clipboardData.items).filter((it) => it.type.startsWith("image/")); if (imgs.length) { e.preventDefault(); for (const it of imgs) { const f = it.getAsFile(); if (f) readImage(f, addImage); } } }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="message…  (paste or drop an image)"
+          className="max-h-[200px] min-h-[48px] flex-1 resize-none rounded-3xl border-1.5 border-line bg-cream-card px-5 py-3 text-[15px] font-medium outline-none focus:border-frost-hot" />
+        {busy ? (
+          <button type="button" onClick={stop} aria-label="Stop" className="grid size-12 flex-none place-items-center rounded-full border-1.5 border-line bg-cream-card text-frost-text hover:border-frost-hot"><Square className="size-4" fill="currentColor" /></button>
+        ) : (
+          <button type="button" onClick={send} disabled={!input.trim() && !images.length} className="grid size-12 flex-none place-items-center rounded-full bg-frost text-frost-ink disabled:opacity-50"><Send className="size-5" /></button>
+        )}
       </div>
     </div>
   );

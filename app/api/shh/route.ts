@@ -88,7 +88,8 @@ export async function POST(req: Request) {
   if (b.op === "unlock") return Response.json({ ok: true });
 
   if (b.op === "chat") {
-    const messages = Array.isArray(b.messages) ? b.messages.slice(-30) : [];
+    // Uncapped history — the owner wants the full conversation sent each time.
+    const messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
     const cfg = endpoints(e);
     let r: Response;
