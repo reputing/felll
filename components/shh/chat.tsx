@@ -1,6 +1,8 @@
 "use client";
+import * as D from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Sparkles, Square, Terminal, Trash2, X } from "lucide-react";
+import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Settings2, Sparkles, Square, Terminal, Trash2, Upload, X } from "lucide-react";
+import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +83,93 @@ function CodeBlock({ code }: { code: string }) {
 function Markdown({ text }: { text: string }) {
   const parts = text.split(/```/);
   return <>{parts.map((p, i) => (i % 2 === 1 ? <CodeBlock key={i} code={p.replace(/^[\w+.-]*\n/, "")} /> : <span key={i} className="whitespace-pre-wrap">{renderInline(p)}</span>))}</>;
+}
+
+// Persistent setup: custom instructions / memory + reference files the assistant
+// always has in context (stored server-side, keyed to the member).
+function Setup({ code }: { code: string }) {
+  const [open, setOpen] = useState(false);
+  const [instr, setInstr] = useState("");
+  const [sdocs, setSdocs] = useState<{ id: string; name: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const load = () => { fetch(`/api/shh?code=${encodeURIComponent(code)}`).then((r) => r.json()).then((d) => { setInstr(d.instructions || ""); setSdocs(d.docs || []); }).catch(() => {}); };
+
+  const saveInstr = async () => {
+    setSaving(true);
+    try { await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "save_instructions", code, instructions: instr }) }); toast("saved ♡"); } catch { toast("couldn’t save"); }
+    setSaving(false);
+  };
+
+  const addFiles = async (files: FileList | null) => {
+    if (!files) return;
+    setUploading(true);
+    for (const f of Array.from(files)) {
+      if (!(TEXT_RE.test(f.name) || f.type.startsWith("text/") || /json|xml|csv|javascript/.test(f.type))) { toast(`can't read ${f.name} — text files only`); continue; }
+      if (f.size > 1024 * 1024) { toast(`${f.name} is too big (1MB max)`); continue; }
+      const content = await f.text().catch(() => "");
+      if (!content.trim()) continue;
+      try {
+        const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "add_file", code, name: f.name, content: content.slice(0, 300_000) }) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.id) setSdocs((x) => [...x, { id: j.id, name: j.name }]);
+        else toast(j.error || "couldn’t add that");
+      } catch { toast("upload failed"); }
+    }
+    setUploading(false);
+  };
+
+  const removeFile = async (id: string) => {
+    setSdocs((x) => x.filter((d) => d.id !== id));
+    try { await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "remove_file", code, id }) }); } catch { /* */ }
+  };
+
+  return (
+    <D.Root open={open} onOpenChange={(o) => { setOpen(o); if (o) load(); }}>
+      <D.Trigger asChild>
+        <button type="button" aria-label="Setup" title="memory & reference files" className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold text-plum-muted hover:border-frost-hot"><Settings2 className="size-3.5" />Setup</button>
+      </D.Trigger>
+      <D.Portal>
+        <D.Overlay className={OVERLAY} />
+        <D.Content className={cn(POPUP, "fixed left-1/2 top-1/2 flex max-h-[85vh] w-[min(94vw,520px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-y-auto rounded-shell p-5")}>
+          <D.Title className="text-[17px] font-extrabold">Memory & files</D.Title>
+          <D.Description className="sr-only">Persistent instructions and reference files the assistant always uses</D.Description>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[13px] font-extrabold">Instructions / memory</span>
+            <span className="text-[12px] font-semibold text-plum-muted">Always applied — who it is, how it should answer, facts to remember.</span>
+            <textarea value={instr} onChange={(e) => setInstr(e.target.value)} rows={5} maxLength={20000} placeholder="act as a patient tutor and always show your working…"
+              className="resize-y rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3 text-[14px] outline-none focus:border-frost-hot" />
+            <button type="button" onClick={saveInstr} disabled={saving} className="self-end rounded-full bg-frost px-4 py-2 text-[13px] font-extrabold text-frost-ink disabled:opacity-50">{saving ? "saving…" : "Save"}</button>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-extrabold">Reference files</span>
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="flex items-center gap-1.5 rounded-full border-1.5 border-line px-3 py-1.5 text-[12.5px] font-bold hover:border-frost-hot disabled:opacity-50">{uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}Add files</button>
+              <input ref={fileRef} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+            </div>
+            <span className="text-[12px] font-semibold text-plum-muted">Text/doc files it always has in context (max 30, 1MB each).</span>
+            {sdocs.length === 0 ? (
+              <p className="rounded-2xl border-1.5 border-dashed border-line bg-cream-card p-4 text-center text-[12.5px] font-semibold text-plum-muted">no files yet</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {sdocs.map((d) => (
+                  <li key={d.id} className="flex items-center gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-3 py-2">
+                    <FileText className="size-4 flex-none text-frost-text" />
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-bold">{d.name}</span>
+                    <button type="button" onClick={() => removeFile(d.id)} aria-label="remove" className="text-plum-muted hover:text-frost-text"><X className="size-4" /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </D.Content>
+      </D.Portal>
+    </D.Root>
+  );
 }
 
 export function ShhChat() {
@@ -215,6 +304,7 @@ export function ShhChat() {
           {models.map((m) => <option key={m.id} value={m.id}>{m.id}{m.vision ? " 👁" : ""}</option>)}
         </select>
         <span className="flex-1" />
+        <Setup code={code} />
         {msgs.length > 0 && (
           <button type="button" onClick={() => { setMsgs([]); try { localStorage.removeItem(CONVO_KEY); } catch { /* */ } }} className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold text-plum-muted hover:border-frost-hot"><Trash2 className="size-3.5" />Clear</button>
         )}

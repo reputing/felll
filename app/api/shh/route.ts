@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { memberOr401 } from "@/lib/auth";
+import { all, first, run } from "@/lib/db";
 
 // The private AI corner (/shh). Members only, and gated by a code (SHH_CODE,
 // default "SEMINOLE") that the client sends with every call — so the AI endpoint
@@ -154,32 +155,66 @@ export async function GET(req: Request) {
   } catch { /* fall through with just the default */ }
   // Always offer the configured default, even if the upstream list omits it.
   if (cfg.model && !models.some((m) => m.id === cfg.model)) models.unshift({ id: cfg.model, label: cfg.model, vision: looksVision(cfg.model) });
-  return Response.json({ models, default: cfg.model }, { headers: { "cache-control": "private, max-age=300" } });
+  const docs = await all<{ id: string; name: string }>("select id, name from shh_docs where user_id = ? order by created_at", me.id).catch(() => []);
+  return Response.json({ models, default: cfg.model, instructions: me.shh_instructions ?? "", docs }, { headers: { "cache-control": "no-store" } });
 }
 
 export async function POST(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
   const e = await readEnv();
-  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean; exec?: boolean };
+  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean; exec?: boolean; instructions?: string; name?: string; content?: string; id?: string };
   if ((b.code || "") !== codeOf(e)) return Response.json({ error: "wrong code" }, { status: 403 });
 
   if (b.op === "unlock") return Response.json({ ok: true });
+
+  // Persistent setup: custom instructions / memory, and reference files.
+  if (b.op === "save_instructions") {
+    const v = String(b.instructions ?? "").slice(0, 20_000).trim();
+    await run("update users set shh_instructions = ? where id = ?", v || null, me.id);
+    return Response.json({ ok: true });
+  }
+  if (b.op === "add_file") {
+    const name = String(b.name ?? "").slice(0, 120).trim();
+    const content = String(b.content ?? "").slice(0, 300_000);
+    if (!name || !content.trim()) return Response.json({ error: "empty file" }, { status: 400 });
+    const n = await first<{ n: number }>("select count(*) as n from shh_docs where user_id = ?", me.id);
+    if ((n?.n ?? 0) >= 30) return Response.json({ error: "that's a lot of files — remove one first" }, { status: 400 });
+    const id = crypto.randomUUID();
+    await run("insert into shh_docs (id, user_id, name, content) values (?, ?, ?, ?)", id, me.id, name, content);
+    return Response.json({ id, name });
+  }
+  if (b.op === "remove_file") {
+    if (b.id) await run("delete from shh_docs where id = ? and user_id = ?", b.id, me.id);
+    return Response.json({ ok: true });
+  }
 
   if (b.op === "chat") {
     // Uncapped history — the owner wants the full conversation sent each time.
     let messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
     const cfg = endpoints(e);
-    // Look-up: fetch URLs / search and prepend the findings (or a note) so the
-    // model knows web access was on and doesn't claim it can't browse.
+    // Prepend the member's persistent setup (instructions/memory + reference
+    // files it always uses) and, when web is on, the look-up findings.
+    const preamble: any[] = [];
+    const refParts: string[] = [];
+    if (me.shh_instructions && me.shh_instructions.trim()) refParts.push("INSTRUCTIONS / MEMORY:\n" + me.shh_instructions.trim());
+    const refDocs = await all<{ name: string; content: string }>("select name, content from shh_docs where user_id = ? order by created_at", me.id).catch(() => []);
+    let budget = 200_000;
+    for (const d of refDocs) {
+      const block = `--- reference file: ${d.name} ---\n${d.content}`;
+      if (block.length > budget) { if (budget > 2000) refParts.push(block.slice(0, budget)); break; }
+      refParts.push(block);
+      budget -= block.length;
+    }
+    if (refParts.length) preamble.push({ role: "system", content: "The user set up this persistent context for you — always use it:\n\n" + refParts.join("\n\n") });
     if (b.web) {
       const ctx = await lookup(lastUserText(messages));
-      const note = ctx
+      preamble.push({ role: "system", content: ctx
         ? "You have live web access for this question. Freshly fetched web content is below — use it to answer and cite the sources (titles/URLs) you rely on.\n\n" + ctx.slice(0, 18000)
-        : "A web lookup ran for this question but returned nothing useful — answer from your own knowledge and say the web turned up nothing.";
-      messages = [{ role: "system", content: note }, ...messages];
+        : "A web lookup ran for this question but returned nothing useful — answer from your own knowledge and say the web turned up nothing." });
     }
+    if (preamble.length) messages = [...preamble, ...messages];
 
     // Code execution: give the model the run_code tool and loop, running each
     // tool call in the sandbox and feeding the output back, until it answers.
