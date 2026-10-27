@@ -1,7 +1,7 @@
 "use client";
 import * as D from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Settings2, Sparkles, Square, Terminal, Trash2, Upload, X } from "lucide-react";
+import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Settings2, Sparkles, Square, SquarePen, Terminal, Upload, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -33,11 +33,35 @@ function toApi(msgs: Msg[]) {
   return out;
 }
 
+// Big screenshots as raw base64 blow past the AI API's request limits ("Invalid
+// API parameter"), so downscale to <=1600px and re-encode as JPEG before sending.
+function compressImage(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (!width || !height) return resolve(dataUrl);
+      const max = 1600;
+      if (width > max || height > max) { const s = max / Math.max(width, height); width = Math.round(width * s); height = Math.round(height * s); }
+      try {
+        const c = document.createElement("canvas");
+        c.width = width; c.height = height;
+        const ctx = c.getContext("2d");
+        if (!ctx) return resolve(dataUrl);
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      } catch { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 const readImage = (f: File, add: (url: string) => void) => {
   if (!f.type.startsWith("image/")) return;
-  if (f.size > 8 * 1024 * 1024) { toast("that image is a bit big (8MB max)"); return; }
+  if (f.size > 25 * 1024 * 1024) { toast("that image is huge (25MB max)"); return; }
   const reader = new FileReader();
-  reader.onload = () => { if (typeof reader.result === "string") add(reader.result); };
+  reader.onload = async () => { if (typeof reader.result === "string") add(await compressImage(reader.result)); };
   reader.readAsDataURL(f);
 };
 
@@ -210,9 +234,15 @@ export function ShhChat() {
     }).catch(() => {});
   }, [code]);
 
-  // Persist conversation (text only — base64 images would blow the storage
-  // quota) and the chosen model. History itself is uncapped.
-  useEffect(() => { try { localStorage.setItem(CONVO_KEY, JSON.stringify(msgs.map(({ role, content }) => ({ role, content })))); } catch { /* */ } }, [msgs]);
+  // Persist the full conversation INCLUDING images (compressed, so they fit), so
+  // a refresh keeps both the pictures and the model's context. On a storage-quota
+  // error, degrade: keep images only on the last few turns, then text-only.
+  useEffect(() => {
+    const save = (data: unknown) => { try { localStorage.setItem(CONVO_KEY, JSON.stringify(data)); return true; } catch { return false; } };
+    if (save(msgs)) return;
+    if (save(msgs.map((m, i) => (i >= msgs.length - 6 ? m : { ...m, images: undefined, docs: m.docs?.map((d) => ({ name: d.name, content: "" })) })))) return;
+    save(msgs.map(({ role, content, steps }) => ({ role, content, steps })));
+  }, [msgs]);
   useEffect(() => { if (model) try { localStorage.setItem(MODEL_KEY, model); } catch { /* */ } }, [model]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   // auto-grow the composer
@@ -305,9 +335,7 @@ export function ShhChat() {
         </select>
         <span className="flex-1" />
         <Setup code={code} />
-        {msgs.length > 0 && (
-          <button type="button" onClick={() => { setMsgs([]); try { localStorage.removeItem(CONVO_KEY); } catch { /* */ } }} className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold text-plum-muted hover:border-frost-hot"><Trash2 className="size-3.5" />Clear</button>
-        )}
+        <button type="button" onClick={() => { setMsgs([]); setInput(""); setImages([]); setDocs([]); try { localStorage.removeItem(CONVO_KEY); } catch { /* */ } }} className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold text-plum-muted hover:border-frost-hot"><SquarePen className="size-3.5" />New chat</button>
       </div>
 
       <div className={cn("relative flex flex-1 flex-col gap-3 overflow-y-auto rounded-shell border-1.5 bg-cream-card p-3 transition sm:p-4", dragging ? "border-frost-hot ring-2 ring-frost-hot/30" : "border-line")}>
