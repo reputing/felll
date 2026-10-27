@@ -41,6 +41,48 @@ const looksVision = (id: string) => /5\.[3-9]-flash|[-.]v$|\bv\d|vision|4\.5v|4v
 
 const codeOf = (e: Record<string, string | undefined>) => e.SHH_CODE || "SEMINOLE";
 
+// The latest user turn as plain text (content can be a string or a multimodal array).
+function lastUserText(messages: any[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "user") continue;
+    if (typeof m.content === "string") return m.content;
+    if (Array.isArray(m.content)) return m.content.filter((p: any) => p?.type === "text").map((p: any) => p?.text ?? "").join(" ");
+  }
+  return "";
+}
+
+// "Look up": read any URLs in the message (keyless, via r.jina.ai) and — if the
+// account has a web-search package — run a z.ai web search. Returns context text
+// to hand the model; empty on total failure. Best-effort, never throws.
+async function lookup(query: string, key: string): Promise<string> {
+  const out: string[] = [];
+  const urls = [...new Set(query.match(/https?:\/\/[^\s<>"')]+/g) || [])].slice(0, 3);
+  await Promise.all(urls.map(async (u) => {
+    try {
+      const r = await fetch(`https://r.jina.ai/${u}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(20_000) });
+      if (r.ok) out.push(`SOURCE ${u}:\n${(await r.text()).slice(0, 6000)}`);
+    } catch { /* skip this url */ }
+  }));
+  try {
+    const r = await fetch("https://api.z.ai/api/paas/v4/web_search", {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({ search_engine: "search-prime", search_query: query.slice(0, 200), count: 6 }),
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (r.ok) {
+      const d: any = await r.json();
+      const results: any[] = d?.web_search || d?.search_result || d?.data || [];
+      const lines = results
+        .map((x: any, i: number) => `[${i + 1}] ${x?.title ?? ""} — ${x?.link ?? x?.url ?? ""}\n${String(x?.content ?? x?.summary ?? x?.snippet ?? "").slice(0, 400)}`)
+        .filter((l) => l.trim().length > 6);
+      if (lines.length) out.push("WEB SEARCH RESULTS:\n" + lines.join("\n\n"));
+    }
+  } catch { /* search unavailable (no package / balance) */ }
+  return out.join("\n\n---\n\n");
+}
+
 // Normalise both the OpenAI `{data:[{id}]}` shape and pollinations' flat array.
 function normalizeModels(d: any): { id: string; label: string; vision: boolean }[] {
   const seen = new Set<string>();
@@ -82,16 +124,21 @@ export async function POST(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
   const e = await readEnv();
-  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[] };
+  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean };
   if ((b.code || "") !== codeOf(e)) return Response.json({ error: "wrong code" }, { status: 403 });
 
   if (b.op === "unlock") return Response.json({ ok: true });
 
   if (b.op === "chat") {
     // Uncapped history — the owner wants the full conversation sent each time.
-    const messages = Array.isArray(b.messages) ? b.messages : [];
+    let messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
     const cfg = endpoints(e);
+    // Look-up: fetch URLs / search and prepend the findings as context.
+    if (b.web) {
+      const ctx = await lookup(lastUserText(messages), e.AI_API_KEY || DEFAULT_KEY);
+      if (ctx) messages = [{ role: "system", content: "Freshly fetched web content for this question is below. Use it to answer and cite the source URLs you rely on; if it doesn't help, use your own knowledge.\n\n" + ctx.slice(0, 18000) }, ...messages];
+    }
     let r: Response;
     try {
       r = await fetch(cfg.chat, {

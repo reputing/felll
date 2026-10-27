@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, ImagePlus, Loader2, Lock, RotateCw, Send, Sparkles, Square, Trash2, X } from "lucide-react";
+import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Sparkles, Square, Trash2, X } from "lucide-react";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 interface Model { id: string; label: string; vision: boolean }
-interface Msg { role: "user" | "assistant"; content: string; images?: string[] }
+interface Doc { name: string; content: string }
+interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[] }
 
 const CODE_KEY = "shh:code";
 const CONVO_KEY = "shh:convo";
@@ -13,11 +14,15 @@ const MODEL_KEY = "shh:model";
 const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps.";
 
 // OpenAI-style payload (string content, or an array with image_url parts).
+// Attached files are folded into the user turn's text.
 function toApi(msgs: Msg[]) {
   const out: { role: string; content: unknown }[] = [{ role: "system", content: SYSTEM }];
   for (const m of msgs) {
-    if (m.role === "user" && m.images?.length) {
-      out.push({ role: "user", content: [{ type: "text", text: m.content || "" }, ...m.images.map((url) => ({ type: "image_url", image_url: { url } }))] });
+    if (m.role === "user") {
+      const docText = m.docs?.length ? m.docs.map((d) => `\n\n--- file: ${d.name} ---\n${d.content}`).join("") : "";
+      const text = (m.content || "") + docText;
+      if (m.images?.length) out.push({ role: "user", content: [{ type: "text", text }, ...m.images.map((url) => ({ type: "image_url", image_url: { url } }))] });
+      else out.push({ role: "user", content: text });
     } else {
       out.push({ role: m.role, content: m.content });
     }
@@ -31,6 +36,17 @@ const readImage = (f: File, add: (url: string) => void) => {
   const reader = new FileReader();
   reader.onload = () => { if (typeof reader.result === "string") add(reader.result); };
   reader.readAsDataURL(f);
+};
+
+// Text-ish files we can read and hand to the model as context.
+const TEXT_RE = /\.(txt|md|markdown|json|jsonl|csv|tsv|log|ya?ml|toml|ini|env|xml|html?|css|scss|js|jsx|ts|tsx|py|rb|go|rs|java|c|h|cpp|cs|php|sh|bash|sql|r|swift|kt|srt|vtt)$/i;
+const readDoc = (f: File, add: (d: Doc) => void) => {
+  if (f.type.startsWith("image/")) return;
+  if (!(TEXT_RE.test(f.name) || f.type.startsWith("text/") || /json|xml|csv|javascript/.test(f.type))) { toast(`can't read ${f.name} — text files only`); return; }
+  if (f.size > 1024 * 1024) { toast(`${f.name} is too big (1MB max)`); return; }
+  const reader = new FileReader();
+  reader.onload = () => { if (typeof reader.result === "string") add({ name: f.name, content: reader.result.slice(0, 200_000) }); };
+  reader.readAsText(f);
 };
 
 // ---- tiny, safe markdown (no HTML injection): code fences, inline code, bold ----
@@ -76,10 +92,13 @@ export function ShhChat() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [web, setWeb] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const docRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -122,6 +141,7 @@ export function ShhChat() {
   };
 
   const addImage = (url: string) => setImages((im) => [...im, url]);
+  const addDoc = (d: Doc) => setDocs((x) => [...x, d]);
 
   // Send a given history to the model and append the reply. Used by send + regenerate.
   const ask = async (history: Msg[]) => {
@@ -130,7 +150,7 @@ export function ShhChat() {
     const ctl = new AbortController();
     abortRef.current = ctl;
     try {
-      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model, messages: toApi(history) }), signal: ctl.signal });
+      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model, web, messages: toApi(history) }), signal: ctl.signal });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.content) setMsgs((m) => [...m, { role: "assistant", content: `⚠ ${d.error || "no answer"}` }]);
       else setMsgs((m) => [...m, { role: "assistant", content: d.content }]);
@@ -143,11 +163,12 @@ export function ShhChat() {
 
   const send = () => {
     const text = input.trim();
-    if ((!text && !images.length) || busy || !code) return;
-    const next = [...msgs, { role: "user" as const, content: text, images: images.length ? images : undefined }];
+    if ((!text && !images.length && !docs.length) || busy || !code) return;
+    const next = [...msgs, { role: "user" as const, content: text, images: images.length ? images : undefined, docs: docs.length ? docs : undefined }];
     setMsgs(next);
     setInput("");
     setImages([]);
+    setDocs([]);
     ask(next);
   };
 
@@ -185,7 +206,7 @@ export function ShhChat() {
     <div className="flex h-[calc(100svh-150px)] flex-col gap-3"
       onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
-      onDrop={(e) => { e.preventDefault(); setDragging(false); for (const f of Array.from(e.dataTransfer.files)) readImage(f, addImage); }}>
+      onDrop={(e) => { e.preventDefault(); setDragging(false); for (const f of Array.from(e.dataTransfer.files)) { readImage(f, addImage); readDoc(f, addDoc); } }}>
       <div className="flex flex-wrap items-center gap-2">
         <select value={model} onChange={(e) => setModel(e.target.value)} className="h-10 max-w-[260px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold outline-none focus:border-frost-hot">
           {models.length === 0 && <option value={model}>{model || "default"}</option>}
@@ -198,11 +219,11 @@ export function ShhChat() {
       </div>
 
       <div className={cn("relative flex flex-1 flex-col gap-3 overflow-y-auto rounded-shell border-1.5 bg-cream-card p-3 transition sm:p-4", dragging ? "border-frost-hot ring-2 ring-frost-hot/30" : "border-line")}>
-        {dragging && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-shell bg-cream-card/80 text-[15px] font-extrabold text-frost-text">drop an image ♡</div>}
+        {dragging && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-shell bg-cream-card/80 text-[15px] font-extrabold text-frost-text">drop a file ♡</div>}
         {msgs.length === 0 && (
-          <div className="m-auto flex flex-col items-center gap-2 text-center text-plum-muted">
+          <div className="m-auto flex max-w-[360px] flex-col items-center gap-2 text-center text-plum-muted">
             <Sparkles className="size-7 text-frost-hot" />
-            <p className="text-[14px] font-bold">ask anything. paste, drop or attach an image for a 👁 model.</p>
+            <p className="text-[14px] font-bold">ask anything. paste or drop an image (👁 model), attach a text/doc file, or hit 🌐 to read a link.</p>
           </div>
         )}
         {msgs.map((m, i) => (
@@ -215,7 +236,12 @@ export function ShhChat() {
                     {m.images.map((src, n) => <img key={n} src={src} alt="" className="h-24 w-auto rounded-xl" />)}
                   </div>
                 ) : null}
-                {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
+                {m.docs?.length ? (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {m.docs.map((d, n) => <span key={n} className="flex items-center gap-1 rounded-lg bg-black/10 px-2 py-1 text-[11.5px] font-bold"><FileText className="size-3" />{d.name}</span>)}
+                  </div>
+                ) : null}
+                {m.role === "assistant" ? <Markdown text={m.content} /> : (m.content || (m.images?.length || m.docs?.length ? "" : ""))}
               </div>
               {m.role === "assistant" && m.content && (
                 <div className="flex gap-1 px-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
@@ -246,17 +272,33 @@ export function ShhChat() {
         <p className="-mt-1 px-1 text-[12px] font-semibold text-plum-muted">this model can’t read images — pick a 👁 model.</p>
       )}
 
+      {docs.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {docs.map((d, n) => (
+            <span key={n} className="flex items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card py-1.5 pl-3 pr-2 text-[12px] font-bold">
+              <FileText className="size-3.5 text-frost-text" />{d.name}
+              <button type="button" onClick={() => setDocs((x) => x.filter((_, j) => j !== n))} aria-label="remove" className="grid size-4 place-items-center rounded-full text-plum-muted hover:text-frost-text"><X className="size-3" strokeWidth={3} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { for (const f of Array.from(e.target.files ?? [])) readImage(f, addImage); e.target.value = ""; }} />
-        <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" className="grid size-12 flex-none place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
+        <input ref={docRef} type="file" multiple hidden onChange={(e) => { for (const f of Array.from(e.target.files ?? [])) readDoc(f, addDoc); e.target.value = ""; }} />
+        <div className="flex flex-none gap-1">
+          <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" title="attach image" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
+          <button type="button" onClick={() => docRef.current?.click()} aria-label="Attach file" title="attach a text / doc file" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><Paperclip className="size-[18px]" /></button>
+          <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="look things up on the web (reads links; search needs a z.ai web package)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
+        </div>
         <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
           onPaste={(e) => { const imgs = Array.from(e.clipboardData.items).filter((it) => it.type.startsWith("image/")); if (imgs.length) { e.preventDefault(); for (const it of imgs) { const f = it.getAsFile(); if (f) readImage(f, addImage); } } }}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="message…  (paste or drop an image)"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder={web ? "ask — i’ll look it up…" : "message…  (paste an image, or attach a file)"}
           className="max-h-[200px] min-h-[48px] flex-1 resize-none rounded-3xl border-1.5 border-line bg-cream-card px-5 py-3 text-[15px] font-medium outline-none focus:border-frost-hot" />
         {busy ? (
           <button type="button" onClick={stop} aria-label="Stop" className="grid size-12 flex-none place-items-center rounded-full border-1.5 border-line bg-cream-card text-frost-text hover:border-frost-hot"><Square className="size-4" fill="currentColor" /></button>
         ) : (
-          <button type="button" onClick={send} disabled={!input.trim() && !images.length} className="grid size-12 flex-none place-items-center rounded-full bg-frost text-frost-ink disabled:opacity-50"><Send className="size-5" /></button>
+          <button type="button" onClick={send} disabled={!input.trim() && !images.length && !docs.length} className="grid size-12 flex-none place-items-center rounded-full bg-frost text-frost-ink disabled:opacity-50"><Send className="size-5" /></button>
         )}
       </div>
     </div>
