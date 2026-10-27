@@ -28,12 +28,10 @@ const MORE = [
 ];
 const ALL = [...PRIMARY, ...MORE];
 
-export function SiteHeader({ user, unread, shhLabel, hideSlogan }: { user: MenuUser; unread: number; shhLabel?: string | null; hideSlogan?: boolean }) {
+// The private AI corner (/shh) is intentionally NOT in the nav — it's secret,
+// reached only by typing the URL. hideSlogan hides the cupcake.gg wordmark.
+export function SiteHeader({ user, unread, hideSlogan }: { user: MenuUser; unread: number; hideSlogan?: boolean }) {
   const path = usePathname();
-  // The private AI corner gets its own tab, labelled however the member chose.
-  const shh = { href: "/shh", label: (shhLabel && shhLabel.trim()) || "shh" };
-  const primary = [...PRIMARY, shh];
-  const all = [...ALL, shh];
   const savedN = useBox((s) => Object.values(s.lib).filter((e) => e.status).length);
   const [scrolled, setScrolled] = useState(false);
 
@@ -70,7 +68,7 @@ export function SiteHeader({ user, unread, shhLabel, hideSlogan }: { user: MenuU
           )}
         </Link>
         <nav aria-label="main" className="ml-1 hidden items-center gap-0 lg:flex">
-          {primary.map((n) => {
+          {PRIMARY.map((n) => {
             const on = path === n.href || path.startsWith(n.href + "/");
             return (
               <Link key={n.href} href={n.href} aria-current={on ? "page" : undefined}
@@ -117,7 +115,7 @@ export function SiteHeader({ user, unread, shhLabel, hideSlogan }: { user: MenuU
         <UserMenu user={user} />
       </div>
       <nav aria-label="main" className="scrollbar-none mx-auto mt-2 flex max-w-[1560px] gap-1 overflow-x-auto lg:hidden">
-        {all.map((n) => {
+        {ALL.map((n) => {
           const on = path === n.href || path.startsWith(n.href + "/");
           return (
             <Link key={n.href} href={n.href} className={cn("flex h-9 flex-none items-center rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold", on && "border-frost-hot bg-frost text-frost-ink")}>{n.label}</Link>

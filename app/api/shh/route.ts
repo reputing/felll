@@ -95,34 +95,28 @@ function lastUserText(messages: any[]): string {
   return "";
 }
 
-// "Look up": read any URLs in the message (keyless, via r.jina.ai) and — if the
-// account has a web-search package — run a z.ai web search. Returns context text
-// to hand the model; empty on total failure. Best-effort, never throws.
-async function lookup(query: string, key: string): Promise<string> {
+// "Look up" (keyless): read any URLs in the message, otherwise run a web search —
+// DuckDuckGo fetched through r.jina.ai, which returns clean result text (titles,
+// links, snippets). Returns context text for the model; empty on failure.
+async function lookup(query: string): Promise<string> {
   const out: string[] = [];
   const urls = [...new Set(query.match(/https?:\/\/[^\s<>"')]+/g) || [])].slice(0, 3);
-  await Promise.all(urls.map(async (u) => {
-    try {
-      const r = await fetch(`https://r.jina.ai/${u}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(20_000) });
-      if (r.ok) out.push(`SOURCE ${u}:\n${(await r.text()).slice(0, 6000)}`);
-    } catch { /* skip this url */ }
-  }));
-  try {
-    const r = await fetch("https://api.z.ai/api/paas/v4/web_search", {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ search_engine: "search-prime", search_query: query.slice(0, 200), count: 6 }),
-      signal: AbortSignal.timeout(25_000),
-    });
-    if (r.ok) {
-      const d: any = await r.json();
-      const results: any[] = d?.web_search || d?.search_result || d?.data || [];
-      const lines = results
-        .map((x: any, i: number) => `[${i + 1}] ${x?.title ?? ""} — ${x?.link ?? x?.url ?? ""}\n${String(x?.content ?? x?.summary ?? x?.snippet ?? "").slice(0, 400)}`)
-        .filter((l) => l.trim().length > 6);
-      if (lines.length) out.push("WEB SEARCH RESULTS:\n" + lines.join("\n\n"));
+  if (urls.length) {
+    await Promise.all(urls.map(async (u) => {
+      try {
+        const r = await fetch(`https://r.jina.ai/${u}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(22_000) });
+        if (r.ok) out.push(`SOURCE ${u}:\n${(await r.text()).slice(0, 6000)}`);
+      } catch { /* skip this url */ }
+    }));
+  } else {
+    const q = query.replace(/\s+/g, " ").trim().slice(0, 200);
+    if (q) {
+      try {
+        const r = await fetch(`https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(25_000) });
+        if (r.ok) { const t = (await r.text()).trim(); if (t) out.push("WEB SEARCH RESULTS (DuckDuckGo):\n" + t.slice(0, 8000)); }
+      } catch { /* search failed */ }
     }
-  } catch { /* search unavailable (no package / balance) */ }
+  }
   return out.join("\n\n---\n\n");
 }
 
@@ -177,10 +171,14 @@ export async function POST(req: Request) {
     let messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
     const cfg = endpoints(e);
-    // Look-up: fetch URLs / search and prepend the findings as context.
+    // Look-up: fetch URLs / search and prepend the findings (or a note) so the
+    // model knows web access was on and doesn't claim it can't browse.
     if (b.web) {
-      const ctx = await lookup(lastUserText(messages), e.AI_API_KEY || DEFAULT_KEY);
-      if (ctx) messages = [{ role: "system", content: "Freshly fetched web content for this question is below. Use it to answer and cite the source URLs you rely on; if it doesn't help, use your own knowledge.\n\n" + ctx.slice(0, 18000) }, ...messages];
+      const ctx = await lookup(lastUserText(messages));
+      const note = ctx
+        ? "You have live web access for this question. Freshly fetched web content is below — use it to answer and cite the sources (titles/URLs) you rely on.\n\n" + ctx.slice(0, 18000)
+        : "A web lookup ran for this question but returned nothing useful — answer from your own knowledge and say the web turned up nothing.";
+      messages = [{ role: "system", content: note }, ...messages];
     }
 
     // Code execution: give the model the run_code tool and loop, running each
