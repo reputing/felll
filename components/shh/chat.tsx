@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Sparkles, Square, Trash2, X } from "lucide-react";
+import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Sparkles, Square, Terminal, Trash2, X } from "lucide-react";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 interface Model { id: string; label: string; vision: boolean }
 interface Doc { name: string; content: string }
-interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[] }
+interface Step { language: string; code: string; output: string }
+interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[] }
 
 const CODE_KEY = "shh:code";
 const CONVO_KEY = "shh:convo";
@@ -94,6 +95,7 @@ export function ShhChat() {
   const [images, setImages] = useState<string[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [web, setWeb] = useState(false);
+  const [exec, setExec] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -150,10 +152,10 @@ export function ShhChat() {
     const ctl = new AbortController();
     abortRef.current = ctl;
     try {
-      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model, web, messages: toApi(history) }), signal: ctl.signal });
+      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model, web, exec, messages: toApi(history) }), signal: ctl.signal });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.content) setMsgs((m) => [...m, { role: "assistant", content: `⚠ ${d.error || "no answer"}` }]);
-      else setMsgs((m) => [...m, { role: "assistant", content: d.content }]);
+      if (!r.ok || !d.content) setMsgs((m) => [...m, { role: "assistant", content: `⚠ ${d.error || "no answer"}`, steps: d.steps }]);
+      else setMsgs((m) => [...m, { role: "assistant", content: d.content, steps: d.steps }]);
     } catch (e) {
       if ((e as Error).name !== "AbortError") setMsgs((m) => [...m, { role: "assistant", content: "⚠ couldn’t reach the ai" }]);
     }
@@ -223,7 +225,7 @@ export function ShhChat() {
         {msgs.length === 0 && (
           <div className="m-auto flex max-w-[360px] flex-col items-center gap-2 text-center text-plum-muted">
             <Sparkles className="size-7 text-frost-hot" />
-            <p className="text-[14px] font-bold">ask anything. paste or drop an image (👁 model), attach a text/doc file, or hit 🌐 to read a link.</p>
+            <p className="text-[14px] font-bold">ask anything. paste/drop an image (👁), attach a file, 🌐 to read links, or ▶ to let it run code.</p>
           </div>
         )}
         {msgs.map((m, i) => (
@@ -241,7 +243,18 @@ export function ShhChat() {
                     {m.docs.map((d, n) => <span key={n} className="flex items-center gap-1 rounded-lg bg-black/10 px-2 py-1 text-[11.5px] font-bold"><FileText className="size-3" />{d.name}</span>)}
                   </div>
                 ) : null}
-                {m.role === "assistant" ? <Markdown text={m.content} /> : (m.content || (m.images?.length || m.docs?.length ? "" : ""))}
+                {m.role === "assistant" && m.steps?.length ? (
+                  <div className="mb-2 flex flex-col gap-2">
+                    {m.steps.map((s, si) => (
+                      <div key={si}>
+                        <div className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-plum-muted"><Terminal className="size-3" />ran {s.language || "code"}</div>
+                        <CodeBlock code={s.code} />
+                        <pre className="mt-1 overflow-x-auto rounded-xl border-1.5 border-line bg-black/5 p-2.5 text-[12px] leading-relaxed"><code className="font-mono">{s.output}</code></pre>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
               </div>
               {m.role === "assistant" && m.content && (
                 <div className="flex gap-1 px-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
@@ -290,6 +303,7 @@ export function ShhChat() {
           <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" title="attach image" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
           <button type="button" onClick={() => docRef.current?.click()} aria-label="Attach file" title="attach a text / doc file" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><Paperclip className="size-[18px]" /></button>
           <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="look things up on the web (reads links; search needs a z.ai web package)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
+          <button type="button" onClick={() => setExec((x) => !x)} aria-pressed={exec} title="let it run code in a sandbox" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", exec ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Terminal className="size-5" /></button>
         </div>
         <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
           onPaste={(e) => { const imgs = Array.from(e.clipboardData.items).filter((it) => it.type.startsWith("image/")); if (imgs.length) { e.preventDefault(); for (const it of imgs) { const f = it.getAsFile(); if (f) readImage(f, addImage); } } }}

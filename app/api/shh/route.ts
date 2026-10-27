@@ -41,6 +41,49 @@ const looksVision = (id: string) => /5\.[3-9]-flash|[-.]v$|\bv\d|vision|4\.5v|4v
 
 const codeOf = (e: Record<string, string | undefined>) => e.SHH_CODE || "SEMINOLE";
 
+const pickContent = (msg: any): string => {
+  const raw = msg?.content;
+  return typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((p: any) => p?.text ?? "").join("") : "";
+};
+
+// ---- code execution (the "run code" tool) -------------------------------------
+// Code runs in Wandbox's public sandbox — isolated and ephemeral, never on our
+// Worker or the viewer's machine. We only proxy code → Wandbox → output.
+const WANDBOX: Record<string, string> = {
+  python: "cpython-3.14.0", py: "cpython-3.14.0", python3: "cpython-3.14.0",
+  javascript: "nodejs-20.17.0", js: "nodejs-20.17.0", node: "nodejs-20.17.0",
+  typescript: "typescript-5.6.2", ts: "typescript-5.6.2",
+  c: "gcc-head-c", "c++": "gcc-head", cpp: "gcc-head", cxx: "gcc-head",
+  go: "go-1.23.2", golang: "go-1.23.2", ruby: "ruby-3.4.9", rb: "ruby-3.4.9",
+  php: "php-8.3.12", bash: "bash", sh: "bash", shell: "bash",
+  rust: "rust-1.82.0", rs: "rust-1.82.0", java: "openjdk-jdk-22+36",
+  "c#": "mono-6.12.0.199", csharp: "mono-6.12.0.199", cs: "mono-6.12.0.199",
+};
+async function runCode(language: string, code: string): Promise<string> {
+  const lang = String(language ?? "").toLowerCase().trim();
+  const compiler = WANDBOX[lang] || (lang.startsWith("py") ? WANDBOX.python : "");
+  if (!compiler) return `error: unsupported language "${language}". try python, javascript, go, c, c++, ruby, php, bash, rust, java or c#.`;
+  if (!code?.trim()) return "error: no code";
+  try {
+    const r = await fetch("https://wandbox.org/api/compile.json", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, compiler }), signal: AbortSignal.timeout(28_000),
+    });
+    if (!r.ok) return `execution service error (${r.status})`;
+    const d: any = await r.json();
+    const out = [d.compiler_error, d.program_output, d.program_error].filter((s) => s && String(s).trim()).join("\n").trim();
+    return (out || "(ran with no output)").slice(0, 5000);
+  } catch { return "execution timed out or failed"; }
+}
+const RUN_TOOL = {
+  type: "function",
+  function: {
+    name: "run_code",
+    description: "Execute code in an isolated sandbox and get its output (stdout/stderr). Use it for calculations, data work, testing snippets, anything better answered by running code. Supported languages: python, javascript, typescript, c, c++, go, ruby, php, bash, rust, java, c#.",
+    parameters: { type: "object", properties: { language: { type: "string", description: "e.g. python, javascript, go" }, code: { type: "string", description: "a complete program that prints its result" } }, required: ["language", "code"] },
+  },
+};
+
 // The latest user turn as plain text (content can be a string or a multimodal array).
 function lastUserText(messages: any[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -124,7 +167,7 @@ export async function POST(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
   const e = await readEnv();
-  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean };
+  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean; exec?: boolean };
   if ((b.code || "") !== codeOf(e)) return Response.json({ error: "wrong code" }, { status: 403 });
 
   if (b.op === "unlock") return Response.json({ ok: true });
@@ -139,6 +182,44 @@ export async function POST(req: Request) {
       const ctx = await lookup(lastUserText(messages), e.AI_API_KEY || DEFAULT_KEY);
       if (ctx) messages = [{ role: "system", content: "Freshly fetched web content for this question is below. Use it to answer and cite the source URLs you rely on; if it doesn't help, use your own knowledge.\n\n" + ctx.slice(0, 18000) }, ...messages];
     }
+
+    // Code execution: give the model the run_code tool and loop, running each
+    // tool call in the sandbox and feeding the output back, until it answers.
+    if (b.exec) {
+      const convo = [...messages];
+      const steps: { language: string; code: string; output: string }[] = [];
+      for (let it = 0; it < 6; it++) {
+        let rr: Response;
+        try {
+          rr = await fetch(cfg.chat, {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json", ...cfg.headers },
+            body: JSON.stringify({ model: b.model || cfg.model, messages: convo, tools: [RUN_TOOL], stream: false }),
+            signal: AbortSignal.timeout(90_000),
+          });
+        } catch {
+          return Response.json({ error: "the ai didn't answer — try again", steps }, { status: 502 });
+        }
+        const d: any = await rr.json().catch(() => null);
+        const c = d?.choices?.[0];
+        if (!rr.ok || !c) return Response.json({ error: d?.error?.message || "the ai couldn't answer that", steps }, { status: rr.ok ? 502 : rr.status });
+        const tcs = c?.message?.tool_calls;
+        if (c.finish_reason === "tool_calls" && Array.isArray(tcs) && tcs.length) {
+          convo.push(c.message);
+          for (const tc of tcs) {
+            let args: any = {};
+            try { args = JSON.parse(tc.function?.arguments || "{}"); } catch { /* bad args */ }
+            const output = await runCode(args.language, args.code);
+            steps.push({ language: String(args.language ?? ""), code: String(args.code ?? ""), output });
+            convo.push({ role: "tool", tool_call_id: tc.id, content: output });
+          }
+          continue;
+        }
+        return Response.json({ content: pickContent(c.message) || "(done)", steps }, { headers: { "cache-control": "no-store" } });
+      }
+      return Response.json({ content: "(stopped after several code steps — ask me to continue)", steps }, { headers: { "cache-control": "no-store" } });
+    }
+
     let r: Response;
     try {
       r = await fetch(cfg.chat, {
