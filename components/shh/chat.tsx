@@ -18,7 +18,7 @@ interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
 interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean }
 interface Thread { id: string; title: string; updatedAt: number }
-interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig }
+interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string }
 interface RoomMsg { id: number; handle: string | null; role: string; content: string; steps?: Step[] }
 
 const CODE_KEY = "shh:code";
@@ -30,7 +30,7 @@ const OLD_CONVO_KEY = "shh:convo";
 const threadKey = (id: string) => `shh:thread:${id}`;
 const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps, and LaTeX ($…$ or $$…$$) for math.";
 
-const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {} };
+const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {}, antiFlip: false, antiFlipTarget: "docs", antiFlipCustom: "" };
 const keyLabel = (k: string) => (k === " " ? "Space" : k.length === 1 ? k.toUpperCase() : k);
 const DISGUISES: Record<string, { title: string; emoji: string }> = {
   docs: { title: "Untitled document - Google Docs", emoji: "📝" },
@@ -367,6 +367,24 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
               <input value={prefs.customTitle} onChange={(e) => set({ customTitle: e.target.value })} placeholder="tab title to show…" className="mt-1 h-10 rounded-full border-1.5 border-line bg-paper px-4 text-[13px] font-semibold outline-none focus:border-frost-hot" />
             )}
           </div>
+          <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div><div className="text-[13.5px] font-extrabold">Anti-flip</div><div className="text-[12px] font-semibold text-plum-muted">the instant you click away, swap the tab title + icon to a disguise so it never flashes what it really is; switches back when you return. (browsers can’t read your other tabs, so you pick the mask.)</div></div>
+              <Toggle on={prefs.antiFlip} onClick={() => set({ antiFlip: !prefs.antiFlip })} />
+            </div>
+            {prefs.antiFlip && (
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  {[...Object.keys(DISGUISES), "custom"].map((k) => (
+                    <button key={k} type="button" onClick={() => set({ antiFlipTarget: k })} className={cn("rounded-full border-1.5 px-3 py-1.5 text-[12.5px] font-bold capitalize", prefs.antiFlipTarget === k ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line hover:border-frost-hot")}>{k === "custom" ? "custom…" : DISGUISES[k].title.split(" - ")[1] || k}</button>
+                  ))}
+                </div>
+                {prefs.antiFlipTarget === "custom" && (
+                  <input value={prefs.antiFlipCustom} onChange={(e) => set({ antiFlipCustom: e.target.value })} placeholder="tab title to show when you tab away…" className="h-10 rounded-full border-1.5 border-line bg-paper px-4 text-[13px] font-semibold outline-none focus:border-frost-hot" />
+                )}
+              </>
+            )}
+          </div>
           <p className="text-[11.5px] font-semibold text-plum-muted">these are saved on this device only.</p>
         </D.Content>
       </D.Portal>
@@ -491,15 +509,32 @@ export function ShhChat({ me }: { me?: string }) {
     return () => { document.getElementById(id)?.remove(); };
   }, [prefs.hideFooter, prefs.hideHeader]);
 
-  // apply disguise (tab title + favicon); restore on unmount
+  // tab look: the static disguise when active, and (anti-flip) a mask the instant
+  // the tab loses focus, so it never flashes the real title/icon when you tab away.
   useEffect(() => {
     const original = document.title;
-    const d = prefs.disguise;
-    if (d === "off") { setFavicon(null); }
-    else if (d === "custom") { if (prefs.customTitle.trim()) { document.title = prefs.customTitle.trim(); } setFavicon("📄"); }
-    else if (DISGUISES[d]) { document.title = DISGUISES[d].title; setFavicon(DISGUISES[d].emoji); }
-    return () => { document.title = original; setFavicon(null); };
-  }, [prefs.disguise, prefs.customTitle]);
+    const maskTo = (target: string, custom: string) => {
+      if (target === "custom") { if (custom.trim()) document.title = custom.trim(); setFavicon("📄"); }
+      else if (DISGUISES[target]) { document.title = DISGUISES[target].title; setFavicon(DISGUISES[target].emoji); }
+    };
+    const activeLook = () => {
+      const d = prefs.disguise;
+      if (d === "off") { document.title = original; setFavicon(null); }
+      else maskTo(d, prefs.customTitle);
+    };
+    const render = (away: boolean) => {
+      if (away && prefs.antiFlip) maskTo(prefs.antiFlipTarget, prefs.antiFlipCustom);
+      else activeLook();
+    };
+    render(document.visibilityState === "hidden");
+    const onVis = () => render(document.visibilityState === "hidden");
+    const onBlur = () => render(true);
+    const onFocus = () => render(false);
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => { document.title = original; setFavicon(null); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("blur", onBlur); window.removeEventListener("focus", onFocus); };
+  }, [prefs.disguise, prefs.customTitle, prefs.antiFlip, prefs.antiFlipTarget, prefs.antiFlipCustom]);
 
   // boss key(s): any configured key throws up (or lifts) the decoy instantly
   useEffect(() => {
