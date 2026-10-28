@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Columns2, Gauge, Loader2, Maximize, Rows3, ScrollText, Square } from "lucide-react";
 import { cachedChapters, getChapterPages, getChapters, getManga, safeDecode, type Chapter } from "@/lib/manga";
 import { setReading } from "@/components/shell/presence";
+import { PageImg } from "@/components/manga/page-img";
+import { isMdChapter } from "@/lib/page-chain";
 import { cn } from "@/lib/utils";
 
 type Mode = "strip" | "single" | "dual";
@@ -180,6 +182,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
   }, [go, mode]);
 
   const total = pages?.length ?? 0;
+  const mdCh = isMdChapter(chapterId) ? chapterId : undefined; // native MangaDex chapter (not a "wc:"/"cm:" second source)
   const fit = fitH === "1";
   const btn = "grid size-9 place-items-center rounded-full text-white/85 transition hover:bg-white/15 hover:text-white";
 
@@ -220,7 +223,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
         ) : mode === "strip" ? (
           <div className="mx-auto flex max-w-[920px] flex-col items-center">
             {pages.map((src, n) => (
-              <Page key={n} n={n} dataN={n} src={src} altSrc={altPages?.[n]} onReqAlt={requestAlt} eager={n < 2} proxy={adult} mdCh={adult ? chapterId : undefined} className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
+              <PageImg key={n} n={n} dataN={n} src={src} altSrc={altPages?.[n]} onReqAlt={requestAlt} eager={n < 2} proxy={adult} mdCh={mdCh} wrapClassName="w-full" className={cn("w-full select-none", fit && "h-[calc(100svh-52px)] w-auto object-contain")} />
             ))}
             <div className="flex w-full flex-col items-center gap-3 py-10 text-center">
               {next ? (
@@ -235,7 +238,7 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
           <div className="relative grid h-full place-items-center">
             <div className={cn("flex h-full items-center justify-center", mode === "dual" && "gap-1")}>
               {[idx, ...(mode === "dual" && idx + 1 < pages.length ? [idx + 1] : [])].map((n) => (
-                <Page key={n} n={n} src={pages[n]} altSrc={altPages?.[n]} onReqAlt={requestAlt} proxy={adult} mdCh={adult ? chapterId : undefined} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
+                <PageImg key={n} n={n} src={pages[n]} altSrc={altPages?.[n]} onReqAlt={requestAlt} proxy={adult} mdCh={mdCh} wrapClassName={cn("flex items-center justify-center", mode === "dual" ? "" : "max-w-full")} className={cn("select-none", fit ? "max-h-[calc(100svh-52px)] w-auto" : "max-w-full", mode === "dual" && "max-h-[calc(100svh-52px)]")} />
               ))}
             </div>
             {/* tap zones */}
@@ -254,45 +257,5 @@ export function MangaReader({ mangaId, chapterId: rawChapterId }: { mangaId: str
         </div>
       )}
     </div>
-  );
-}
-
-// One manga page image. It can be delivered two ways: direct from the MangaDex
-// CDN (fast, the default), or through our own origin (/api/manga-img fetches it
-// server-side and streams the bytes). Adult titles stay on MangaDex, and those
-// at-home nodes 404 the user's browser even though the exact URL is fetchable
-// server-side — so for them we go through the proxy FIRST (`proxy`). onError
-// falls through to the other delivery path, then a cache-bust, then a fresh
-// at-home server, so a page that loads fine is never disturbed.
-function Page({ n, dataN, src, altSrc, onReqAlt, eager, proxy, mdCh, className }: {
-  n: number; dataN?: number; src: string; altSrc?: string; onReqAlt: () => void; eager?: boolean; proxy?: boolean; mdCh?: string; className?: string;
-}) {
-  const viaProxy = (u: string) => (/^https?:\/\//.test(u) ? `/api/manga-img?u=${encodeURIComponent(u)}` : u);
-  // Adult MangaDex pages go through /api/md-page, which resolves a FRESH at-home
-  // server per request, so they never 404 from the ~15-min at-home token expiry
-  // on a long chapter. The direct CDN url stays as the fallback.
-  const mdSrc = mdCh ? `/api/md-page?ch=${encodeURIComponent(mdCh)}&p=${n}` : null;
-  const primary = mdSrc ?? (proxy ? viaProxy(src) : src);
-  const secondary = mdSrc ? src : proxy ? src : viaProxy(src);
-  const [url, setUrl] = useState(primary);
-  const tries = useRef(0);
-  useEffect(() => { setUrl(primary); tries.current = 0; }, [primary]);
-  const onError = () => {
-    tries.current += 1;
-    if (tries.current === 1) { onReqAlt(); setUrl(secondary); }
-    else if (tries.current === 2) { setUrl(`${primary}${primary.includes("?") ? "&" : "?"}cb=${Date.now()}`); }
-    else if (tries.current === 3 && altSrc && altSrc !== src) { setUrl(proxy ? viaProxy(altSrc) : altSrc); }
-  };
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      data-n={dataN}
-      alt={`Page ${n + 1}`}
-      loading={eager ? "eager" : "lazy"}
-      referrerPolicy="no-referrer"
-      onError={onError}
-      className={className}
-    />
   );
 }

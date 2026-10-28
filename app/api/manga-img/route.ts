@@ -18,11 +18,16 @@ export async function GET(req: Request) {
   }
   if (target.protocol !== "https:" && target.protocol !== "http:") return new Response("bad url", { status: 400 });
 
-  const headers: Record<string, string> = {
-    // A browser-ish UA; some manga CDNs 403 the default Workers fetch agent.
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-    accept: "image/avif,image/webp,image/png,image/*,*/*;q=0.8",
-  };
+  // MangaDex's CDN intermittently 404s browser-looking requests (measured: ~5% vs
+  // 0% for a plain agent), so it gets an honest UA; the other manga CDNs 403 the
+  // default Workers agent, so they get a browser-ish one.
+  const mangadex = /(^|\.)mangadex\.(network|org)$/i.test(target.hostname);
+  const headers: Record<string, string> = mangadex
+    ? { "user-agent": "cupcake.gg/1.0 (+https://cupcake.gg)", accept: "*/*" }
+    : {
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        accept: "image/avif,image/webp,image/png,image/*,*/*;q=0.8",
+      };
   const r = sp.get("r");
   if (r) {
     try {
