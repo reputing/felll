@@ -7,9 +7,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, FileText, Globe, ImagePlus, Loader2, Lock, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, X } from "lucide-react";
+import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
-import { Decoy, DECOY_SKINS } from "@/components/shh/decoy";
+import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -18,7 +18,8 @@ interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
 interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean }
 interface Thread { id: string; title: string; updatedAt: number }
-interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; disguise: string; customTitle: string; decoy: string }
+interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig }
+interface RoomMsg { id: number; handle: string | null; role: string; content: string; steps?: Step[] }
 
 const CODE_KEY = "shh:code";
 const MODEL_KEY = "shh:model";
@@ -29,7 +30,8 @@ const OLD_CONVO_KEY = "shh:convo";
 const threadKey = (id: string) => `shh:thread:${id}`;
 const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps, and LaTeX ($…$ or $$…$$) for math.";
 
-const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, disguise: "off", customTitle: "", decoy: "word" };
+const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {} };
+const keyLabel = (k: string) => (k === " " ? "Space" : k.length === 1 ? k.toUpperCase() : k);
 const DISGUISES: Record<string, { title: string; emoji: string }> = {
   docs: { title: "Untitled document - Google Docs", emoji: "📝" },
   sheets: { title: "Untitled spreadsheet - Google Sheets", emoji: "📊" },
@@ -297,9 +299,27 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
             <div><div className="text-[13.5px] font-extrabold">Hide the header</div><div className="text-[12px] font-semibold text-plum-muted">hide the top nav bar too — distraction free</div></div>
             <Toggle on={prefs.hideHeader} onClick={() => set({ hideHeader: !prefs.hideHeader })} />
           </div>
-          <div className={row}>
-            <div><div className="text-[13.5px] font-extrabold">Boss key</div><div className="text-[12px] font-semibold text-plum-muted">tap <kbd className="rounded bg-black/10 px-1 font-mono">`</kbd> (backtick) to instantly throw up the decoy; tap it again, press <kbd className="rounded bg-black/10 px-1 font-mono">Esc</kbd>, or click the top-left icon to come back</div></div>
-            <Toggle on={prefs.bossKey} onClick={() => set({ bossKey: !prefs.bossKey })} />
+          <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div><div className="text-[13.5px] font-extrabold">Boss key(s)</div><div className="text-[12px] font-semibold text-plum-muted">press any set key to instantly throw up the decoy; press it again, <kbd className="rounded bg-black/10 px-1 font-mono">Esc</kbd>, or click the top-left icon to come back</div></div>
+              <Toggle on={prefs.bossKey} onClick={() => set({ bossKey: !prefs.bossKey })} />
+            </div>
+            {prefs.bossKey && (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {prefs.bossKeys.length === 0 && <span className="text-[12px] font-semibold text-plum-muted">no keys set</span>}
+                  {prefs.bossKeys.map((k) => (
+                    <span key={k} className="flex items-center gap-1 rounded-lg bg-cream-blush px-2 py-1 text-[12px] font-bold text-frost-text">
+                      <kbd className="font-mono">{keyLabel(k)}</kbd>
+                      <button type="button" onClick={() => set({ bossKeys: prefs.bossKeys.filter((x) => x !== k) })} aria-label="remove"><X className="size-3" /></button>
+                    </span>
+                  ))}
+                </div>
+                <input readOnly placeholder="click here, then press a key to add it…"
+                  onKeyDown={(e) => { e.preventDefault(); const k = e.key; if (k === "Escape" || k === "Tab" || k === "Enter") return; if (!prefs.bossKeys.includes(k)) set({ bossKeys: [...prefs.bossKeys, k] }); }}
+                  className="h-10 rounded-full border-1.5 border-line bg-paper px-4 text-[13px] font-semibold outline-none focus:border-frost-hot" />
+              </div>
+            )}
           </div>
           <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
             <div className="text-[13.5px] font-extrabold">Decoy screen</div>
@@ -310,6 +330,29 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
               ))}
             </div>
           </div>
+          {(() => {
+            const cfg = prefs.decoyConfig || {};
+            const setCfg = (patch: Partial<DecoyConfig>) => set({ decoyConfig: { ...cfg, ...patch } });
+            const inp = "rounded-xl border-1.5 border-line bg-paper px-3 py-2 text-[13px] font-semibold outline-none focus:border-frost-hot";
+            const grp = "mt-1.5 text-[12px] font-extrabold text-frost-text";
+            return (
+              <div className="flex flex-col gap-1.5 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
+                <div className="text-[13.5px] font-extrabold">Decoy content</div>
+                <div className="text-[12px] font-semibold text-plum-muted">make the cover say whatever matches your real work. leave blank for the default sample.</div>
+                <span className={grp}>Word</span>
+                <input className={inp} value={cfg.wordTitle ?? ""} onChange={(e) => setCfg({ wordTitle: e.target.value })} placeholder="file name (also the tab), e.g. Essay_Draft" />
+                <input className={inp} value={cfg.wordHeading ?? ""} onChange={(e) => setCfg({ wordHeading: e.target.value })} placeholder="document heading" />
+                <textarea className={cn(inp, "resize-y")} rows={3} value={cfg.wordBody ?? ""} onChange={(e) => setCfg({ wordBody: e.target.value })} placeholder="body text (blank line = new paragraph)" />
+                <span className={grp}>Excel</span>
+                <div className="flex gap-1.5"><input className={cn(inp, "flex-1")} value={cfg.excelTitle ?? ""} onChange={(e) => setCfg({ excelTitle: e.target.value })} placeholder="workbook, e.g. Book1" /><input className={cn(inp, "w-32")} value={cfg.excelSheet ?? ""} onChange={(e) => setCfg({ excelSheet: e.target.value })} placeholder="Sheet1" /></div>
+                <span className={grp}>W3Schools</span>
+                <input className={inp} value={cfg.w3Title ?? ""} onChange={(e) => setCfg({ w3Title: e.target.value })} placeholder="page title, e.g. HTML Introduction" />
+                <span className={grp}>Reading Plus</span>
+                <div className="flex gap-1.5"><input className={cn(inp, "flex-1")} value={cfg.rpTitle ?? ""} onChange={(e) => setCfg({ rpTitle: e.target.value })} placeholder="selection title" /><input className={cn(inp, "w-28")} value={cfg.rpLevel ?? ""} onChange={(e) => setCfg({ rpLevel: e.target.value })} placeholder="Level J" /></div>
+                <textarea className={cn(inp, "resize-y")} rows={3} value={cfg.rpBody ?? ""} onChange={(e) => setCfg({ rpBody: e.target.value })} placeholder="passage text (blank line = new paragraph)" />
+              </div>
+            );
+          })()}
           <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
             <div className="text-[13.5px] font-extrabold">Disguise the tab</div>
             <div className="text-[12px] font-semibold text-plum-muted">spoof the tab title and icon so it blends in</div>
@@ -339,7 +382,7 @@ function setFavicon(emoji: string | null) {
   link.href = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${emoji}</text></svg>`)}`;
 }
 
-export function ShhChat() {
+export function ShhChat({ me }: { me?: string }) {
   const [code, setCode] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState("");
   const [unlocking, setUnlocking] = useState(false);
@@ -358,6 +401,12 @@ export function ShhChat() {
   const [dragging, setDragging] = useState(false);
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
   const [cover, setCover] = useState<string | null>(null);
+  const [room, setRoom] = useState<{ id: string; title: string } | null>(null);
+  const [roomMsgs, setRoomMsgs] = useState<RoomMsg[]>([]);
+  const [members, setMembers] = useState<string[]>([]);
+  const [roomBusy, setRoomBusy] = useState(false);
+  const lastRoomId = useRef(0);
+  const autoJoined = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
@@ -429,7 +478,7 @@ export function ShhChat() {
     }).catch(() => {});
   }, [code]);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy, roomMsgs, roomBusy]);
   useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = "0px"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; } }, [input]);
 
   // apply chrome prefs (hide header/footer) via one injected stylesheet
@@ -452,18 +501,18 @@ export function ShhChat() {
     return () => { document.title = original; setFavicon(null); };
   }, [prefs.disguise, prefs.customTitle]);
 
-  // boss key: backtick throws up (or lifts) the decoy instantly
+  // boss key(s): any configured key throws up (or lifts) the decoy instantly
   useEffect(() => {
-    if (!prefs.bossKey) return;
+    if (!prefs.bossKey || !prefs.bossKeys.length) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "`") return;
+      if (!prefs.bossKeys.includes(e.key)) return;
       if ((e.target as HTMLElement)?.closest("input,textarea,[contenteditable='true']")) return;
       e.preventDefault();
       setCover((c) => (c ? null : prefs.decoy || "blank"));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prefs.bossKey, prefs.decoy]);
+  }, [prefs.bossKey, prefs.bossKeys, prefs.decoy]);
 
   const unlock = async () => {
     const c = codeInput.trim();
@@ -581,6 +630,81 @@ export function ShhChat() {
     if (name == null) return;
     setThreads((ts) => { const next = ts.map((t) => (t.id === id ? { ...t, title: name || t.title } : t)); try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); } catch { /* */ } return next; });
   };
+  // ---- co-work rooms ----
+  const enterRoom = (r: { id: string; title: string }) => {
+    lastRoomId.current = 0; setRoomMsgs([]); setMembers([]); setRoom(r);
+    setInput(""); setImages([]); setDocs([]);
+  };
+  const createRoom = async () => {
+    if (!code) return;
+    const title = window.prompt("name this project room", "project")?.trim();
+    if (title == null) return;
+    try {
+      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "room_create", code, title: title || "project" }) });
+      const d = await r.json();
+      if (d?.id) { enterRoom({ id: d.id, title: d.title }); toast("room created ♡"); }
+    } catch { toast("couldn’t create the room"); }
+  };
+  const joinRoom = async (rc?: string) => {
+    if (!code) return;
+    const id = (rc ?? window.prompt("enter the room code")?.trim() ?? "").toUpperCase();
+    if (!id) return;
+    try {
+      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "room_join", code, id }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d?.id) enterRoom({ id: d.id, title: d.title });
+      else toast(d.error || "no room with that code");
+    } catch { toast("couldn’t join"); }
+  };
+  const leaveRoom = () => { setRoom(null); setRoomMsgs([]); setMembers([]); lastRoomId.current = 0; };
+  const roomSend = async () => {
+    if (!room || !code || roomBusy) return;
+    const base = input.trim();
+    if (!base && !images.length && !docs.length) return;
+    const imgs = images;
+    const text = base + (docs.length ? docs.map((d) => `\n\n--- file: ${d.name} ---\n${d.content}`).join("") : "");
+    let useModel = model;
+    if (imgs.length && !models.find((m) => m.id === model)?.vision) {
+      const vm = models.find((m) => m.vision);
+      if (vm) { useModel = vm.id; setModel(vm.id); }
+    }
+    setInput(""); setImages([]); setDocs([]); setRoomBusy(true);
+    try {
+      await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "room_send", code, id: room.id, model: useModel, web, exec, text, images: imgs }) });
+    } catch { toast("send failed"); }
+    setRoomBusy(false);
+  };
+  const copyInvite = () => { if (room) navigator.clipboard?.writeText(`${location.origin}/shh?room=${room.id}`).then(() => toast("invite link copied")).catch(() => {}); };
+
+  // poll the shared transcript while in a room
+  useEffect(() => {
+    if (!room || !code) return;
+    let inFlight = false;
+    const poll = async () => {
+      if (inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      try {
+        const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "room_poll", code, id: room.id, after: lastRoomId.current }) });
+        const d = await r.json().catch(() => null);
+        if (Array.isArray(d?.messages) && d.messages.length) {
+          lastRoomId.current = d.messages[d.messages.length - 1].id;
+          setRoomMsgs((m) => [...m, ...d.messages]);
+        }
+        if (Array.isArray(d?.members)) setMembers(d.members);
+      } catch { /* */ } finally { inFlight = false; }
+    };
+    poll();
+    const iv = setInterval(poll, 2500);
+    return () => clearInterval(iv);
+  }, [room, code]);
+
+  // auto-join a room from a shared ?room= link, once, after unlock
+  useEffect(() => {
+    if (!code || autoJoined.current) return;
+    autoJoined.current = true;
+    try { const rc = new URLSearchParams(location.search).get("room"); if (rc) joinRoom(rc); } catch { /* */ }
+  }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const sortedThreads = useMemo(() => [...threads].sort((a, b) => b.updatedAt - a.updatedAt), [threads]);
   const activeTitle = threads.find((t) => t.id === activeId)?.title || "new chat";
 
@@ -608,23 +732,26 @@ export function ShhChat() {
       <style dangerouslySetInnerHTML={{ __html: MD_CSS }} />
 
       {/* decoy / boss-key cover — chat stays mounted underneath */}
-      {cover && <Decoy skin={cover} onExit={() => setCover(null)} />}
+      {cover && <Decoy skin={cover} onExit={() => setCover(null)} config={prefs.decoyConfig} />}
 
       <div className="flex flex-wrap items-center gap-2">
         {/* thread switcher */}
         <DM.Root>
           <DM.Trigger asChild>
             <button type="button" className="flex h-10 max-w-[240px] items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold hover:border-frost-hot">
-              <MessageSquarePlus className="size-3.5 flex-none text-frost-text" /><span className="truncate">{activeTitle}</span><ChevronDown className="size-3.5 flex-none opacity-60" />
+              {room ? <Users className="size-3.5 flex-none text-frost-text" /> : <MessageSquarePlus className="size-3.5 flex-none text-frost-text" />}
+              <span className="truncate">{room ? room.title : activeTitle}</span><ChevronDown className="size-3.5 flex-none opacity-60" />
             </button>
           </DM.Trigger>
           <DM.Portal>
             <DM.Content align="start" sideOffset={6} className={cn(POPUP, "z-50 flex max-h-[60vh] w-[280px] flex-col gap-0.5 overflow-y-auto rounded-2xl p-1.5")}>
-              <DM.Item onSelect={newThread} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><MessageSquarePlus className="size-4" />New chat</DM.Item>
+              <DM.Item onSelect={() => { leaveRoom(); newThread(); }} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><MessageSquarePlus className="size-4" />New chat</DM.Item>
+              <DM.Item onSelect={createRoom} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><Users className="size-4" />New co-work room</DM.Item>
+              <DM.Item onSelect={() => joinRoom()} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-bold text-plum-body outline-none hover:bg-cream-blush"><Link2 className="size-4" />Join a room…</DM.Item>
               <div className="my-1 h-px bg-line" />
               {sortedThreads.map((t) => (
                 <div key={t.id} className={cn("group flex items-center gap-1 rounded-xl px-1 py-0.5", t.id === activeId && "bg-cream-blush")}>
-                  <DM.Item onSelect={() => setActiveId(t.id)} className="flex min-w-0 flex-1 cursor-pointer items-center rounded-lg px-2 py-1.5 text-[13px] font-bold outline-none hover:bg-black/5"><span className="truncate">{t.title || "new chat"}</span></DM.Item>
+                  <DM.Item onSelect={() => { leaveRoom(); setActiveId(t.id); }} className="flex min-w-0 flex-1 cursor-pointer items-center rounded-lg px-2 py-1.5 text-[13px] font-bold outline-none hover:bg-black/5"><span className="truncate">{t.title || "new chat"}</span></DM.Item>
                   <button type="button" onClick={(e) => { e.preventDefault(); renameThread(t.id); }} aria-label="rename" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-frost-text group-hover:opacity-100"><Pencil className="size-3.5" /></button>
                   <button type="button" onClick={(e) => { e.preventDefault(); deleteThread(t.id); }} aria-label="delete" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-red-500 group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
                 </div>
@@ -656,15 +783,53 @@ export function ShhChat() {
         <Setup code={code} />
       </div>
 
+      {room && (
+        <div className="flex flex-wrap items-center gap-2 rounded-shell border-1.5 border-frost-hot bg-cream-blush px-3 py-2">
+          <Users className="size-4 flex-none text-frost-text" />
+          <span className="text-[13px] font-extrabold">{room.title}</span>
+          <button type="button" onClick={copyInvite} title="copy invite link" className="flex items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-2.5 py-1 text-[12px] font-bold hover:border-frost-hot"><span className="font-mono tracking-[.15em]">{room.id}</span><Link2 className="size-3.5" /></button>
+          <span className="flex-1" />
+          {members.length > 0 && <span className="truncate text-[12px] font-bold text-plum-muted">{members.length} here: {members.join(", ")}</span>}
+          <button type="button" onClick={leaveRoom} className="flex items-center gap-1 rounded-full border-1.5 border-line bg-cream-card px-2.5 py-1 text-[12px] font-bold text-plum-muted hover:border-frost-hot"><LogOut className="size-3.5" />Leave</button>
+        </div>
+      )}
+
       <div className={cn("relative flex flex-1 flex-col gap-3 overflow-y-auto rounded-shell border-1.5 bg-cream-card p-3 transition sm:p-4", dragging ? "border-frost-hot ring-2 ring-frost-hot/30" : "border-line")}>
         {dragging && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-shell bg-cream-card/80 text-[15px] font-extrabold text-frost-text">drop a file ♡</div>}
-        {msgs.length === 0 && (
+
+        {room && (
+          <>
+            {roomMsgs.length === 0 && (
+              <div className="m-auto flex max-w-[400px] flex-col items-center gap-2 text-center text-plum-muted">
+                <Users className="size-7 text-frost-hot" />
+                <p className="text-[14px] font-bold">you’re in a co-work room. share the code up top, then anyone who joins can prompt the same assistant and you all watch the draft build together.</p>
+              </div>
+            )}
+            {roomMsgs.map((m) => {
+              const mine = m.role === "user" && m.handle === me;
+              return (
+                <div key={m.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
+                  <div className="flex max-w-[85%] flex-col gap-1">
+                    {m.role === "user" && <span className={cn("px-2 text-[11px] font-bold text-plum-muted", mine && "self-end")}>{mine ? "you" : m.handle || "someone"}</span>}
+                    <div className={cn("rounded-3xl px-4 py-2.5 text-[14.5px] leading-relaxed", mine ? "whitespace-pre-wrap break-words bg-frost text-frost-ink" : m.role === "assistant" ? "break-words bg-paper text-plum-body" : "whitespace-pre-wrap break-words bg-cream text-plum-body")}>
+                      {m.role === "assistant" && m.steps?.length ? <div className="mb-2 flex flex-col gap-2">{m.steps.map((s) => <ToolStep key={s.id} s={s} />)}</div> : null}
+                      {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {roomBusy && <div className="flex justify-start"><div className="rounded-3xl bg-paper px-4 py-3"><Loader2 className="size-4 animate-spin text-frost-hot" /></div></div>}
+          </>
+        )}
+
+        {!room && msgs.length === 0 && (
           <div className="m-auto flex max-w-[380px] flex-col items-center gap-2 text-center text-plum-muted">
             <Sparkles className="size-7 text-frost-hot" />
             <p className="text-[14px] font-bold">ask anything. paste/drop an image (👁), attach a file, 🌐 to search the web, or ▶ to let it run code. it streams, does math, and remembers.</p>
           </div>
         )}
-        {msgs.map((m, i) => (
+        {!room && msgs.map((m, i) => (
           <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
             <div className="group flex max-w-[85%] flex-col gap-1">
               <div className={cn("rounded-3xl px-4 py-2.5 text-[14.5px] leading-relaxed", m.role === "user" ? "whitespace-pre-wrap break-words bg-frost text-frost-ink" : "break-words bg-paper text-plum-body")}>
@@ -739,9 +904,11 @@ export function ShhChat() {
         </div>
         <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
           onPaste={(e) => { const imgs = Array.from(e.clipboardData.items).filter((it) => it.type.startsWith("image/")); if (imgs.length) { e.preventDefault(); for (const it of imgs) { const f = it.getAsFile(); if (f) readImage(f, addImage); } } }}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder={web ? "ask — i’ll look it up…" : "message…  (paste an image, or attach a file)"}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); room ? roomSend() : send(); } }} rows={1} placeholder={room ? "message the room…" : web ? "ask — i’ll look it up…" : "message…  (paste an image, or attach a file)"}
           className="max-h-[200px] min-h-[48px] flex-1 resize-none rounded-3xl border-1.5 border-line bg-cream-card px-5 py-3 text-[15px] font-medium outline-none focus:border-frost-hot" />
-        {busy ? (
+        {room ? (
+          <button type="button" onClick={roomSend} disabled={roomBusy || (!input.trim() && !images.length && !docs.length)} aria-label="Send" className="grid size-12 flex-none place-items-center rounded-full bg-frost text-frost-ink disabled:opacity-50">{roomBusy ? <Loader2 className="size-5 animate-spin" /> : <Send className="size-5" />}</button>
+        ) : busy ? (
           <button type="button" onClick={stop} aria-label="Stop" className="grid size-12 flex-none place-items-center rounded-full border-1.5 border-line bg-cream-card text-frost-text hover:border-frost-hot"><Square className="size-4" fill="currentColor" /></button>
         ) : (
           <button type="button" onClick={send} disabled={!input.trim() && !images.length && !docs.length} className="grid size-12 flex-none place-items-center rounded-full bg-frost text-frost-ink disabled:opacity-50"><Send className="size-5" /></button>

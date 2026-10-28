@@ -47,6 +47,18 @@ const looksVision = (id: string) => /5\.[3-9]-flash|[-.]v$|\bv\d|vision|4\.5v|4v
 
 const codeOf = (e: Record<string, string | undefined>) => e.SHH_CODE || "SEMINOLE";
 
+const pickContent = (msg: any): string => {
+  const raw = msg?.content;
+  return typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((p: any) => p?.text ?? "").join("") : "";
+};
+
+// A short, unambiguous room code (no 0/O/1/I/L).
+function roomCode(): string {
+  const a = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const b = crypto.getRandomValues(new Uint8Array(6));
+  return [...b].map((n) => a[n % a.length]).join("");
+}
+
 // ---- tools --------------------------------------------------------------------
 // code execution: Wandbox's public sandbox — isolated and ephemeral, never on
 // our Worker or the viewer's machine. We only proxy code → Wandbox → output.
@@ -94,6 +106,41 @@ async function webSearch(q: string): Promise<string> {
     if (r.ok) { const t = (await r.text()).trim(); return t ? t.slice(0, 9000) : "(no results)"; }
     return `(search failed — ${r.status})`;
   } catch { return "(search failed)"; }
+}
+
+// Non-streaming tool loop, used by co-work rooms (the reply is stored, not
+// streamed — everyone in the room picks it up by polling).
+async function runLoop(cfg: ReturnType<typeof endpoints>, model: string, messages: any[], tools: any[]): Promise<{ content: string; steps: any[] }> {
+  const convo = [...messages];
+  const steps: any[] = [];
+  for (let it = 0; it < 6; it++) {
+    let rr: Response;
+    try {
+      rr = await fetch(cfg.chat, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", ...cfg.headers }, body: JSON.stringify({ model, messages: convo, tools: tools.length ? tools : undefined, stream: false }), signal: AbortSignal.timeout(90_000) });
+    } catch {
+      return { content: "⚠ the ai didn't answer — try again", steps };
+    }
+    const d: any = await rr.json().catch(() => null);
+    const c = d?.choices?.[0];
+    if (!rr.ok || !c) return { content: "⚠ " + (d?.error?.message || "the ai couldn't answer that"), steps };
+    const tcs = c.message?.tool_calls;
+    if (c.finish_reason === "tool_calls" && Array.isArray(tcs) && tcs.length) {
+      convo.push(c.message);
+      for (const tc of tcs) {
+        let a: any = {};
+        try { a = JSON.parse(tc.function?.arguments || "{}"); } catch { /* bad args */ }
+        let out = "";
+        if (tc.function?.name === "run_code") { out = await runCode(a.language, a.code); steps.push({ id: tc.id, name: "run_code", language: a.language, code: a.code, output: out, status: "done" }); }
+        else if (tc.function?.name === "web_search") { out = await webSearch(a.query); steps.push({ id: tc.id, name: "web_search", query: a.query, output: out, status: "done" }); }
+        else if (tc.function?.name === "read_url") { out = await readUrl(a.url); steps.push({ id: tc.id, name: "read_url", url: a.url, output: out, status: "done" }); }
+        else out = `unknown tool ${tc.function?.name}`;
+        convo.push({ role: "tool", tool_call_id: tc.id, content: out });
+      }
+      continue;
+    }
+    return { content: pickContent(c.message) || "(done)", steps };
+  }
+  return { content: "(stopped after several steps — ask me to continue)", steps };
 }
 
 const RUN_TOOL = {
@@ -230,7 +277,7 @@ export async function POST(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
   const e = await readEnv();
-  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean; exec?: boolean; instructions?: string; name?: string; content?: string; id?: string };
+  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean; exec?: boolean; instructions?: string; name?: string; content?: string; id?: string; title?: string; after?: number; text?: string; images?: string[] };
   if ((b.code || "") !== codeOf(e)) return Response.json({ error: "wrong code" }, { status: 403 });
 
   if (b.op === "unlock") return Response.json({ ok: true });
@@ -253,6 +300,76 @@ export async function POST(req: Request) {
   }
   if (b.op === "remove_file") {
     if (b.id) await run("delete from shh_docs where id = ? and user_id = ?", b.id, me.id);
+    return Response.json({ ok: true });
+  }
+
+  // ---- co-work rooms: a shared session several members work in at once ----
+  const touchMember = (room: string) =>
+    run("insert into shh_room_members (room_id, user_id, handle, last_seen) values (?, ?, ?, unixepoch()) on conflict(room_id, user_id) do update set last_seen = unixepoch(), handle = excluded.handle", room, me.id, me.handle).catch(() => {});
+
+  if (b.op === "room_create") {
+    const id = roomCode();
+    const title = (String(b.title ?? "").trim() || "project").slice(0, 80);
+    await run("insert into shh_rooms (id, owner_id, title) values (?, ?, ?)", id, me.id, title);
+    await touchMember(id);
+    return Response.json({ id, title });
+  }
+  if (b.op === "room_join") {
+    const id = String(b.id ?? "").trim().toUpperCase();
+    const room = await first<{ id: string; title: string }>("select id, title from shh_rooms where id = ?", id);
+    if (!room) return Response.json({ error: "no room with that code" }, { status: 404 });
+    await touchMember(id);
+    return Response.json({ id: room.id, title: room.title });
+  }
+  if (b.op === "room_poll") {
+    const id = String(b.id ?? "").trim().toUpperCase();
+    await touchMember(id);
+    const after = Number(b.after) || 0;
+    const rows = await all<{ id: number; handle: string | null; role: string; content: string; steps: string | null }>(
+      "select id, handle, role, content, steps from shh_room_msgs where room_id = ? and id > ? order by id limit 300", id, after,
+    ).catch(() => []);
+    const members = await all<{ handle: string }>("select handle from shh_room_members where room_id = ? and last_seen > unixepoch() - 40 order by last_seen desc", id).catch(() => []);
+    return Response.json({
+      messages: rows.map((m) => ({ id: m.id, handle: m.handle, role: m.role, content: m.content, steps: m.steps ? JSON.parse(m.steps) : undefined })),
+      members: members.map((x) => x.handle).filter(Boolean),
+    }, { headers: { "cache-control": "no-store" } });
+  }
+  if (b.op === "room_send") {
+    const id = String(b.id ?? "").trim().toUpperCase();
+    const room = await first<{ id: string; owner_id: string }>("select id, owner_id from shh_rooms where id = ?", id);
+    if (!room) return Response.json({ error: "that room is gone" }, { status: 404 });
+    await touchMember(id);
+    const text = String(b.text ?? "").slice(0, 120_000);
+    const images = Array.isArray(b.images) ? b.images.slice(0, 6) : [];
+    if (!text.trim() && !images.length) return Response.json({ error: "nothing to send" }, { status: 400 });
+    // store the member's turn (image bytes aren't persisted — just a marker)
+    await run("insert into shh_room_msgs (room_id, user_id, handle, role, content) values (?, ?, ?, 'user', ?)", id, me.id, me.handle, text + (images.length ? `\n[${images.length} image(s) attached]` : ""));
+
+    // assemble the shared transcript + the room owner's instructions/files as project context
+    const cfg = endpoints(e);
+    const preamble: any[] = [];
+    const owner = await first<{ shh_instructions: string | null }>("select shh_instructions from users where id = ?", room.owner_id).catch(() => null);
+    const refParts: string[] = [];
+    if (owner?.shh_instructions?.trim()) refParts.push("PROJECT INSTRUCTIONS / MEMORY:\n" + owner.shh_instructions.trim());
+    const refDocs = await all<{ name: string; content: string }>("select name, content from shh_docs where user_id = ? order by created_at", room.owner_id).catch(() => []);
+    let bud = 150_000;
+    for (const d of refDocs) { const blk = `--- project file: ${d.name} ---\n${d.content}`; if (blk.length > bud) { if (bud > 2000) refParts.push(blk.slice(0, bud)); break; } refParts.push(blk); bud -= blk.length; }
+    preamble.push({ role: "system", content: "You are the shared assistant in a co-work room where several people collaborate on a project with you. Each user message is prefixed with who sent it. Keep a running draft, answer clearly, and build on what either person asks. " + (refParts.length ? "Project context:\n\n" + refParts.join("\n\n") : "") });
+    const tools: any[] = [];
+    if (b.exec) tools.push(RUN_TOOL);
+    if (b.web) tools.push(SEARCH_TOOL, READ_TOOL);
+
+    const rows = await all<{ handle: string | null; role: string; content: string }>("select handle, role, content from shh_room_msgs where room_id = ? order by id desc limit 50", id).catch(() => []);
+    rows.reverse();
+    const convo: any[] = rows.map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.role === "assistant" ? m.content : `${m.handle || "someone"}: ${m.content}` }));
+    // attach this send's images to the final user turn
+    if (images.length && convo.length) {
+      const lastText = typeof convo[convo.length - 1].content === "string" ? convo[convo.length - 1].content : "";
+      convo[convo.length - 1] = { role: "user", content: [{ type: "text", text: lastText }, ...images.map((u) => ({ type: "image_url", image_url: { url: u } }))] };
+    }
+    const messages = budgetHistory([...preamble, ...convo]);
+    const { content, steps } = await runLoop(cfg, b.model || cfg.model, messages, tools);
+    await run("insert into shh_room_msgs (room_id, role, content, steps) values (?, 'assistant', ?, ?)", id, content, steps.length ? JSON.stringify(steps) : null);
     return Response.json({ ok: true });
   }
 

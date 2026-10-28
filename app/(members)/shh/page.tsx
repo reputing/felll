@@ -10,10 +10,10 @@ export async function generateMetadata() {
 }
 
 export default async function ShhPage() {
-  await requireMember("/shh");
+  const u = await requireMember("/shh");
   return (
     <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 px-3 pb-6 pt-4 sm:px-5">
-      <ShhChat />
+      <ShhChat me={u.handle} />
     </div>
   );
 }
