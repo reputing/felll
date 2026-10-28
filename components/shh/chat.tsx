@@ -7,8 +7,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Brain, Check, ChevronDown, Copy, EyeOff, FileText, Globe, ImagePlus, Loader2, Lock, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, X } from "lucide-react";
+import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, FileText, Globe, ImagePlus, Loader2, Lock, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
+import { Decoy, DECOY_SKINS } from "@/components/shh/decoy";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -17,7 +18,7 @@ interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
 interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean }
 interface Thread { id: string; title: string; updatedAt: number }
-interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; disguise: string; customTitle: string }
+interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; disguise: string; customTitle: string; decoy: string }
 
 const CODE_KEY = "shh:code";
 const MODEL_KEY = "shh:model";
@@ -28,7 +29,7 @@ const OLD_CONVO_KEY = "shh:convo";
 const threadKey = (id: string) => `shh:thread:${id}`;
 const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps, and LaTeX ($…$ or $$…$$) for math.";
 
-const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: false, disguise: "off", customTitle: "" };
+const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, disguise: "off", customTitle: "", decoy: "word" };
 const DISGUISES: Record<string, { title: string; emoji: string }> = {
   docs: { title: "Untitled document - Google Docs", emoji: "📝" },
   sheets: { title: "Untitled spreadsheet - Google Sheets", emoji: "📊" },
@@ -297,8 +298,17 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
             <Toggle on={prefs.hideHeader} onClick={() => set({ hideHeader: !prefs.hideHeader })} />
           </div>
           <div className={row}>
-            <div><div className="text-[13.5px] font-extrabold">Boss key</div><div className="text-[12px] font-semibold text-plum-muted">press the <kbd className="rounded bg-black/10 px-1 font-mono">`</kbd> (backtick) key to instantly blank the screen; click to bring it back</div></div>
+            <div><div className="text-[13.5px] font-extrabold">Boss key</div><div className="text-[12px] font-semibold text-plum-muted">tap <kbd className="rounded bg-black/10 px-1 font-mono">`</kbd> (backtick) to instantly throw up the decoy; tap it again, press <kbd className="rounded bg-black/10 px-1 font-mono">Esc</kbd>, or click the top-left icon to come back</div></div>
             <Toggle on={prefs.bossKey} onClick={() => set({ bossKey: !prefs.bossKey })} />
+          </div>
+          <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
+            <div className="text-[13.5px] font-extrabold">Decoy screen</div>
+            <div className="text-[12px] font-semibold text-plum-muted">what the Hide button and boss key show — a full-screen cover that looks like schoolwork. the chat stays exactly where you left it underneath.</div>
+            <div className="flex flex-wrap gap-1.5">
+              {DECOY_SKINS.map((s) => (
+                <button key={s.id} type="button" onClick={() => set({ decoy: s.id })} className={cn("rounded-full border-1.5 px-3 py-1.5 text-[12.5px] font-bold", prefs.decoy === s.id ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line hover:border-frost-hot")}>{s.label}</button>
+              ))}
+            </div>
           </div>
           <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
             <div className="text-[13.5px] font-extrabold">Disguise the tab</div>
@@ -347,7 +357,7 @@ export function ShhChat() {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
-  const [blank, setBlank] = useState(false);
+  const [cover, setCover] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
@@ -442,18 +452,18 @@ export function ShhChat() {
     return () => { document.title = original; setFavicon(null); };
   }, [prefs.disguise, prefs.customTitle]);
 
-  // boss key: backtick blanks the screen instantly
+  // boss key: backtick throws up (or lifts) the decoy instantly
   useEffect(() => {
     if (!prefs.bossKey) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "`") return;
-      if ((e.target as HTMLElement)?.closest("input,textarea")) return;
+      if ((e.target as HTMLElement)?.closest("input,textarea,[contenteditable='true']")) return;
       e.preventDefault();
-      setBlank((b) => !b);
+      setCover((c) => (c ? null : prefs.decoy || "blank"));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prefs.bossKey]);
+  }, [prefs.bossKey, prefs.decoy]);
 
   const unlock = async () => {
     const c = codeInput.trim();
@@ -597,10 +607,8 @@ export function ShhChat() {
       onDrop={(e) => { e.preventDefault(); setDragging(false); for (const f of Array.from(e.dataTransfer.files)) { readImage(f, addImage); readDoc(f, addDoc); } }}>
       <style dangerouslySetInnerHTML={{ __html: MD_CSS }} />
 
-      {/* boss-key blank overlay */}
-      {blank && (
-        <div onClick={() => setBlank(false)} className="fixed inset-0 z-[9999] cursor-pointer bg-cream" aria-hidden />
-      )}
+      {/* decoy / boss-key cover — chat stays mounted underneath */}
+      {cover && <Decoy skin={cover} onExit={() => setCover(null)} />}
 
       <div className="flex flex-wrap items-center gap-2">
         {/* thread switcher */}
@@ -630,7 +638,20 @@ export function ShhChat() {
           {models.map((m) => <option key={m.id} value={m.id}>{m.id}{m.vision ? " 👁" : ""}</option>)}
         </select>
         <span className="flex-1" />
-        <button type="button" onClick={() => setBlank(true)} aria-label="Hide" title="hide now (click to bring back)" className="grid h-10 w-10 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-muted hover:border-frost-hot"><EyeOff className="size-4" /></button>
+        {/* quick decoy: pick a skin to throw up instantly */}
+        <DM.Root>
+          <DM.Trigger asChild>
+            <button type="button" aria-label="Decoy" title="cover the screen with a decoy" className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[13px] font-bold text-plum-muted hover:border-frost-hot"><Drama className="size-4" /><ChevronDown className="size-3.5 opacity-60" /></button>
+          </DM.Trigger>
+          <DM.Portal>
+            <DM.Content align="end" sideOffset={6} className={cn(POPUP, "z-50 flex w-[180px] flex-col gap-0.5 rounded-2xl p-1.5")}>
+              {DECOY_SKINS.map((s) => (
+                <DM.Item key={s.id} onSelect={() => setCover(s.id)} className="cursor-pointer rounded-xl px-3 py-2 text-[13px] font-bold outline-none hover:bg-cream-blush">{s.label}</DM.Item>
+              ))}
+            </DM.Content>
+          </DM.Portal>
+        </DM.Root>
+        <button type="button" onClick={() => setCover(prefs.decoy || "blank")} aria-label="Hide" title="hide now — Esc or the top-left icon brings it back" className="grid h-10 w-10 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-muted hover:border-frost-hot"><EyeOff className="size-4" /></button>
         <Customize prefs={prefs} setPrefs={setPrefs} />
         <Setup code={code} />
       </div>
