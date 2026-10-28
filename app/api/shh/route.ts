@@ -9,6 +9,11 @@ import { all, first, run } from "@/lib/db";
 // Upstream is an OpenAI-compatible AI API. Default: Z.ai (GLM) with
 // glm-5.3-flash, which is natively multimodal — it reads images. Override with
 // AI_API_URL (an OpenAI-style base), AI_API_KEY and AI_MODEL.
+//
+// Chat is STREAMED: the POST chat op returns newline-delimited JSON events
+// (see the loop at the bottom) so the client paints tokens as they arrive. The
+// same loop runs the model's tools — run_code, web_search, read_url, remember —
+// feeding each result back until it answers.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // Server-side only (this route runs on the Worker, never shipped to browsers).
@@ -42,14 +47,9 @@ const looksVision = (id: string) => /5\.[3-9]-flash|[-.]v$|\bv\d|vision|4\.5v|4v
 
 const codeOf = (e: Record<string, string | undefined>) => e.SHH_CODE || "SEMINOLE";
 
-const pickContent = (msg: any): string => {
-  const raw = msg?.content;
-  return typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((p: any) => p?.text ?? "").join("") : "";
-};
-
-// ---- code execution (the "run code" tool) -------------------------------------
-// Code runs in Wandbox's public sandbox — isolated and ephemeral, never on our
-// Worker or the viewer's machine. We only proxy code → Wandbox → output.
+// ---- tools --------------------------------------------------------------------
+// code execution: Wandbox's public sandbox — isolated and ephemeral, never on
+// our Worker or the viewer's machine. We only proxy code → Wandbox → output.
 const WANDBOX: Record<string, string> = {
   python: "cpython-3.14.0", py: "cpython-3.14.0", python3: "cpython-3.14.0",
   javascript: "nodejs-20.17.0", js: "nodejs-20.17.0", node: "nodejs-20.17.0",
@@ -76,49 +76,117 @@ async function runCode(language: string, code: string): Promise<string> {
     return (out || "(ran with no output)").slice(0, 5000);
   } catch { return "execution timed out or failed"; }
 }
+
+// web look-up (keyless): read a URL, or run a search — DuckDuckGo lite fetched
+// through r.jina.ai, which returns clean result text (titles, links, snippets).
+async function readUrl(u: string): Promise<string> {
+  try {
+    const r = await fetch(`https://r.jina.ai/${u}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(22_000) });
+    if (r.ok) return (await r.text()).slice(0, 8000);
+    return `(couldn't read ${u} — ${r.status})`;
+  } catch { return `(couldn't reach ${u})`; }
+}
+async function webSearch(q: string): Promise<string> {
+  const query = String(q ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!query) return "(empty query)";
+  try {
+    const r = await fetch(`https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(25_000) });
+    if (r.ok) { const t = (await r.text()).trim(); return t ? t.slice(0, 9000) : "(no results)"; }
+    return `(search failed — ${r.status})`;
+  } catch { return "(search failed)"; }
+}
+
 const RUN_TOOL = {
   type: "function",
   function: {
     name: "run_code",
-    description: "Execute code in an isolated sandbox and get its output (stdout/stderr). Use it for calculations, data work, testing snippets, anything better answered by running code. Supported languages: python, javascript, typescript, c, c++, go, ruby, php, bash, rust, java, c#.",
+    description: "Execute code in an isolated sandbox and get its output (stdout/stderr). Use it for calculations, data work, testing snippets, anything better answered by running code. Supported: python, javascript, typescript, c, c++, go, ruby, php, bash, rust, java, c#.",
     parameters: { type: "object", properties: { language: { type: "string", description: "e.g. python, javascript, go" }, code: { type: "string", description: "a complete program that prints its result" } }, required: ["language", "code"] },
   },
 };
+const SEARCH_TOOL = {
+  type: "function",
+  function: {
+    name: "web_search",
+    description: "Search the live web and get result titles, links and snippets. Use it for anything current, factual, or beyond your training. You can call it several times to refine, then read_url the best links.",
+    parameters: { type: "object", properties: { query: { type: "string", description: "the search query" } }, required: ["query"] },
+  },
+};
+const READ_TOOL = {
+  type: "function",
+  function: {
+    name: "read_url",
+    description: "Fetch a web page and get its readable text. Use it to read a search result or a link the user pasted.",
+    parameters: { type: "object", properties: { url: { type: "string", description: "the full https URL to read" } }, required: ["url"] },
+  },
+};
+const REMEMBER_TOOL = {
+  type: "function",
+  function: {
+    name: "remember",
+    description: "Save a durable fact about the user or their preferences to long-term memory, so you keep it in every future chat. Use it sparingly, only when the user shares something clearly worth remembering (their name, how they like answers, an ongoing project). Don't remember secrets or one-off trivia.",
+    parameters: { type: "object", properties: { fact: { type: "string", description: "a short first-person-about-the-user fact, e.g. 'prefers concise answers with worked steps'" } }, required: ["fact"] },
+  },
+};
 
-// The latest user turn as plain text (content can be a string or a multimodal array).
-function lastUserText(messages: any[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m?.role !== "user") continue;
-    if (typeof m.content === "string") return m.content;
-    if (Array.isArray(m.content)) return m.content.filter((p: any) => p?.type === "text").map((p: any) => p?.text ?? "").join(" ");
-  }
-  return "";
+// Append a fact to the member's persistent memory (deduped, capped).
+async function remember(userId: string, current: string | null, fact: string): Promise<string | null> {
+  const f = String(fact ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+  if (!f) return null;
+  const base = (current ?? "").trim();
+  if (base.toLowerCase().includes(f.toLowerCase())) return null; // already known
+  const header = /(^|\n)## remembered\b/i.test(base) ? "" : (base ? "\n\n" : "") + "## remembered";
+  const next = (base + header + `\n- ${f}`).slice(0, 20_000);
+  await run("update users set shh_instructions = ? where id = ?", next, userId).catch(() => {});
+  return f;
 }
 
-// "Look up" (keyless): read any URLs in the message, otherwise run a web search —
-// DuckDuckGo fetched through r.jina.ai, which returns clean result text (titles,
-// links, snippets). Returns context text for the model; empty on failure.
-async function lookup(query: string): Promise<string> {
-  const out: string[] = [];
-  const urls = [...new Set(query.match(/https?:\/\/[^\s<>"')]+/g) || [])].slice(0, 3);
-  if (urls.length) {
-    await Promise.all(urls.map(async (u) => {
-      try {
-        const r = await fetch(`https://r.jina.ai/${u}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(22_000) });
-        if (r.ok) out.push(`SOURCE ${u}:\n${(await r.text()).slice(0, 6000)}`);
-      } catch { /* skip this url */ }
-    }));
-  } else {
-    const q = query.replace(/\s+/g, " ").trim().slice(0, 200);
-    if (q) {
-      try {
-        const r = await fetch(`https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(25_000) });
-        if (r.ok) { const t = (await r.text()).trim(); if (t) out.push("WEB SEARCH RESULTS (DuckDuckGo):\n" + t.slice(0, 8000)); }
-      } catch { /* search failed */ }
-    }
+// ---- history budgeting --------------------------------------------------------
+// A single giant paste (or a runaway conversation) used to overflow the upstream
+// request limit and come back "Invalid API parameter" — the whole turn just
+// failed. We now (1) clamp any one oversized message and (2) keep the most recent
+// turns under a character budget, dropping older ones behind a marker. Leading
+// system messages (the setup/memory preamble) are always kept.
+const PER_MSG = 120_000;
+const HISTORY_BUDGET = 480_000;
+
+function clampText(s: string, max = PER_MSG): string {
+  return s.length > max ? s.slice(0, max) + `\n\n[…truncated ${s.length - max} characters to fit…]` : s;
+}
+function msgSize(m: any): number {
+  const c = m?.content;
+  if (typeof c === "string") return c.length;
+  if (Array.isArray(c)) return c.reduce((n: number, p: any) => n + (p?.text?.length || 0) + (p?.image_url?.url?.length || 0), 0);
+  return 0;
+}
+function clampMsg(m: any): any {
+  const c = m?.content;
+  if (typeof c === "string") return { ...m, content: clampText(c) };
+  if (Array.isArray(c)) {
+    let imgs = 0;
+    const parts = c
+      .map((p: any) => (p?.type === "text" ? { ...p, text: clampText(String(p.text ?? "")) } : p))
+      .filter((p: any) => (p?.type === "image_url" ? ++imgs <= 8 : true)); // cap images/turn
+    return { ...m, content: parts };
   }
-  return out.join("\n\n---\n\n");
+  return m;
+}
+function budgetHistory(messages: any[]): any[] {
+  const lead: any[] = [];
+  let i = 0;
+  while (i < messages.length && messages[i]?.role === "system") lead.push(messages[i++]);
+  const rest = messages.slice(i).map(clampMsg);
+  const kept: any[] = [];
+  let used = lead.reduce((n, m) => n + msgSize(m), 0);
+  let dropped = 0;
+  for (let j = rest.length - 1; j >= 0; j--) {
+    const sz = msgSize(rest[j]);
+    if (used + sz > HISTORY_BUDGET && kept.length) { dropped = j + 1; break; }
+    kept.unshift(rest[j]);
+    used += sz;
+  }
+  if (dropped > 0) lead.push({ role: "system", content: `[${dropped} earlier message(s) were trimmed to keep this within limits. Ask the user to repeat anything you need.]` });
+  return [...lead, ...kept];
 }
 
 // Normalise both the OpenAI `{data:[{id}]}` shape and pollinations' flat array.
@@ -153,7 +221,6 @@ export async function GET(req: Request) {
     const r = await fetch(cfg.models, { headers: { accept: "application/json", ...cfg.headers }, signal: AbortSignal.timeout(20_000) });
     models = normalizeModels(await r.json());
   } catch { /* fall through with just the default */ }
-  // Always offer the configured default, even if the upstream list omits it.
   if (cfg.model && !models.some((m) => m.id === cfg.model)) models.unshift({ id: cfg.model, label: cfg.model, vision: looksVision(cfg.model) });
   const docs = await all<{ id: string; name: string }>("select id, name from shh_docs where user_id = ? order by created_at", me.id).catch(() => []);
   return Response.json({ models, default: cfg.model, instructions: me.shh_instructions ?? "", docs }, { headers: { "cache-control": "no-store" } });
@@ -190,17 +257,17 @@ export async function POST(req: Request) {
   }
 
   if (b.op === "chat") {
-    // Uncapped history — the owner wants the full conversation sent each time.
     let messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
     const cfg = endpoints(e);
-    // Prepend the member's persistent setup (instructions/memory + reference
-    // files it always uses) and, when web is on, the look-up findings.
+
+    // Persistent setup preamble: instructions/memory + reference files.
     const preamble: any[] = [];
     const refParts: string[] = [];
-    if (me.shh_instructions && me.shh_instructions.trim()) refParts.push("INSTRUCTIONS / MEMORY:\n" + me.shh_instructions.trim());
+    let memory = me.shh_instructions ?? "";
+    if (memory && memory.trim()) refParts.push("INSTRUCTIONS / MEMORY:\n" + memory.trim());
     const refDocs = await all<{ name: string; content: string }>("select name, content from shh_docs where user_id = ? order by created_at", me.id).catch(() => []);
-    let budget = 200_000;
+    let budget = 180_000;
     for (const d of refDocs) {
       const block = `--- reference file: ${d.name} ---\n${d.content}`;
       if (block.length > budget) { if (budget > 2000) refParts.push(block.slice(0, budget)); break; }
@@ -208,69 +275,133 @@ export async function POST(req: Request) {
       budget -= block.length;
     }
     if (refParts.length) preamble.push({ role: "system", content: "The user set up this persistent context for you — always use it:\n\n" + refParts.join("\n\n") });
-    if (b.web) {
-      const ctx = await lookup(lastUserText(messages));
-      preamble.push({ role: "system", content: ctx
-        ? "You have live web access for this question. Freshly fetched web content is below — use it to answer and cite the sources (titles/URLs) you rely on.\n\n" + ctx.slice(0, 18000)
-        : "A web lookup ran for this question but returned nothing useful — answer from your own knowledge and say the web turned up nothing." });
-    }
-    if (preamble.length) messages = [...preamble, ...messages];
 
-    // Code execution: give the model the run_code tool and loop, running each
-    // tool call in the sandbox and feeding the output back, until it answers.
-    if (b.exec) {
-      const convo = [...messages];
-      const steps: { language: string; code: string; output: string }[] = [];
-      for (let it = 0; it < 6; it++) {
-        let rr: Response;
+    // Which tools are on this turn. remember is always available.
+    const tools: any[] = [];
+    if (b.exec) tools.push(RUN_TOOL);
+    if (b.web) tools.push(SEARCH_TOOL, READ_TOOL);
+    tools.push(REMEMBER_TOOL);
+    const hints: string[] = [];
+    if (b.web) hints.push("You have live web access via web_search and read_url — use them for anything current or factual and cite what you rely on.");
+    if (b.exec) hints.push("You can run code via run_code for calculations and data work.");
+    hints.push("You can save durable facts about the user with remember.");
+    preamble.push({ role: "system", content: hints.join(" ") });
+
+    messages = budgetHistory([...preamble, ...messages]);
+
+    const model = b.model || cfg.model;
+    const enc = new TextEncoder();
+    let abort: AbortController | null = null;
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const emit = (ev: Record<string, unknown>) => {
+          try { controller.enqueue(enc.encode(JSON.stringify(ev) + "\n")); } catch { /* closed */ }
+        };
+        const convo = [...messages];
         try {
-          rr = await fetch(cfg.chat, {
-            method: "POST",
-            headers: { "content-type": "application/json", accept: "application/json", ...cfg.headers },
-            body: JSON.stringify({ model: b.model || cfg.model, messages: convo, tools: [RUN_TOOL], stream: false }),
-            signal: AbortSignal.timeout(90_000),
-          });
-        } catch {
-          return Response.json({ error: "the ai didn't answer — try again", steps }, { status: 502 });
-        }
-        const d: any = await rr.json().catch(() => null);
-        const c = d?.choices?.[0];
-        if (!rr.ok || !c) return Response.json({ error: d?.error?.message || "the ai couldn't answer that", steps }, { status: rr.ok ? 502 : rr.status });
-        const tcs = c?.message?.tool_calls;
-        if (c.finish_reason === "tool_calls" && Array.isArray(tcs) && tcs.length) {
-          convo.push(c.message);
-          for (const tc of tcs) {
-            let args: any = {};
-            try { args = JSON.parse(tc.function?.arguments || "{}"); } catch { /* bad args */ }
-            const output = await runCode(args.language, args.code);
-            steps.push({ language: String(args.language ?? ""), code: String(args.code ?? ""), output });
-            convo.push({ role: "tool", tool_call_id: tc.id, content: output });
-          }
-          continue;
-        }
-        return Response.json({ content: pickContent(c.message) || "(done)", steps }, { headers: { "cache-control": "no-store" } });
-      }
-      return Response.json({ content: "(stopped after several code steps — ask me to continue)", steps }, { headers: { "cache-control": "no-store" } });
-    }
+          for (let it = 0; it < 8; it++) {
+            abort = new AbortController();
+            let rr: Response;
+            try {
+              rr = await fetch(cfg.chat, {
+                method: "POST",
+                headers: { "content-type": "application/json", accept: "text/event-stream", ...cfg.headers },
+                body: JSON.stringify({ model, messages: convo, tools: tools.length ? tools : undefined, stream: true }),
+                signal: abort.signal,
+              });
+            } catch {
+              emit({ k: "err", v: "the ai didn't answer — try again" });
+              break;
+            }
+            if (!rr.ok || !rr.body) {
+              let msg = "the ai couldn't answer that";
+              try { const j: any = await rr.json(); msg = j?.error?.message || msg; } catch { /* non-json */ }
+              emit({ k: "err", v: msg });
+              break;
+            }
 
-    let r: Response;
-    try {
-      r = await fetch(cfg.chat, {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json", ...cfg.headers },
-        body: JSON.stringify({ model: b.model || cfg.model, messages, stream: false }),
-        signal: AbortSignal.timeout(90_000),
-      });
-    } catch {
-      return Response.json({ error: "the ai didn't answer — try again" }, { status: 502 });
-    }
-    const text = await r.text();
-    let data: any = null;
-    try { data = JSON.parse(text); } catch { /* some upstreams return plain text */ }
-    const raw = data?.choices?.[0]?.message?.content ?? (data ? null : text);
-    const content = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((p: any) => p?.text ?? "").join("") : "";
-    if (!r.ok || !content.trim()) return Response.json({ error: data?.error?.message || "the ai couldn't answer that" }, { status: r.ok ? 502 : r.status });
-    return Response.json({ content }, { headers: { "cache-control": "no-store" } });
+            // Parse the upstream SSE: accumulate visible content + any tool calls.
+            let content = "";
+            const toolAcc = new Map<number, { id: string; name: string; args: string }>();
+            let finish: string | null = null;
+            const reader = rr.body.getReader();
+            const dec = new TextDecoder();
+            let buf = "";
+            readLoop: for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += dec.decode(value, { stream: true });
+              let nl: number;
+              while ((nl = buf.indexOf("\n")) >= 0) {
+                const line = buf.slice(0, nl).trim();
+                buf = buf.slice(nl + 1);
+                if (!line.startsWith("data:")) continue;
+                const payload = line.slice(5).trim();
+                if (payload === "[DONE]") break readLoop;
+                let j: any = null;
+                try { j = JSON.parse(payload); } catch { continue; }
+                const ch = j?.choices?.[0];
+                if (!ch) continue;
+                const delta = ch.delta || {};
+                if (typeof delta.content === "string" && delta.content) { content += delta.content; emit({ k: "d", v: delta.content }); }
+                if (Array.isArray(delta.tool_calls)) {
+                  for (const tc of delta.tool_calls) {
+                    const idx = tc.index ?? 0;
+                    const cur = toolAcc.get(idx) || { id: "", name: "", args: "" };
+                    if (tc.id) cur.id = tc.id;
+                    if (tc.function?.name) cur.name = tc.function.name;
+                    if (tc.function?.arguments) cur.args += tc.function.arguments;
+                    toolAcc.set(idx, cur);
+                  }
+                }
+                if (ch.finish_reason) finish = ch.finish_reason;
+              }
+            }
+
+            // Tool calls → run them, feed outputs back, loop again.
+            if (toolAcc.size > 0 && finish !== "stop") {
+              const toolCalls = [...toolAcc.values()].filter((t) => t.name).map((t) => ({ id: t.id || crypto.randomUUID(), type: "function", function: { name: t.name, arguments: t.args || "{}" } }));
+              convo.push({ role: "assistant", content, tool_calls: toolCalls });
+              for (const tc of toolCalls) {
+                let args: any = {};
+                try { args = JSON.parse(tc.function.arguments || "{}"); } catch { /* bad args */ }
+                let output = "";
+                if (tc.function.name === "run_code") {
+                  emit({ k: "tool", id: tc.id, name: "run_code", language: String(args.language ?? ""), code: String(args.code ?? ""), status: "running" });
+                  output = await runCode(args.language, args.code);
+                } else if (tc.function.name === "web_search") {
+                  emit({ k: "tool", id: tc.id, name: "web_search", query: String(args.query ?? ""), status: "running" });
+                  output = await webSearch(args.query);
+                } else if (tc.function.name === "read_url") {
+                  emit({ k: "tool", id: tc.id, name: "read_url", url: String(args.url ?? ""), status: "running" });
+                  output = await readUrl(args.url);
+                } else if (tc.function.name === "remember") {
+                  const saved = await remember(me.id, memory, args.fact);
+                  if (saved) { memory = (memory ? memory + "\n- " : "- ") + saved; emit({ k: "mem", v: saved }); }
+                  output = saved ? "saved to memory" : "already known / skipped";
+                } else {
+                  output = `unknown tool ${tc.function.name}`;
+                }
+                emit({ k: "tool", id: tc.id, status: "done", output });
+                convo.push({ role: "tool", tool_call_id: tc.id, content: output });
+              }
+              continue;
+            }
+
+            if (!content.trim()) emit({ k: "err", v: "the ai returned nothing — try again" });
+            break;
+          }
+        } catch {
+          emit({ k: "err", v: "the ai stopped unexpectedly" });
+        }
+        emit({ k: "end" });
+        try { controller.close(); } catch { /* already closed */ }
+      },
+      cancel() { try { abort?.abort(); } catch { /* */ } },
+    });
+
+    return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" } });
   }
 
   return Response.json({ error: "unknown op" }, { status: 400 });

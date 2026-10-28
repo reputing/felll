@@ -1,20 +1,42 @@
 "use client";
+import "katex/dist/katex.min.css";
 import * as D from "@radix-ui/react-dialog";
-import { useEffect, useRef, useState } from "react";
-import { Check, Copy, FileText, Globe, ImagePlus, Loader2, Lock, Paperclip, RotateCw, Send, Settings2, Sparkles, Square, SquarePen, Terminal, Upload, X } from "lucide-react";
+import * as DM from "@radix-ui/react-dropdown-menu";
+import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import { Brain, Check, ChevronDown, Copy, EyeOff, FileText, Globe, ImagePlus, Loader2, Lock, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 interface Model { id: string; label: string; vision: boolean }
 interface Doc { name: string; content: string }
-interface Step { language: string; code: string; output: string }
-interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[] }
+interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
+interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean }
+interface Thread { id: string; title: string; updatedAt: number }
+interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; disguise: string; customTitle: string }
 
 const CODE_KEY = "shh:code";
-const CONVO_KEY = "shh:convo";
 const MODEL_KEY = "shh:model";
-const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps.";
+const THREADS_KEY = "shh:threads";
+const ACTIVE_KEY = "shh:active";
+const PREFS_KEY = "shh:prefs";
+const OLD_CONVO_KEY = "shh:convo";
+const threadKey = (id: string) => `shh:thread:${id}`;
+const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps, and LaTeX ($…$ or $$…$$) for math.";
+
+const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: false, disguise: "off", customTitle: "" };
+const DISGUISES: Record<string, { title: string; emoji: string }> = {
+  docs: { title: "Untitled document - Google Docs", emoji: "📝" },
+  sheets: { title: "Untitled spreadsheet - Google Sheets", emoji: "📊" },
+  slides: { title: "Untitled presentation - Google Slides", emoji: "📽️" },
+  classroom: { title: "Classes", emoji: "🎓" },
+  drive: { title: "My Drive - Google Drive", emoji: "📁" },
+  mail: { title: "Inbox - Gmail", emoji: "✉️" },
+};
 
 // OpenAI-style payload (string content, or an array with image_url parts).
 // Attached files are folded into the user turn's text.
@@ -33,24 +55,30 @@ function toApi(msgs: Msg[]) {
   return out;
 }
 
-// Big screenshots as raw base64 blow past the AI API's request limits ("Invalid
-// API parameter"), so downscale to <=1600px and re-encode as JPEG before sending.
+// Big images as raw base64 blow past the API's request limits (the old "Invalid
+// API parameter" failure), so downscale and re-encode as JPEG. If the first pass
+// is still heavy, squeeze again — a readable page beats a failed turn.
 function compressImage(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      let { width, height } = img;
-      if (!width || !height) return resolve(dataUrl);
-      const max = 1600;
-      if (width > max || height > max) { const s = max / Math.max(width, height); width = Math.round(width * s); height = Math.round(height * s); }
-      try {
-        const c = document.createElement("canvas");
-        c.width = width; c.height = height;
-        const ctx = c.getContext("2d");
-        if (!ctx) return resolve(dataUrl);
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(c.toDataURL("image/jpeg", 0.85));
-      } catch { resolve(dataUrl); }
+      const render = (max: number, q: number): string => {
+        let { width, height } = img;
+        if (!width || !height) return dataUrl;
+        if (width > max || height > max) { const s = max / Math.max(width, height); width = Math.round(width * s); height = Math.round(height * s); }
+        try {
+          const c = document.createElement("canvas");
+          c.width = width; c.height = height;
+          const ctx = c.getContext("2d");
+          if (!ctx) return dataUrl;
+          ctx.drawImage(img, 0, 0, width, height);
+          return c.toDataURL("image/jpeg", q);
+        } catch { return dataUrl; }
+      };
+      let out = render(1500, 0.82);
+      if (out.length > 1_400_000) out = render(1100, 0.72); // still huge → squeeze harder
+      if (out.length > 1_400_000) out = render(820, 0.68);
+      resolve(out);
     };
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
@@ -67,34 +95,67 @@ const readImage = (f: File, add: (url: string) => void) => {
 
 // Text-ish files we can read and hand to the model as context.
 const TEXT_RE = /\.(txt|md|markdown|json|jsonl|csv|tsv|log|ya?ml|toml|ini|env|xml|html?|css|scss|js|jsx|ts|tsx|py|rb|go|rs|java|c|h|cpp|cs|php|sh|bash|sql|r|swift|kt|srt|vtt)$/i;
+const readableDoc = (f: File) => TEXT_RE.test(f.name) || f.type.startsWith("text/") || /json|xml|csv|javascript/.test(f.type);
 const readDoc = (f: File, add: (d: Doc) => void) => {
   if (f.type.startsWith("image/")) return;
-  if (!(TEXT_RE.test(f.name) || f.type.startsWith("text/") || /json|xml|csv|javascript/.test(f.type))) { toast(`can't read ${f.name} — text files only`); return; }
+  if (!readableDoc(f)) { toast(`can't read ${f.name} — text files only`); return; }
   if (f.size > 1024 * 1024) { toast(`${f.name} is too big (1MB max)`); return; }
   const reader = new FileReader();
   reader.onload = () => { if (typeof reader.result === "string") add({ name: f.name, content: reader.result.slice(0, 200_000) }); };
   reader.readAsText(f);
 };
 
-// ---- tiny, safe markdown (no HTML injection): code fences, inline code, bold ----
-function renderInline(s: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = [];
-  const re = /`([^`]+)`|\*\*([^*]+?)\*\*/g;
-  let last = 0, k = 0, m: RegExpExecArray | null;
-  while ((m = re.exec(s))) {
-    if (m.index > last) nodes.push(s.slice(last, m.index));
-    if (m[1] != null) nodes.push(<code key={k++} className="rounded bg-black/10 px-1 py-0.5 font-mono text-[12.5px]">{m[1]}</code>);
-    else nodes.push(<strong key={k++}>{m[2]}</strong>);
-    last = re.lastIndex;
-  }
-  if (last < s.length) nodes.push(s.slice(last));
-  return nodes;
-}
+// ---- markdown (gfm + math), with a copy button on code blocks ----
+const MD_CSS = `
+.shh-md{line-height:1.6;word-break:break-word}
+.shh-md > :first-child{margin-top:0}
+.shh-md > :last-child{margin-bottom:0}
+.shh-md p{margin:.5em 0}
+.shh-md h1,.shh-md h2,.shh-md h3,.shh-md h4{font-weight:800;line-height:1.25;margin:.85em 0 .35em}
+.shh-md h1{font-size:1.32em}.shh-md h2{font-size:1.16em}.shh-md h3{font-size:1.05em}
+.shh-md ul,.shh-md ol{margin:.4em 0;padding-left:1.45em}
+.shh-md ul{list-style:disc}.shh-md ol{list-style:decimal}
+.shh-md li{margin:.2em 0}
+.shh-md li>ul,.shh-md li>ol{margin:.2em 0}
+.shh-md a{color:var(--color-frost-text,#bd4b86);text-decoration:underline;text-underline-offset:2px}
+.shh-md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:rgba(0,0,0,.08);padding:.12em .34em;border-radius:.35em}
+.shh-md table{border-collapse:collapse;margin:.6em 0;display:block;max-width:100%;overflow-x:auto}
+.shh-md th,.shh-md td{border:1px solid rgba(0,0,0,.14);padding:.32em .6em;text-align:left;font-size:.95em}
+.shh-md th{background:rgba(0,0,0,.05);font-weight:700}
+.shh-md blockquote{border-left:3px solid rgba(0,0,0,.18);padding-left:.8em;margin:.5em 0;opacity:.85}
+.shh-md hr{border:0;border-top:1px solid rgba(0,0,0,.14);margin:.8em 0}
+.shh-md .katex-display{margin:.5em 0;overflow-x:auto;overflow-y:hidden;padding:2px 0}
+`;
 
-function CodeBlock({ code }: { code: string }) {
+function CodePre({ children }: { children?: React.ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
+  const copy = () => { const t = ref.current?.innerText ?? ""; navigator.clipboard?.writeText(t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   return (
     <div className="relative my-2">
+      <button type="button" onClick={copy} className="absolute right-2 top-2 z-10 grid size-7 place-items-center rounded-lg bg-white/10 text-white/80 hover:bg-white/20" aria-label="Copy code">
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+      <pre ref={ref} className="overflow-x-auto rounded-xl bg-[#17101e] p-3 pr-10 text-[12.5px] leading-relaxed text-white [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-white">{children}</pre>
+    </div>
+  );
+}
+const MD_COMPONENTS = {
+  pre: CodePre,
+  a: (props: React.ComponentProps<"a">) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+};
+function Markdown({ text }: { text: string }) {
+  return (
+    <div className="shh-md">
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={MD_COMPONENTS}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
+function PlainCodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="relative">
       <button type="button" onClick={() => navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {})}
         className="absolute right-2 top-2 grid size-7 place-items-center rounded-lg bg-white/10 text-white/80 hover:bg-white/20" aria-label="Copy code">
         {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -104,13 +165,26 @@ function CodeBlock({ code }: { code: string }) {
   );
 }
 
-function Markdown({ text }: { text: string }) {
-  const parts = text.split(/```/);
-  return <>{parts.map((p, i) => (i % 2 === 1 ? <CodeBlock key={i} code={p.replace(/^[\w+.-]*\n/, "")} /> : <span key={i} className="whitespace-pre-wrap">{renderInline(p)}</span>))}</>;
+// One tool step the model ran (code / web search / url read).
+function ToolStep({ s }: { s: Step }) {
+  const label = s.name === "web_search" ? `searched the web` : s.name === "read_url" ? `read a page` : `ran ${s.language || "code"}`;
+  const Icon = s.name === "web_search" ? Search : s.name === "read_url" ? Globe : Terminal;
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-plum-muted">
+        <Icon className="size-3" />{label}{s.status === "running" && <Loader2 className="size-3 animate-spin" />}
+      </div>
+      {s.code ? <PlainCodeBlock code={s.code} /> : null}
+      {s.query ? <p className="text-[12.5px] font-semibold text-plum-body">“{s.query}”</p> : null}
+      {s.url ? <p className="truncate text-[12px] font-semibold text-frost-text">{s.url}</p> : null}
+      {s.output != null && s.status === "done" ? (
+        <pre className="mt-1 max-h-48 overflow-auto rounded-xl border-1.5 border-line bg-black/5 p-2.5 text-[12px] leading-relaxed"><code className="font-mono whitespace-pre-wrap">{s.output.slice(0, 2000)}</code></pre>
+      ) : null}
+    </div>
+  );
 }
 
-// Persistent setup: custom instructions / memory + reference files the assistant
-// always has in context (stored server-side, keyed to the member).
+// ---- persistent setup: memory + reference files (server-side, per member) ----
 function Setup({ code }: { code: string }) {
   const [open, setOpen] = useState(false);
   const [instr, setInstr] = useState("");
@@ -126,12 +200,11 @@ function Setup({ code }: { code: string }) {
     try { await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "save_instructions", code, instructions: instr }) }); toast("saved ♡"); } catch { toast("couldn’t save"); }
     setSaving(false);
   };
-
   const addFiles = async (files: FileList | null) => {
     if (!files) return;
     setUploading(true);
     for (const f of Array.from(files)) {
-      if (!(TEXT_RE.test(f.name) || f.type.startsWith("text/") || /json|xml|csv|javascript/.test(f.type))) { toast(`can't read ${f.name} — text files only`); continue; }
+      if (!readableDoc(f)) { toast(`can't read ${f.name} — text files only`); continue; }
       if (f.size > 1024 * 1024) { toast(`${f.name} is too big (1MB max)`); continue; }
       const content = await f.text().catch(() => "");
       if (!content.trim()) continue;
@@ -144,7 +217,6 @@ function Setup({ code }: { code: string }) {
     }
     setUploading(false);
   };
-
   const removeFile = async (id: string) => {
     setSdocs((x) => x.filter((d) => d.id !== id));
     try { await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "remove_file", code, id }) }); } catch { /* */ }
@@ -160,15 +232,13 @@ function Setup({ code }: { code: string }) {
         <D.Content className={cn(POPUP, "fixed left-1/2 top-1/2 flex max-h-[85vh] w-[min(94vw,520px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-y-auto rounded-shell p-5")}>
           <D.Title className="text-[17px] font-extrabold">Memory & files</D.Title>
           <D.Description className="sr-only">Persistent instructions and reference files the assistant always uses</D.Description>
-
           <div className="flex flex-col gap-1.5">
             <span className="text-[13px] font-extrabold">Instructions / memory</span>
-            <span className="text-[12px] font-semibold text-plum-muted">Always applied — who it is, how it should answer, facts to remember.</span>
-            <textarea value={instr} onChange={(e) => setInstr(e.target.value)} rows={5} maxLength={20000} placeholder="act as a patient tutor and always show your working…"
+            <span className="text-[12px] font-semibold text-plum-muted">Always applied — who it is, how it should answer, facts to remember. (It can add its own with the 🧠 remember tool.)</span>
+            <textarea value={instr} onChange={(e) => setInstr(e.target.value)} rows={6} maxLength={20000} placeholder="act as a patient tutor and always show your working…"
               className="resize-y rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3 text-[14px] outline-none focus:border-frost-hot" />
             <button type="button" onClick={saveInstr} disabled={saving} className="self-end rounded-full bg-frost px-4 py-2 text-[13px] font-extrabold text-frost-ink disabled:opacity-50">{saving ? "saving…" : "Save"}</button>
           </div>
-
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[13px] font-extrabold">Reference files</span>
@@ -196,6 +266,69 @@ function Setup({ code }: { code: string }) {
   );
 }
 
+// ---- appearance / stealth toggles (client-only, per device) ----
+const row = "flex items-center justify-between gap-3 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3";
+function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} onClick={onClick} className={cn("relative h-6 w-11 flex-none rounded-full transition", on ? "bg-frost" : "bg-line")}>
+      <span className={cn("absolute top-0.5 size-5 rounded-full bg-white shadow transition-all", on ? "left-[22px]" : "left-0.5")} />
+    </button>
+  );
+}
+function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => void }) {
+  const [open, setOpen] = useState(false);
+  const set = (patch: Partial<Prefs>) => setPrefs({ ...prefs, ...patch });
+  return (
+    <D.Root open={open} onOpenChange={setOpen}>
+      <D.Trigger asChild>
+        <button type="button" aria-label="Customize" title="appearance & stealth" className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold text-plum-muted hover:border-frost-hot"><Sliders className="size-3.5" />Customize</button>
+      </D.Trigger>
+      <D.Portal>
+        <D.Overlay className={OVERLAY} />
+        <D.Content className={cn(POPUP, "fixed left-1/2 top-1/2 flex max-h-[85vh] w-[min(94vw,520px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 overflow-y-auto rounded-shell p-5")}>
+          <D.Title className="text-[17px] font-extrabold">Customize</D.Title>
+          <D.Description className="sr-only">Appearance and stealth options for this tab</D.Description>
+          <div className={row}>
+            <div><div className="text-[13.5px] font-extrabold">Hide the footer</div><div className="text-[12px] font-semibold text-plum-muted">remove the cupcake.gg footer on this tab</div></div>
+            <Toggle on={prefs.hideFooter} onClick={() => set({ hideFooter: !prefs.hideFooter })} />
+          </div>
+          <div className={row}>
+            <div><div className="text-[13.5px] font-extrabold">Hide the header</div><div className="text-[12px] font-semibold text-plum-muted">hide the top nav bar too — distraction free</div></div>
+            <Toggle on={prefs.hideHeader} onClick={() => set({ hideHeader: !prefs.hideHeader })} />
+          </div>
+          <div className={row}>
+            <div><div className="text-[13.5px] font-extrabold">Boss key</div><div className="text-[12px] font-semibold text-plum-muted">press the <kbd className="rounded bg-black/10 px-1 font-mono">`</kbd> (backtick) key to instantly blank the screen; click to bring it back</div></div>
+            <Toggle on={prefs.bossKey} onClick={() => set({ bossKey: !prefs.bossKey })} />
+          </div>
+          <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
+            <div className="text-[13.5px] font-extrabold">Disguise the tab</div>
+            <div className="text-[12px] font-semibold text-plum-muted">spoof the tab title and icon so it blends in</div>
+            <div className="flex flex-wrap gap-1.5">
+              {["off", ...Object.keys(DISGUISES), "custom"].map((k) => (
+                <button key={k} type="button" onClick={() => set({ disguise: k })} className={cn("rounded-full border-1.5 px-3 py-1.5 text-[12.5px] font-bold capitalize", prefs.disguise === k ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line hover:border-frost-hot")}>
+                  {k === "off" ? "off" : k === "custom" ? "custom…" : DISGUISES[k].title.split(" - ")[1] || k}
+                </button>
+              ))}
+            </div>
+            {prefs.disguise === "custom" && (
+              <input value={prefs.customTitle} onChange={(e) => set({ customTitle: e.target.value })} placeholder="tab title to show…" className="mt-1 h-10 rounded-full border-1.5 border-line bg-paper px-4 text-[13px] font-semibold outline-none focus:border-frost-hot" />
+            )}
+          </div>
+          <p className="text-[11.5px] font-semibold text-plum-muted">these are saved on this device only.</p>
+        </D.Content>
+      </D.Portal>
+    </D.Root>
+  );
+}
+
+// Swap the tab title + favicon when a disguise is on; restore on change/unmount.
+function setFavicon(emoji: string | null) {
+  let link = document.querySelector<HTMLLinkElement>("link[data-shh-fav]");
+  if (!emoji) { link?.remove(); return; }
+  if (!link) { link = document.createElement("link"); link.rel = "icon"; link.setAttribute("data-shh-fav", "1"); document.head.appendChild(link); }
+  link.href = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${emoji}</text></svg>`)}`;
+}
+
 export function ShhChat() {
   const [code, setCode] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState("");
@@ -203,6 +336,8 @@ export function ShhChat() {
 
   const [models, setModels] = useState<Model[]>([]);
   const [model, setModel] = useState("");
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [activeId, setActiveId] = useState<string>("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<string[]>([]);
@@ -211,19 +346,69 @@ export function ShhChat() {
   const [exec, setExec] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
+  const [blank, setBlank] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const loadedThread = useRef(false);
 
+  // ---- boot: code, model, threads (migrating the old single convo), prefs ----
   useEffect(() => {
     try {
       const c = localStorage.getItem(CODE_KEY); if (c) setCode(c);
-      const saved = localStorage.getItem(CONVO_KEY); if (saved) setMsgs(JSON.parse(saved));
       const mdl = localStorage.getItem(MODEL_KEY); if (mdl) setModel(mdl);
+      const p = localStorage.getItem(PREFS_KEY); if (p) setPrefsState({ ...DEFAULT_PREFS, ...JSON.parse(p) });
+      let list: Thread[] = [];
+      try { list = JSON.parse(localStorage.getItem(THREADS_KEY) || "[]"); } catch { list = []; }
+      if (!Array.isArray(list) || !list.length) {
+        const id = crypto.randomUUID();
+        let seed: Msg[] = [];
+        try { const old = localStorage.getItem(OLD_CONVO_KEY); if (old) seed = JSON.parse(old); } catch { /* */ }
+        list = [{ id, title: seed.find((m) => m.role === "user")?.content?.slice(0, 40) || "new chat", updatedAt: Date.now() }];
+        try { localStorage.setItem(threadKey(id), JSON.stringify(seed)); localStorage.setItem(THREADS_KEY, JSON.stringify(list)); localStorage.removeItem(OLD_CONVO_KEY); } catch { /* */ }
+      }
+      setThreads(list);
+      const active = localStorage.getItem(ACTIVE_KEY) || list[0].id;
+      setActiveId(list.some((t) => t.id === active) ? active : list[0].id);
     } catch { /* storage off */ }
   }, []);
+
+  // load a thread's messages when the active thread changes
+  useEffect(() => {
+    if (!activeId) return;
+    loadedThread.current = false;
+    try { const raw = localStorage.getItem(threadKey(activeId)); setMsgs(raw ? JSON.parse(raw) : []); } catch { setMsgs([]); }
+    loadedThread.current = true;
+    try { localStorage.setItem(ACTIVE_KEY, activeId); } catch { /* */ }
+  }, [activeId]);
+
+  // persist the active thread's messages (with images; degrade on quota).
+  // Debounced, so a long streamed answer doesn't rewrite storage per token.
+  useEffect(() => {
+    if (!activeId || !loadedThread.current) return;
+    const key = threadKey(activeId);
+    const t = setTimeout(() => {
+      const save = (data: unknown) => { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch { return false; } };
+      if (!save(msgs)) {
+        if (!save(msgs.map((m, i) => (i >= msgs.length - 6 ? m : { ...m, images: undefined, docs: m.docs?.map((d) => ({ name: d.name, content: "" })) })))) {
+          save(msgs.map(({ role, content, steps }) => ({ role, content, steps })));
+        }
+      }
+      setThreads((ts) => {
+        const first = msgs.find((m) => m.role === "user")?.content?.trim();
+        const next = ts.map((x) => (x.id === activeId ? { ...x, updatedAt: Date.now(), title: first ? first.slice(0, 40) : x.title } : x));
+        try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); } catch { /* */ }
+        return next;
+      });
+    }, 500);
+    return () => clearTimeout(t);
+  }, [msgs, activeId]);
+
+  useEffect(() => { if (model) try { localStorage.setItem(MODEL_KEY, model); } catch { /* */ } }, [model]);
+  const setPrefs = (p: Prefs) => { setPrefsState(p); try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* */ } };
 
   useEffect(() => {
     if (!code) return;
@@ -234,19 +419,41 @@ export function ShhChat() {
     }).catch(() => {});
   }, [code]);
 
-  // Persist the full conversation INCLUDING images (compressed, so they fit), so
-  // a refresh keeps both the pictures and the model's context. On a storage-quota
-  // error, degrade: keep images only on the last few turns, then text-only.
-  useEffect(() => {
-    const save = (data: unknown) => { try { localStorage.setItem(CONVO_KEY, JSON.stringify(data)); return true; } catch { return false; } };
-    if (save(msgs)) return;
-    if (save(msgs.map((m, i) => (i >= msgs.length - 6 ? m : { ...m, images: undefined, docs: m.docs?.map((d) => ({ name: d.name, content: "" })) })))) return;
-    save(msgs.map(({ role, content, steps }) => ({ role, content, steps })));
-  }, [msgs]);
-  useEffect(() => { if (model) try { localStorage.setItem(MODEL_KEY, model); } catch { /* */ } }, [model]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
-  // auto-grow the composer
   useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = "0px"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; } }, [input]);
+
+  // apply chrome prefs (hide header/footer) via one injected stylesheet
+  useEffect(() => {
+    const id = "shh-chrome-style";
+    let el = document.getElementById(id) as HTMLStyleElement | null;
+    const rules = [prefs.hideFooter && "footer{display:none!important}", prefs.hideHeader && "header{display:none!important}"].filter(Boolean).join("");
+    if (rules) { if (!el) { el = document.createElement("style"); el.id = id; document.head.appendChild(el); } el.textContent = rules; }
+    else el?.remove();
+    return () => { document.getElementById(id)?.remove(); };
+  }, [prefs.hideFooter, prefs.hideHeader]);
+
+  // apply disguise (tab title + favicon); restore on unmount
+  useEffect(() => {
+    const original = document.title;
+    const d = prefs.disguise;
+    if (d === "off") { setFavicon(null); }
+    else if (d === "custom") { if (prefs.customTitle.trim()) { document.title = prefs.customTitle.trim(); } setFavicon("📄"); }
+    else if (DISGUISES[d]) { document.title = DISGUISES[d].title; setFavicon(DISGUISES[d].emoji); }
+    return () => { document.title = original; setFavicon(null); };
+  }, [prefs.disguise, prefs.customTitle]);
+
+  // boss key: backtick blanks the screen instantly
+  useEffect(() => {
+    if (!prefs.bossKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "`") return;
+      if ((e.target as HTMLElement)?.closest("input,textarea")) return;
+      e.preventDefault();
+      setBlank((b) => !b);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prefs.bossKey]);
 
   const unlock = async () => {
     const c = codeInput.trim();
@@ -264,19 +471,47 @@ export function ShhChat() {
   const addImage = (url: string) => setImages((im) => [...im, url]);
   const addDoc = (d: Doc) => setDocs((x) => [...x, d]);
 
-  // Send a given history to the model and append the reply. Used by send + regenerate.
-  const ask = async (history: Msg[]) => {
+  // stream a reply for the given history, updating the trailing assistant msg live
+  const ask = async (history: Msg[], modelOverride?: string) => {
     if (!code) return;
     setBusy(true);
     const ctl = new AbortController();
     abortRef.current = ctl;
+    setMsgs((m) => [...m, { role: "assistant", content: "", steps: [], pending: true }]);
+    const patch = (fn: (a: Msg) => Msg) => setMsgs((m) => { if (!m.length) return m; const c = [...m]; const i = c.length - 1; if (c[i].role === "assistant") c[i] = fn(c[i]); return c; });
     try {
-      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model, web, exec, messages: toApi(history) }), signal: ctl.signal });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.content) setMsgs((m) => [...m, { role: "assistant", content: `⚠ ${d.error || "no answer"}`, steps: d.steps }]);
-      else setMsgs((m) => [...m, { role: "assistant", content: d.content, steps: d.steps }]);
+      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model: modelOverride || model, web, exec, messages: toApi(history) }), signal: ctl.signal });
+      if (!r.ok || !r.body) { const d = await r.json().catch(() => ({})); patch((a) => ({ ...a, content: `⚠ ${d.error || "no answer"}`, pending: false })); abortRef.current = null; setBusy(false); return; }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let ev: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+          try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.k === "d") patch((a) => ({ ...a, content: a.content + ev.v, pending: false }));
+          else if (ev.k === "tool") patch((a) => {
+            const steps = [...(a.steps || [])];
+            const idx = steps.findIndex((s) => s.id === ev.id);
+            const merged = { ...(idx >= 0 ? steps[idx] : { id: ev.id }), ...ev } as Step;
+            if (idx >= 0) steps[idx] = merged; else steps.push(merged);
+            return { ...a, steps, pending: false };
+          });
+          else if (ev.k === "mem") patch((a) => ({ ...a, memories: [...(a.memories || []), ev.v] }));
+          else if (ev.k === "err") patch((a) => ({ ...a, content: (a.content ? a.content + "\n\n" : "") + `⚠ ${ev.v}`, pending: false }));
+        }
+      }
+      patch((a) => ({ ...a, pending: false }));
     } catch (e) {
-      if ((e as Error).name !== "AbortError") setMsgs((m) => [...m, { role: "assistant", content: "⚠ couldn’t reach the ai" }]);
+      if ((e as Error).name !== "AbortError") patch((a) => ({ ...a, content: (a.content ? a.content + "\n\n" : "") + "⚠ couldn’t reach the ai", pending: false }));
+      else patch((a) => ({ ...a, pending: false }));
     }
     abortRef.current = null;
     setBusy(false);
@@ -288,14 +523,19 @@ export function ShhChat() {
     const next = [...msgs, { role: "user" as const, content: text, images: images.length ? images : undefined, docs: docs.length ? docs : undefined }];
     setMsgs(next);
     setInput("");
+    // images need a vision model — switch automatically if the current one can't see
+    let useModel = model;
+    if (images.length && !models.find((m) => m.id === model)?.vision) {
+      const vm = models.find((m) => m.vision);
+      if (vm) { useModel = vm.id; setModel(vm.id); toast("switched to a vision model 👁"); }
+    }
     setImages([]);
     setDocs([]);
-    ask(next);
+    ask(next, useModel);
   };
 
   const regenerate = () => {
     if (busy) return;
-    // drop a trailing assistant message, re-ask from the conversation up to the last user turn
     let end = msgs.length;
     while (end > 0 && msgs[end - 1].role === "assistant") end--;
     if (end === 0) return;
@@ -306,6 +546,33 @@ export function ShhChat() {
 
   const stop = () => { abortRef.current?.abort(); };
   const copyText = (t: string) => navigator.clipboard?.writeText(t).then(() => toast("copied")).catch(() => {});
+
+  // ---- threads ----
+  const newThread = () => {
+    const id = crypto.randomUUID();
+    const t: Thread = { id, title: "new chat", updatedAt: Date.now() };
+    setThreads((ts) => { const next = [t, ...ts]; try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); localStorage.setItem(threadKey(id), "[]"); } catch { /* */ } return next; });
+    setActiveId(id);
+    setInput(""); setImages([]); setDocs([]);
+  };
+  const deleteThread = (id: string) => {
+    setThreads((ts) => {
+      const next = ts.filter((t) => t.id !== id);
+      try { localStorage.removeItem(threadKey(id)); } catch { /* */ }
+      if (!next.length) { const nid = crypto.randomUUID(); next.push({ id: nid, title: "new chat", updatedAt: Date.now() }); try { localStorage.setItem(threadKey(nid), "[]"); } catch { /* */ } }
+      try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); } catch { /* */ }
+      if (id === activeId) setActiveId(next[0].id);
+      return next;
+    });
+  };
+  const renameThread = (id: string) => {
+    const cur = threads.find((t) => t.id === id);
+    const name = window.prompt("rename chat", cur?.title || "")?.trim();
+    if (name == null) return;
+    setThreads((ts) => { const next = ts.map((t) => (t.id === id ? { ...t, title: name || t.title } : t)); try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); } catch { /* */ } return next; });
+  };
+  const sortedThreads = useMemo(() => [...threads].sort((a, b) => b.updatedAt - a.updatedAt), [threads]);
+  const activeTitle = threads.find((t) => t.id === activeId)?.title || "new chat";
 
   // ---- locked ----
   if (!code) {
@@ -328,22 +595,52 @@ export function ShhChat() {
       onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
       onDrop={(e) => { e.preventDefault(); setDragging(false); for (const f of Array.from(e.dataTransfer.files)) { readImage(f, addImage); readDoc(f, addDoc); } }}>
+      <style dangerouslySetInnerHTML={{ __html: MD_CSS }} />
+
+      {/* boss-key blank overlay */}
+      {blank && (
+        <div onClick={() => setBlank(false)} className="fixed inset-0 z-[9999] cursor-pointer bg-cream" aria-hidden />
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
-        <select value={model} onChange={(e) => setModel(e.target.value)} className="h-10 max-w-[260px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold outline-none focus:border-frost-hot">
+        {/* thread switcher */}
+        <DM.Root>
+          <DM.Trigger asChild>
+            <button type="button" className="flex h-10 max-w-[240px] items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold hover:border-frost-hot">
+              <MessageSquarePlus className="size-3.5 flex-none text-frost-text" /><span className="truncate">{activeTitle}</span><ChevronDown className="size-3.5 flex-none opacity-60" />
+            </button>
+          </DM.Trigger>
+          <DM.Portal>
+            <DM.Content align="start" sideOffset={6} className={cn(POPUP, "z-50 flex max-h-[60vh] w-[280px] flex-col gap-0.5 overflow-y-auto rounded-2xl p-1.5")}>
+              <DM.Item onSelect={newThread} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><MessageSquarePlus className="size-4" />New chat</DM.Item>
+              <div className="my-1 h-px bg-line" />
+              {sortedThreads.map((t) => (
+                <div key={t.id} className={cn("group flex items-center gap-1 rounded-xl px-1 py-0.5", t.id === activeId && "bg-cream-blush")}>
+                  <DM.Item onSelect={() => setActiveId(t.id)} className="flex min-w-0 flex-1 cursor-pointer items-center rounded-lg px-2 py-1.5 text-[13px] font-bold outline-none hover:bg-black/5"><span className="truncate">{t.title || "new chat"}</span></DM.Item>
+                  <button type="button" onClick={(e) => { e.preventDefault(); renameThread(t.id); }} aria-label="rename" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-frost-text group-hover:opacity-100"><Pencil className="size-3.5" /></button>
+                  <button type="button" onClick={(e) => { e.preventDefault(); deleteThread(t.id); }} aria-label="delete" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-red-500 group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
+                </div>
+              ))}
+            </DM.Content>
+          </DM.Portal>
+        </DM.Root>
+
+        <select value={model} onChange={(e) => setModel(e.target.value)} className="h-10 max-w-[220px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold outline-none focus:border-frost-hot">
           {models.length === 0 && <option value={model}>{model || "default"}</option>}
           {models.map((m) => <option key={m.id} value={m.id}>{m.id}{m.vision ? " 👁" : ""}</option>)}
         </select>
         <span className="flex-1" />
+        <button type="button" onClick={() => setBlank(true)} aria-label="Hide" title="hide now (click to bring back)" className="grid h-10 w-10 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-muted hover:border-frost-hot"><EyeOff className="size-4" /></button>
+        <Customize prefs={prefs} setPrefs={setPrefs} />
         <Setup code={code} />
-        <button type="button" onClick={() => { setMsgs([]); setInput(""); setImages([]); setDocs([]); try { localStorage.removeItem(CONVO_KEY); } catch { /* */ } }} className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold text-plum-muted hover:border-frost-hot"><SquarePen className="size-3.5" />New chat</button>
       </div>
 
       <div className={cn("relative flex flex-1 flex-col gap-3 overflow-y-auto rounded-shell border-1.5 bg-cream-card p-3 transition sm:p-4", dragging ? "border-frost-hot ring-2 ring-frost-hot/30" : "border-line")}>
         {dragging && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-shell bg-cream-card/80 text-[15px] font-extrabold text-frost-text">drop a file ♡</div>}
         {msgs.length === 0 && (
-          <div className="m-auto flex max-w-[360px] flex-col items-center gap-2 text-center text-plum-muted">
+          <div className="m-auto flex max-w-[380px] flex-col items-center gap-2 text-center text-plum-muted">
             <Sparkles className="size-7 text-frost-hot" />
-            <p className="text-[14px] font-bold">ask anything. paste/drop an image (👁), attach a file, 🌐 to read links, or ▶ to let it run code.</p>
+            <p className="text-[14px] font-bold">ask anything. paste/drop an image (👁), attach a file, 🌐 to search the web, or ▶ to let it run code. it streams, does math, and remembers.</p>
           </div>
         )}
         {msgs.map((m, i) => (
@@ -362,19 +659,18 @@ export function ShhChat() {
                   </div>
                 ) : null}
                 {m.role === "assistant" && m.steps?.length ? (
-                  <div className="mb-2 flex flex-col gap-2">
-                    {m.steps.map((s, si) => (
-                      <div key={si}>
-                        <div className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-plum-muted"><Terminal className="size-3" />ran {s.language || "code"}</div>
-                        <CodeBlock code={s.code} />
-                        <pre className="mt-1 overflow-x-auto rounded-xl border-1.5 border-line bg-black/5 p-2.5 text-[12px] leading-relaxed"><code className="font-mono">{s.output}</code></pre>
-                      </div>
-                    ))}
+                  <div className="mb-2 flex flex-col gap-2">{m.steps.map((s) => <ToolStep key={s.id} s={s} />)}</div>
+                ) : null}
+                {m.role === "assistant" ? (
+                  m.content ? <Markdown text={m.content} /> : m.pending ? <Loader2 className="size-4 animate-spin text-frost-hot" /> : null
+                ) : m.content}
+                {m.role === "assistant" && m.memories?.length ? (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {m.memories.map((f, n) => <span key={n} className="flex items-center gap-1.5 rounded-lg bg-cream-blush px-2 py-1 text-[11.5px] font-bold text-frost-text"><Brain className="size-3" />remembered: {f}</span>)}
                   </div>
                 ) : null}
-                {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
               </div>
-              {m.role === "assistant" && m.content && (
+              {m.role === "assistant" && m.content && !m.pending && (
                 <div className="flex gap-1 px-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
                   <button type="button" onClick={() => copyText(m.content)} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><Copy className="size-3" />copy</button>
                   {i === msgs.length - 1 && !busy && <button type="button" onClick={regenerate} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><RotateCw className="size-3" />regenerate</button>}
@@ -383,7 +679,6 @@ export function ShhChat() {
             </div>
           </div>
         ))}
-        {busy && <div className="flex justify-start"><div className="rounded-3xl bg-paper px-4 py-3"><Loader2 className="size-4 animate-spin text-frost-hot" /></div></div>}
         <div ref={endRef} />
       </div>
 
@@ -398,11 +693,9 @@ export function ShhChat() {
           ))}
         </div>
       )}
-
       {images.length > 0 && !selVision && (
-        <p className="-mt-1 px-1 text-[12px] font-semibold text-plum-muted">this model can’t read images — pick a 👁 model.</p>
+        <p className="-mt-1 px-1 text-[12px] font-semibold text-plum-muted">this model can’t read images — i’ll switch to a 👁 model when you send.</p>
       )}
-
       {docs.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {docs.map((d, n) => (
@@ -420,7 +713,7 @@ export function ShhChat() {
         <div className="flex flex-none gap-1">
           <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" title="attach image" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
           <button type="button" onClick={() => docRef.current?.click()} aria-label="Attach file" title="attach a text / doc file" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><Paperclip className="size-[18px]" /></button>
-          <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="look things up on the web (reads links; search needs a z.ai web package)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
+          <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="search the web (it decides when to search and read links)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
           <button type="button" onClick={() => setExec((x) => !x)} aria-pressed={exec} title="let it run code in a sandbox" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", exec ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Terminal className="size-5" /></button>
         </div>
         <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
