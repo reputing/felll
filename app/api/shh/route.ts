@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { memberOr401 } from "@/lib/auth";
 import { all, first, run } from "@/lib/db";
+import { STRENGTHS, TONES, buildStyleGuide, humanizeText, type Strength, type Tone } from "@/lib/humanize";
 
 // The private AI corner (/shh). Members only, and gated by a code (SHH_CODE,
 // default "SEMINOLE") that the client sends with every call — so the AI endpoint
@@ -143,6 +144,24 @@ async function runLoop(cfg: ReturnType<typeof endpoints>, model: string, message
   return { content: "(stopped after several steps — ask me to continue)", steps };
 }
 
+// One plain completion (no tools, no streaming): the humanizer's rewrite call.
+async function completeText(cfg: ReturnType<typeof endpoints>, model: string, system: string, user: string): Promise<{ text: string; error?: string }> {
+  try {
+    const rr = await fetch(cfg.chat, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json", ...cfg.headers },
+      body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.9, stream: false }),
+      signal: AbortSignal.timeout(80_000),
+    });
+    const d: any = await rr.json().catch(() => null);
+    if (!rr.ok) return { text: "", error: d?.error?.message || "the ai couldn't do that" };
+    const text = pickContent(d?.choices?.[0]?.message).trim();
+    return text ? { text } : { text: "", error: "the ai returned nothing" };
+  } catch {
+    return { text: "", error: "the ai didn't answer, try again" };
+  }
+}
+
 const RUN_TOOL = {
   type: "function",
   function: {
@@ -277,7 +296,7 @@ export async function POST(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
   const e = await readEnv();
-  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean; exec?: boolean; instructions?: string; name?: string; content?: string; id?: string; title?: string; after?: number; text?: string; images?: string[] };
+  const b = (await req.json().catch(() => ({}))) as { op?: string; code?: string; model?: string; messages?: any[]; web?: boolean; exec?: boolean; instructions?: string; name?: string; content?: string; id?: string; title?: string; after?: number; text?: string; images?: string[]; strength?: string; tone?: string; sample?: string; humanize?: boolean };
   if ((b.code || "") !== codeOf(e)) return Response.json({ error: "wrong code" }, { status: 403 });
 
   if (b.op === "unlock") return Response.json({ ok: true });
@@ -373,6 +392,23 @@ export async function POST(req: Request) {
     return Response.json({ ok: true });
   }
 
+  // ---- humanize: rewrite text so it reads like a person wrote it ----------------
+  // Chunked, so long text keeps its quality and doesn't get cut off. Every chunk is
+  // checked: if the rewrite dropped or changed a number, link or code block we ask
+  // once more, and if it still can't keep them we keep the ORIGINAL wording for that
+  // chunk (lightly cleaned) and say so, rather than hand back text with wrong facts.
+  if (b.op === "humanize") {
+    const text = String(b.text ?? "").slice(0, 40_000);
+    if (!text.trim()) return Response.json({ error: "paste some text first" }, { status: 400 });
+    const strength = (STRENGTHS as string[]).includes(String(b.strength)) ? (b.strength as Strength) : "medium";
+    const tone = (TONES as string[]).includes(String(b.tone)) ? (b.tone as Tone) : "neutral";
+    const cfg = endpoints(e);
+    const model = b.model || cfg.model;
+    const r = await humanizeText(text, { strength, tone, sample: b.sample }, (system, user) => completeText(cfg, model, system, user));
+    if (r.error) return Response.json({ error: r.error }, { status: 502 });
+    return Response.json({ text: r.text, warnings: r.warnings }, { headers: { "cache-control": "no-store" } });
+  }
+
   if (b.op === "chat") {
     let messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
@@ -402,6 +438,7 @@ export async function POST(req: Request) {
     if (b.web) hints.push("You have live web access via web_search and read_url — use them for anything current or factual and cite what you rely on.");
     if (b.exec) hints.push("You can run code via run_code for calculations and data work.");
     hints.push("You can save durable facts about the user with remember.");
+    if (b.humanize) hints.push(buildStyleGuide((TONES as string[]).includes(String(b.tone)) ? (b.tone as Tone) : "neutral"));
     preamble.push({ role: "system", content: hints.join(" ") });
 
     messages = budgetHistory([...preamble, ...messages]);

@@ -7,16 +7,17 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
+import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, Feather, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
+import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 interface Model { id: string; label: string; vision: boolean }
 interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
-interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean }
+interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean; orig?: string }
 interface Thread { id: string; title: string; updatedAt: number }
 interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string }
 interface RoomMsg { id: number; handle: string | null; role: string; content: string; steps?: Step[] }
@@ -415,6 +416,9 @@ export function ShhChat({ me }: { me?: string }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [web, setWeb] = useState(false);
   const [exec, setExec] = useState(false);
+  const [natural, setNatural] = useState(false);            // write replies in a natural human voice from the start
+  const [hum, setHumState] = useState<HumPrefs>(DEFAULT_HUM);  // strength + voice for the Humanize tool
+  const [humBusy, setHumBusy] = useState<number | null>(null); // index of the reply being rewritten
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
@@ -485,6 +489,9 @@ export function ShhChat({ me }: { me?: string }) {
   }, [msgs, activeId]);
 
   useEffect(() => { if (model) try { localStorage.setItem(MODEL_KEY, model); } catch { /* */ } }, [model]);
+  useEffect(() => { setHumState(loadHumPrefs()); try { setNatural(localStorage.getItem("shh:natural") === "1"); } catch { /* */ } }, []);
+  const setHum = (p: HumPrefs) => { setHumState(p); try { localStorage.setItem("shh:hum", JSON.stringify(p)); } catch { /* */ } };
+  const toggleNatural = () => setNatural((n) => { const v = !n; try { localStorage.setItem("shh:natural", v ? "1" : "0"); } catch { /* */ } return v; });
   const setPrefs = (p: Prefs) => { setPrefsState(p); try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* */ } };
 
   useEffect(() => {
@@ -574,7 +581,7 @@ export function ShhChat({ me }: { me?: string }) {
     setMsgs((m) => [...m, { role: "assistant", content: "", steps: [], pending: true }]);
     const patch = (fn: (a: Msg) => Msg) => setMsgs((m) => { if (!m.length) return m; const c = [...m]; const i = c.length - 1; if (c[i].role === "assistant") c[i] = fn(c[i]); return c; });
     try {
-      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model: modelOverride || model, web, exec, messages: toApi(history) }), signal: ctl.signal });
+      const r = await fetch("/api/shh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "chat", code, model: modelOverride || model, web, exec, humanize: natural, tone: hum.tone, messages: toApi(history) }), signal: ctl.signal });
       if (!r.ok || !r.body) { const d = await r.json().catch(() => ({})); patch((a) => ({ ...a, content: `⚠ ${d.error || "no answer"}`, pending: false })); abortRef.current = null; setBusy(false); return; }
       const reader = r.body.getReader();
       const dec = new TextDecoder();
@@ -639,6 +646,21 @@ export function ShhChat({ me }: { me?: string }) {
   };
 
   const stop = () => { abortRef.current?.abort(); };
+
+  // Rewrite one finished reply in place (keeping the original so it can be toggled back).
+  const humanizeReply = async (i: number) => {
+    const m = msgs[i];
+    if (!code || !m || m.role !== "assistant" || humBusy !== null) return;
+    if (m.orig) { setMsgs((all) => all.map((x, j) => (j === i ? { ...x, content: x.orig ?? x.content, orig: undefined } : x))); return; } // toggle back
+    setHumBusy(i);
+    const r = await humanizeRequest({ code, model, text: m.content, strength: hum.strength, tone: hum.tone, sample: loadVoice() });
+    if (r.error || !r.text) toast(r.error || "couldn’t rewrite that");
+    else {
+      setMsgs((all) => all.map((x, j) => (j === i ? { ...x, orig: x.content, content: r.text! } : x)));
+      if (r.warnings?.length) toast(r.warnings[0]);
+    }
+    setHumBusy(null);
+  };
   const copyText = (t: string) => navigator.clipboard?.writeText(t).then(() => toast("copied")).catch(() => {});
 
   // ---- threads ----
@@ -815,6 +837,7 @@ export function ShhChat({ me }: { me?: string }) {
         </DM.Root>
         <button type="button" onClick={() => setCover(prefs.decoy || "blank")} aria-label="Hide" title="hide now — Esc or the top-left icon brings it back" className="grid h-10 w-10 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-muted hover:border-frost-hot"><EyeOff className="size-4" /></button>
         <Customize prefs={prefs} setPrefs={setPrefs} />
+        <HumanizeDialog code={code} model={model} prefs={hum} setPrefs={setHum} />
         <Setup code={code} />
       </div>
 
@@ -894,6 +917,7 @@ export function ShhChat({ me }: { me?: string }) {
               {m.role === "assistant" && m.content && !m.pending && (
                 <div className="flex gap-1 px-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
                   <button type="button" onClick={() => copyText(m.content)} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><Copy className="size-3" />copy</button>
+                  <button type="button" onClick={() => humanizeReply(i)} disabled={humBusy !== null} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text disabled:opacity-50">{humBusy === i ? <Loader2 className="size-3 animate-spin" /> : <Feather className="size-3" />}{m.orig ? "show original" : "humanize"}</button>
                   {i === msgs.length - 1 && !busy && <button type="button" onClick={regenerate} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><RotateCw className="size-3" />regenerate</button>}
                 </div>
               )}
@@ -936,6 +960,7 @@ export function ShhChat({ me }: { me?: string }) {
           <button type="button" onClick={() => docRef.current?.click()} aria-label="Attach file" title="attach a text / doc file" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><Paperclip className="size-[18px]" /></button>
           <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="search the web (it decides when to search and read links)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
           <button type="button" onClick={() => setExec((x) => !x)} aria-pressed={exec} title="let it run code in a sandbox" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", exec ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Terminal className="size-5" /></button>
+          <button type="button" onClick={toggleNatural} aria-pressed={natural} title="natural voice: replies are written like a person from the start" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", natural ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Feather className="size-5" /></button>
         </div>
         <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
           onPaste={(e) => { const imgs = Array.from(e.clipboardData.items).filter((it) => it.type.startsWith("image/")); if (imgs.length) { e.preventDefault(); for (const it of imgs) { const f = it.getAsFile(); if (f) readImage(f, addImage); } } }}
