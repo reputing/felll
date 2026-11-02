@@ -1,5 +1,6 @@
 import { env } from "@/lib/db";
 import { malToAnilist, fetchAnivexaCatalog, resolveAnivexaStream } from "@/lib/anivexa";
+import { signKirariAccess } from "@/lib/kuro";
 
 // NOT public. A playable stream URL is exactly what app/api/play/[sourceId]
 // already treats as sensitive ("Stream URLs are signed per request so they
@@ -35,7 +36,14 @@ export async function POST(req: Request) {
     if (!p.sub.includes(episode)) continue;
     const resolved = await resolveAnivexaStream(p.slug, anilistId, "sub", episode).catch(() => null);
     if (resolved?.type === "hls" && resolved.url) {
-      return Response.json({ url: resolved.url, provider: p.slug });
+      // resolved.url is a RELATIVE /api/anivexa/proxy path (anivexaProxyPath),
+      // and that proxy normally only answers a cupcake.gg member session -
+      // kirari has no such cookie, so without this token every request 404s/
+      // 401s. The caller (kirari) must turn this into an absolute
+      // https://cupcake.gg/... URL itself; we only own the path + token.
+      const kt = await signKirariAccess(want);
+      const url = resolved.url + (resolved.url.includes("?") ? "&" : "?") + "kt=" + encodeURIComponent(kt);
+      return Response.json({ url, provider: p.slug });
     }
   }
   return Response.json({ error: "couldn't find a working stream for this episode" }, { status: 404 });

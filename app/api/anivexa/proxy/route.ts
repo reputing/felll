@@ -1,6 +1,7 @@
 import { anivexaProxyPath } from "@/lib/anivexa";
 import { currentUser } from "@/lib/auth";
-import { background } from "@/lib/db";
+import { background, env } from "@/lib/db";
+import { verifyKirariAccess } from "@/lib/kuro";
 
 // Streams an upstream HLS playlist/segment through our own origin, applying the
 // headers (Referer, etc.) providers require. m3u8 playlists are rewritten so
@@ -41,11 +42,17 @@ function isBlockedHost(host: string): boolean {
 }
 
 export async function GET(req: Request) {
-  // Members only: the player is same-origin so the session cookie rides along,
-  // but this keeps the proxy from being used as an open relay by anyone.
-  if (!(await currentUser())) return new Response("Sign in first", { status: 401 });
-
   const { searchParams, origin } = new URL(req.url);
+  // Members only normally: the player is same-origin so the session cookie
+  // rides along. kirari's watch-together has no cupcake.gg session at all
+  // (different site), so a short-lived signed token (minted by
+  // app/api/internal/resolve-episode, see lib/kuro.ts's signKirariAccess)
+  // stands in for one - never a blanket bypass, it expires in hours and only
+  // this proxy honours it.
+  const kt = searchParams.get("kt") || "";
+  const kirariOk = kt ? await verifyKirariAccess(kt, (await env()).KIRARI_SERVICE_KEY || "") : false;
+  if (!kirariOk && !(await currentUser())) return new Response("Sign in first", { status: 401 });
+
   const target = searchParams.get("u");
   if (!target) return new Response("Missing url", { status: 400 });
 
@@ -111,7 +118,7 @@ export async function GET(req: Request) {
   const contentLength = Number(upstream.headers.get("content-length") || "0");
 
   const makePlaylist = (text: string) =>
-    new Response(rewritePlaylist(text, targetUrl, headers, origin), {
+    new Response(rewritePlaylist(text, targetUrl, headers, origin, kt), {
       headers: {
         "content-type": "application/vnd.apple.mpegurl",
         "access-control-allow-origin": "*",
@@ -164,7 +171,7 @@ export async function GET(req: Request) {
   return resp;
 }
 
-function rewritePlaylist(text: string, baseUrl: URL, headers: Record<string, string>, origin: string): string {
+function rewritePlaylist(text: string, baseUrl: URL, headers: Record<string, string>, origin: string, kt: string): string {
   const wrap = (uri: string): string => {
     let absolute: string;
     try {
@@ -172,7 +179,11 @@ function rewritePlaylist(text: string, baseUrl: URL, headers: Record<string, str
     } catch {
       return uri;
     }
-    return origin + anivexaProxyPath(absolute, headers);
+    // A playlist fans out into many segment/key requests, each hitting this
+    // proxy again; kt has to ride along on every one of them, not just the
+    // playlist itself, or the first segment request 401s with no session.
+    const path = anivexaProxyPath(absolute, headers) + (kt ? `&kt=${encodeURIComponent(kt)}` : "");
+    return origin + path;
   };
   return text
     .split(/\r?\n/)
