@@ -46,6 +46,16 @@ jobs:
         run: |
           if [ -n "$KURO_SERVICE_KEY" ]; then printf '%s' "$KURO_SERVICE_KEY" | npx wrangler secret put KURO_SERVICE_KEY; fi
           if [ -n "$KURO_SUPABASE_URL" ]; then printf '%s' "$KURO_SUPABASE_URL" | npx wrangler secret put KURO_SUPABASE_URL; fi
+      # The AI backends for /shh. Hybra (the main one) needs no config: its key is the
+      # public one printed in hybra.lol/docs. Dahl is a PAID key, so it is a secret and
+      # never code (this repo is public). Add DAHL_API_KEY as a GitHub Actions secret;
+      # set only when present, so this is a no-op until you add it, and /shh just runs
+      # on Hybra alone in the meantime.
+      - name: Sync AI provider secrets to the worker
+        env:
+          DAHL_API_KEY: ${{ secrets.DAHL_API_KEY }}
+        run: |
+          if [ -n "$DAHL_API_KEY" ]; then printf '%s' "$DAHL_API_KEY" | npx wrangler secret put DAHL_API_KEY; fi
       # Apply any new D1 migrations before the new code goes live (idempotent —
       # wrangler skips migrations already recorded in the d1_migrations table).
       - run: npx wrangler d1 migrations apply felll --remote

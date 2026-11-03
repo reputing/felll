@@ -1,27 +1,26 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { memberOr401 } from "@/lib/auth";
-import { all, first, run } from "@/lib/db";
+import { all, background, first, run } from "@/lib/db";
 import { STRENGTHS, TONES, buildStyleGuide, humanizeText, type Strength, type Tone } from "@/lib/humanize";
+import { ThinkFilter, candidatesFor, chatWithFailover, cleanErr, markDown, modelFault, providersFor, readSSE, refreshModels, splitId, workingModels, type ModelRow, type Provider } from "@/lib/ai";
+import { d1Store } from "@/lib/ai-store";
+import { formatHits, htmlToText, isPublicHttpUrl, parseDuckLite } from "@/lib/web";
 
 // The private AI corner (/shh). Members only, and gated by a code (SHH_CODE,
 // default "SEMINOLE") that the client sends with every call — so the AI endpoint
 // isn't open to anyone who merely has a session.
 //
-// Upstream is an OpenAI-compatible AI API. Default: Z.ai (GLM) with
-// glm-5.3-flash, which is natively multimodal — it reads images. Override with
-// AI_API_URL (an OpenAI-style base), AI_API_KEY and AI_MODEL.
+// Backends (lib/ai.ts): Hybra, the main provider (free, public key, flaky pool), and
+// Dahl once DAHL_API_KEY is set. The model list is never taken on trust: models are
+// PROBED with real requests and only the ones that recently answered are offered
+// (see /api/shh GET), and a request that hits a dead model fails over to a working
+// one. Override the Hybra key/base with HYBRA_API_KEY / HYBRA_API_URL.
 //
 // Chat is STREAMED: the POST chat op returns newline-delimited JSON events
 // (see the loop at the bottom) so the client paints tokens as they arrive. The
 // same loop runs the model's tools — run_code, web_search, read_url, remember —
 // feeding each result back until it answers.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-// Server-side only (this route runs on the Worker, never shipped to browsers).
-// The owner chose to hardcode their key; override any of these with env vars.
-const DEFAULT_BASE = "https://api.z.ai/api/paas/v4";
-const DEFAULT_KEY = "f666f52f00b640c2a1d60ecebb689b25.qiN8pabK9gYcJx5D";
-const DEFAULT_MODEL = "glm-5.3-flash";
 
 async function readEnv(): Promise<Record<string, string | undefined>> {
   try {
@@ -31,27 +30,62 @@ async function readEnv(): Promise<Record<string, string | undefined>> {
   }
 }
 
-function endpoints(e: Record<string, string | undefined>) {
-  const base = e.AI_API_URL?.replace(/\/+$/, "") || DEFAULT_BASE;
-  const key = e.AI_API_KEY || DEFAULT_KEY;
-  return {
-    models: `${base}/models`,
-    chat: `${base}/chat/completions`,
-    headers: key ? { authorization: `Bearer ${key}` } : ({} as Record<string, string>),
-    model: e.AI_MODEL || DEFAULT_MODEL,
-  };
-}
+const nowSec = () => Math.floor(Date.now() / 1000);
 
-// Many OpenAI-style /models lists (z.ai included) don't flag vision, so infer it
-// from the id: glm-5.3-flash (and later 5.x flashes), and the usual vision tags.
-const looksVision = (id: string) => /5\.[3-9]-flash|[-.]v$|\bv\d|vision|4\.5v|4v\b|gpt-4o|gemini|claude/i.test(id);
+// Which models can serve this request right now, best first (the requested one if it
+// is working, then its provider's others, then the other provider's).
+async function modelsFor(e: Record<string, string | undefined>, requested?: string, opts: { vision?: boolean; tools?: boolean } = {}) {
+  const providers = providersFor(e);
+  const rows = await d1Store.rows().catch(() => [] as ModelRow[]);
+  const working = workingModels(rows, nowSec());
+  // A request with images goes to a model that can read them, when one is working; one
+  // that asks for code execution goes to a model that can call tools. (If none can, the
+  // best model answers anyway: it just can't do that part.)
+  const pool = opts.vision && working.some((r) => r.vision === 1) ? working.filter((r) => r.vision === 1)
+    : opts.tools && working.some((r) => r.tools === 1) ? working.filter((r) => r.tools === 1)
+    : working;
+  const byId = new Map(working.map((r) => [r.id, r]));
+  return { providers, rows, working, byId, candidates: candidatesFor(pool, requested, 4) };
+}
+// A failure seen in real use: drop that model from the list right away.
+const downReporter = () => (id: string, err: string) => { markDown(d1Store, id, err, nowSec()).catch(() => {}); };
+// Kick off a lease-guarded refresh of model health without holding the response.
+function kickRefresh(providers: Provider[], force = false) {
+  background(refreshModels(fetch, providers, d1Store, { force, deadlineMs: 24_000 }));
+}
+// Images only reach models measured to read them; any other gets the text with a note
+// (a 400 for an image it can't read would otherwise look like the model being down).
+const hasImages = (msgs: any[]) => msgs.some((m) => Array.isArray(m?.content) && m.content.some((p: any) => p?.type === "image_url"));
+function withoutImages(msgs: any[]): any[] {
+  return msgs.map((m) => {
+    if (!Array.isArray(m?.content)) return m;
+    const text = m.content.filter((p: any) => p?.type === "text").map((p: any) => p?.text ?? "").join("\n");
+    const dropped = m.content.some((p: any) => p?.type === "image_url");
+    return { ...m, content: text + (dropped ? "\n[an image was attached, but this model can't read images]" : "") };
+  });
+}
+function lastUserText(messages: any[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "user") continue;
+    if (typeof m.content === "string") return m.content;
+    if (Array.isArray(m.content)) return m.content.filter((p: any) => p?.type === "text").map((p: any) => p?.text ?? "").join(" ");
+  }
+  return "";
+}
+// Web access for models that can't call tools (Hybra's Gemini models take a tools
+// array and answer with nothing): read any links in the message, otherwise search,
+// and hand the model the result as context.
+async function webContext(query: string): Promise<any | null> {
+  const urls = [...new Set(query.match(/https?:\/\/[^\s<>"')]+/g) || [])].slice(0, 3);
+  const body = urls.length
+    ? (await Promise.all(urls.map(async (u) => `SOURCE ${u}:\n${await readUrl(u)}`))).join("\n\n---\n\n")
+    : "WEB SEARCH RESULTS (DuckDuckGo):\n" + (await webSearch(query));
+  return { role: "system", content: "You have live web access for this question. Freshly fetched web content is below; use it to answer and cite the sources (titles/URLs) you rely on.\n\n" + body.slice(0, 18_000) };
+}
+const NO_MODELS = "no ai models are responding right now. i’m re-checking them; try again in a minute.";
 
 const codeOf = (e: Record<string, string | undefined>) => e.SHH_CODE || "SEMINOLE";
-
-const pickContent = (msg: any): string => {
-  const raw = msg?.content;
-  return typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((p: any) => p?.text ?? "").join("") : "";
-};
 
 // A short, unambiguous room code (no 0/O/1/I/L).
 function roomCode(): string {
@@ -90,76 +124,85 @@ async function runCode(language: string, code: string): Promise<string> {
   } catch { return "execution timed out or failed"; }
 }
 
-// web look-up (keyless): read a URL, or run a search — DuckDuckGo lite fetched
-// through r.jina.ai, which returns clean result text (titles, links, snippets).
+// web look-up (keyless). Direct fetches come first: they have no middleman to be
+// blocked (r.jina.ai answers 401 "bad IP reputation" to some servers and 403 for any
+// search page). Jina is only the second try.
+const WEB_UA = "Mozilla/5.0 (compatible; cupcake.gg/1.0; +https://cupcake.gg)";
 async function readUrl(u: string): Promise<string> {
+  if (!isPublicHttpUrl(u)) return `(won't read ${u}: only public web pages)`;
   try {
-    const r = await fetch(`https://r.jina.ai/${u}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(22_000) });
-    if (r.ok) return (await r.text()).slice(0, 8000);
-    return `(couldn't read ${u} — ${r.status})`;
+    const r = await fetch(u, { headers: { "user-agent": WEB_UA, accept: "text/html,text/plain,*/*;q=0.8" }, redirect: "follow", signal: AbortSignal.timeout(15_000) });
+    if (r.ok) {
+      const body = (await r.text()).slice(0, 600_000);
+      const text = /html|xml/i.test(r.headers.get("content-type") || "") ? htmlToText(body) : body.trim();
+      if (text.trim().length > 40) return text.slice(0, 8000);
+    }
+  } catch { /* fall through to the reader proxy */ }
+  try {
+    const r = await fetch(`https://r.jina.ai/${u}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(20_000) });
+    if (r.ok) { const t = (await r.text()).trim(); if (t) return t.slice(0, 8000); }
+    return `(couldn't read ${u})`;
   } catch { return `(couldn't reach ${u})`; }
 }
 async function webSearch(q: string): Promise<string> {
   const query = String(q ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   if (!query) return "(empty query)";
   try {
-    const r = await fetch(`https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(25_000) });
-    if (r.ok) { const t = (await r.text()).trim(); return t ? t.slice(0, 9000) : "(no results)"; }
-    return `(search failed — ${r.status})`;
-  } catch { return "(search failed)"; }
+    const r = await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, { headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36", accept: "text/html" }, signal: AbortSignal.timeout(15_000) });
+    if (r.ok) { const hits = parseDuckLite(await r.text()); if (hits.length) return formatHits(hits); }
+  } catch { /* fall through to the reader proxy */ }
+  try {
+    const r = await fetch(`https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(20_000) });
+    if (r.ok) { const t = (await r.text()).trim(); if (t) return t.slice(0, 9000); }
+  } catch { /* nothing left to try */ }
+  return "(search failed)";
 }
 
-// Non-streaming tool loop, used by co-work rooms (the reply is stored, not
-// streamed — everyone in the room picks it up by polling).
-async function runLoop(cfg: ReturnType<typeof endpoints>, model: string, messages: any[], tools: any[]): Promise<{ content: string; steps: any[] }> {
+// Tool loop for co-work rooms (the reply is stored, not streamed — everyone in the
+// room picks it up by polling). Streams from the provider and aggregates, because
+// that is the only mode every backend answers in. Fails over between models on the
+// first call; once one answers it is kept for the rest of the loop.
+type Down = (id: string, err: string) => void;
+async function runLoop(providers: Provider[], byId: Map<string, ModelRow>, candidates: string[], messages: any[], tools: any[], onDown: Down, webMsg: any | null): Promise<{ content: string; steps: any[]; model: string | null }> {
   const convo = [...messages];
   const steps: any[] = [];
+  let pin = candidates, model: string | null = null;
   for (let it = 0; it < 6; it++) {
-    let rr: Response;
-    try {
-      rr = await fetch(cfg.chat, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", ...cfg.headers }, body: JSON.stringify({ model, messages: convo, tools: tools.length ? tools : undefined, stream: false }), signal: AbortSignal.timeout(90_000) });
-    } catch {
-      return { content: "⚠ the ai didn't answer — try again", steps };
-    }
-    const d: any = await rr.json().catch(() => null);
-    const c = d?.choices?.[0];
-    if (!rr.ok || !c) return { content: "⚠ " + (d?.error?.message || "the ai couldn't answer that"), steps };
-    const tcs = c.message?.tool_calls;
-    if (c.finish_reason === "tool_calls" && Array.isArray(tcs) && tcs.length) {
-      convo.push(c.message);
-      for (const tc of tcs) {
+    // each candidate gets only what it supports (see the chat op)
+    const r = await chatWithFailover(fetch, providers, pin, (ns) => {
+      const row = byId.get(ns);
+      const useTools = tools.length > 0 && row?.tools === 1;
+      return { messages: [...(!useTools && webMsg ? [webMsg] : []), ...(hasImages(convo) && row?.vision !== 1 ? withoutImages(convo) : convo)], tools: useTools ? tools : undefined };
+    }, { timeoutMs: 90_000, onDown });
+    if (!r.model) return { content: "⚠ " + (r.reply.err || "the ai couldn't answer that"), steps, model };
+    model = r.model; pin = [r.model];
+    const { reply } = r;
+    if (reply.toolCalls.length && reply.finish !== "stop") {
+      const toolCalls = reply.toolCalls.map((t) => ({ id: t.id || crypto.randomUUID(), type: "function", function: { name: t.name, arguments: t.args || "{}" } }));
+      convo.push({ role: "assistant", content: reply.content, tool_calls: toolCalls });
+      for (const tc of toolCalls) {
         let a: any = {};
-        try { a = JSON.parse(tc.function?.arguments || "{}"); } catch { /* bad args */ }
+        try { a = JSON.parse(tc.function.arguments || "{}"); } catch { /* bad args */ }
         let out = "";
-        if (tc.function?.name === "run_code") { out = await runCode(a.language, a.code); steps.push({ id: tc.id, name: "run_code", language: a.language, code: a.code, output: out, status: "done" }); }
-        else if (tc.function?.name === "web_search") { out = await webSearch(a.query); steps.push({ id: tc.id, name: "web_search", query: a.query, output: out, status: "done" }); }
-        else if (tc.function?.name === "read_url") { out = await readUrl(a.url); steps.push({ id: tc.id, name: "read_url", url: a.url, output: out, status: "done" }); }
-        else out = `unknown tool ${tc.function?.name}`;
+        if (tc.function.name === "run_code") { out = await runCode(a.language, a.code); steps.push({ id: tc.id, name: "run_code", language: a.language, code: a.code, output: out, status: "done" }); }
+        else if (tc.function.name === "web_search") { out = await webSearch(a.query); steps.push({ id: tc.id, name: "web_search", query: a.query, output: out, status: "done" }); }
+        else if (tc.function.name === "read_url") { out = await readUrl(a.url); steps.push({ id: tc.id, name: "read_url", url: a.url, output: out, status: "done" }); }
+        else out = `unknown tool ${tc.function.name}`;
         convo.push({ role: "tool", tool_call_id: tc.id, content: out });
       }
       continue;
     }
-    return { content: pickContent(c.message) || "(done)", steps };
+    return { content: reply.content || "(done)", steps, model };
   }
-  return { content: "(stopped after several steps — ask me to continue)", steps };
+  return { content: "(stopped after several steps — ask me to continue)", steps, model };
 }
 
-// One plain completion (no tools, no streaming): the humanizer's rewrite call.
-async function completeText(cfg: ReturnType<typeof endpoints>, model: string, system: string, user: string): Promise<{ text: string; error?: string }> {
-  try {
-    const rr = await fetch(cfg.chat, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", ...cfg.headers },
-      body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.9, stream: false }),
-      signal: AbortSignal.timeout(80_000),
-    });
-    const d: any = await rr.json().catch(() => null);
-    if (!rr.ok) return { text: "", error: d?.error?.message || "the ai couldn't do that" };
-    const text = pickContent(d?.choices?.[0]?.message).trim();
-    return text ? { text } : { text: "", error: "the ai returned nothing" };
-  } catch {
-    return { text: "", error: "the ai didn't answer, try again" };
-  }
+// One plain completion (no tools): the humanizer's rewrite call, with failover.
+async function completeText(providers: Provider[], candidates: string[], system: string, user: string, onDown: Down): Promise<{ text: string; error?: string }> {
+  if (!candidates.length) return { text: "", error: NO_MODELS };
+  const r = await chatWithFailover(fetch, providers, candidates, { messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.9 }, { timeoutMs: 80_000, onDown });
+  if (!r.model) return { text: "", error: r.reply.err || "the ai couldn’t do that" };
+  return r.reply.content ? { text: r.reply.content } : { text: "", error: "the ai returned nothing" };
 }
 
 const RUN_TOOL = {
@@ -255,25 +298,20 @@ function budgetHistory(messages: any[]): any[] {
   return [...lead, ...kept];
 }
 
-// Normalise both the OpenAI `{data:[{id}]}` shape and pollinations' flat array.
-function normalizeModels(d: any): { id: string; label: string; vision: boolean }[] {
-  const seen = new Set<string>();
-  const out: { id: string; label: string; vision: boolean }[] = [];
-  const push = (id: unknown, label: unknown, vision: boolean) => {
-    const s = typeof id === "string" ? id : typeof id === "number" ? String(id) : "";
-    if (!s || seen.has(s)) return;
-    seen.add(s);
-    out.push({ id: s, label: (typeof label === "string" && label) || s, vision });
+// What the picker shows: ONLY models whose last live probe passed (never the
+// provider's raw list), with vision / tool support as measured, not guessed.
+async function modelsPayload(e: Record<string, string | undefined>) {
+  const { rows, working } = await modelsFor(e);
+  const now = nowSec();
+  const real = rows.filter((r) => r.id !== "__lock");
+  const lock = rows.find((r) => r.id === "__lock");
+  return {
+    models: working.map((m) => ({ id: m.id, provider: splitId(m.id)?.provider ?? "", label: splitId(m.id)?.id ?? m.id, vision: m.vision === 1, tools: m.tools === 1, ms: m.ms })),
+    default: working[0]?.id ?? null,
+    // nothing to offer yet AND still working it out (first run, or a refresh in flight)
+    checking: working.length === 0 && (real.length < 3 || (lock?.checked_at ?? 0) > now - 45),
+    checkedAt: real.reduce((m, r) => Math.max(m, r.checked_at), 0),
   };
-  if (Array.isArray(d?.data)) {
-    for (const m of d.data) push(m?.id, m?.id, !!(m?.capabilities?.vision || m?.modalities?.input?.includes?.("image") || m?.vision) || looksVision(String(m?.id ?? "")));
-  } else if (Array.isArray(d)) {
-    for (const m of d) {
-      const id = (Array.isArray(m?.aliases) && m.aliases[0]) || m?.name;
-      push(id, m?.description || m?.name, !!(m?.vision || m?.input_modalities?.includes?.("image")) || looksVision(String(id ?? "")));
-    }
-  }
-  return out;
 }
 
 export async function GET(req: Request) {
@@ -281,15 +319,9 @@ export async function GET(req: Request) {
   if (me instanceof Response) return me;
   const e = await readEnv();
   if ((new URL(req.url).searchParams.get("code") || "") !== codeOf(e)) return Response.json({ error: "locked" }, { status: 403 });
-  const cfg = endpoints(e);
-  let models: { id: string; label: string; vision: boolean }[] = [];
-  try {
-    const r = await fetch(cfg.models, { headers: { accept: "application/json", ...cfg.headers }, signal: AbortSignal.timeout(20_000) });
-    models = normalizeModels(await r.json());
-  } catch { /* fall through with just the default */ }
-  if (cfg.model && !models.some((m) => m.id === cfg.model)) models.unshift({ id: cfg.model, label: cfg.model, vision: looksVision(cfg.model) });
+  kickRefresh(providersFor(e)); // lease-guarded: at most one refresh runs, and it only probes what's stale
   const docs = await all<{ id: string; name: string }>("select id, name from shh_docs where user_id = ? order by created_at", me.id).catch(() => []);
-  return Response.json({ models, default: cfg.model, instructions: me.shh_instructions ?? "", docs }, { headers: { "cache-control": "no-store" } });
+  return Response.json({ ...(await modelsPayload(e)), instructions: me.shh_instructions ?? "", docs }, { headers: { "cache-control": "no-store" } });
 }
 
 export async function POST(req: Request) {
@@ -300,6 +332,12 @@ export async function POST(req: Request) {
   if ((b.code || "") !== codeOf(e)) return Response.json({ error: "wrong code" }, { status: 403 });
 
   if (b.op === "unlock") return Response.json({ ok: true });
+
+  // "re-check": probe everything stale (or, with force, everything) right now.
+  if (b.op === "models_refresh") {
+    await refreshModels(fetch, providersFor(e), d1Store, { force: !!(b as { force?: boolean }).force, deadlineMs: 22_000, leaseSec: 0 });
+    return Response.json(await modelsPayload(e), { headers: { "cache-control": "no-store" } });
+  }
 
   // Persistent setup: custom instructions / memory, and reference files.
   if (b.op === "save_instructions") {
@@ -365,7 +403,8 @@ export async function POST(req: Request) {
     await run("insert into shh_room_msgs (room_id, user_id, handle, role, content) values (?, ?, ?, 'user', ?)", id, me.id, me.handle, text + (images.length ? `\n[${images.length} image(s) attached]` : ""));
 
     // assemble the shared transcript + the room owner's instructions/files as project context
-    const cfg = endpoints(e);
+    const { providers, byId, candidates } = await modelsFor(e, b.model, { vision: images.length > 0, tools: !!b.exec });
+    if (!candidates.length) { kickRefresh(providers); return Response.json({ error: NO_MODELS }, { status: 503 }); }
     const preamble: any[] = [];
     const owner = await first<{ shh_instructions: string | null }>("select shh_instructions from users where id = ?", room.owner_id).catch(() => null);
     const refParts: string[] = [];
@@ -387,7 +426,8 @@ export async function POST(req: Request) {
       convo[convo.length - 1] = { role: "user", content: [{ type: "text", text: lastText }, ...images.map((u) => ({ type: "image_url", image_url: { url: u } }))] };
     }
     const messages = budgetHistory([...preamble, ...convo]);
-    const { content, steps } = await runLoop(cfg, b.model || cfg.model, messages, tools);
+    const webMsg = b.web && candidates.some((c) => byId.get(c)?.tools !== 1) ? await webContext(lastUserText(messages)).catch(() => null) : null;
+    const { content, steps } = await runLoop(providers, byId, candidates, messages, tools, downReporter(), webMsg);
     await run("insert into shh_room_msgs (room_id, role, content, steps) values (?, 'assistant', ?, ?)", id, content, steps.length ? JSON.stringify(steps) : null);
     return Response.json({ ok: true });
   }
@@ -402,9 +442,10 @@ export async function POST(req: Request) {
     if (!text.trim()) return Response.json({ error: "paste some text first" }, { status: 400 });
     const strength = (STRENGTHS as string[]).includes(String(b.strength)) ? (b.strength as Strength) : "medium";
     const tone = (TONES as string[]).includes(String(b.tone)) ? (b.tone as Tone) : "neutral";
-    const cfg = endpoints(e);
-    const model = b.model || cfg.model;
-    const r = await humanizeText(text, { strength, tone, sample: b.sample }, (system, user) => completeText(cfg, model, system, user));
+    const { providers, candidates } = await modelsFor(e, b.model);
+    if (!candidates.length) { kickRefresh(providers); return Response.json({ error: NO_MODELS }, { status: 503 }); }
+    const down = downReporter();
+    const r = await humanizeText(text, { strength, tone, sample: b.sample }, (system, user) => completeText(providers, candidates, system, user, down));
     if (r.error) return Response.json({ error: r.error }, { status: 502 });
     return Response.json({ text: r.text, warnings: r.warnings }, { headers: { "cache-control": "no-store" } });
   }
@@ -412,7 +453,9 @@ export async function POST(req: Request) {
   if (b.op === "chat") {
     let messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
-    const cfg = endpoints(e);
+    const { providers, byId, candidates } = await modelsFor(e, b.model, { vision: hasImages(messages), tools: !!b.exec });
+    if (!candidates.length) { kickRefresh(providers); return Response.json({ error: NO_MODELS }, { status: 503 }); }
+    const down = downReporter();
 
     // Persistent setup preamble: instructions/memory + reference files.
     const preamble: any[] = [];
@@ -434,16 +477,19 @@ export async function POST(req: Request) {
     if (b.exec) tools.push(RUN_TOOL);
     if (b.web) tools.push(SEARCH_TOOL, READ_TOOL);
     tools.push(REMEMBER_TOOL);
-    const hints: string[] = [];
-    if (b.web) hints.push("You have live web access via web_search and read_url — use them for anything current or factual and cite what you rely on.");
-    if (b.exec) hints.push("You can run code via run_code for calculations and data work.");
-    hints.push("You can save durable facts about the user with remember.");
-    if (b.humanize) hints.push(buildStyleGuide((TONES as string[]).includes(String(b.tone)) ? (b.tone as Tone) : "neutral"));
-    preamble.push({ role: "system", content: hints.join(" ") });
+    // What the model is told about its tools. Sent only to a model measured to support
+    // them; a model without tool support must not be promised tools it can't call.
+    const toolHints: string[] = [];
+    if (b.web) toolHints.push("You have live web access via web_search and read_url — use them for anything current or factual and cite what you rely on.");
+    if (b.exec) toolHints.push("You can run code via run_code for calculations and data work.");
+    toolHints.push("You can save durable facts about the user with remember.");
+    const toolHintMsg = { role: "system", content: toolHints.join(" ") };
+    if (b.humanize) preamble.push({ role: "system", content: buildStyleGuide((TONES as string[]).includes(String(b.tone)) ? (b.tone as Tone) : "neutral") });
 
     messages = budgetHistory([...preamble, ...messages]);
+    // Web for models that can't call tools: fetch it ourselves, once, up front.
+    const webMsg = b.web && candidates.some((c) => byId.get(c)?.tools !== 1) ? await webContext(lastUserText(messages)).catch(() => null) : null;
 
-    const model = b.model || cfg.model;
     const enc = new TextEncoder();
     let abort: AbortController | null = null;
 
@@ -453,69 +499,95 @@ export async function POST(req: Request) {
           try { controller.enqueue(enc.encode(JSON.stringify(ev) + "\n")); } catch { /* closed */ }
         };
         const convo = [...messages];
+        let pinned = candidates;          // models to try; narrows to the one that answered
+        let usedModel: string | null = null;
+        let afterTools = false, nudged = false; // a model that goes silent right after using a tool gets ONE nudge before we blame it
         try {
           for (let it = 0; it < 8; it++) {
-            abort = new AbortController();
-            let rr: Response;
-            try {
-              rr = await fetch(cfg.chat, {
-                method: "POST",
-                headers: { "content-type": "application/json", accept: "text/event-stream", ...cfg.headers },
-                body: JSON.stringify({ model, messages: convo, tools: tools.length ? tools : undefined, stream: true }),
-                signal: abort.signal,
-              });
-            } catch {
-              emit({ k: "err", v: "the ai didn't answer — try again" });
-              break;
-            }
-            if (!rr.ok || !rr.body) {
-              let msg = "the ai couldn't answer that";
-              try { const j: any = await rr.json(); msg = j?.error?.message || msg; } catch { /* non-json */ }
-              emit({ k: "err", v: msg });
-              break;
-            }
-
-            // Parse the upstream SSE: accumulate visible content + any tool calls.
+            // Try the candidate models in order. One that errors, or answers with
+            // nothing at all, is reported down and the next is tried. That is invisible
+            // to the client because we only fail over before anything was emitted.
             let content = "";
-            const toolAcc = new Map<number, { id: string; name: string; args: string }>();
             let finish: string | null = null;
-            const reader = rr.body.getReader();
-            const dec = new TextDecoder();
-            let buf = "";
-            readLoop: for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buf += dec.decode(value, { stream: true });
-              let nl: number;
-              while ((nl = buf.indexOf("\n")) >= 0) {
-                const line = buf.slice(0, nl).trim();
-                buf = buf.slice(nl + 1);
-                if (!line.startsWith("data:")) continue;
-                const payload = line.slice(5).trim();
-                if (payload === "[DONE]") break readLoop;
-                let j: any = null;
-                try { j = JSON.parse(payload); } catch { continue; }
-                const ch = j?.choices?.[0];
-                if (!ch) continue;
-                const delta = ch.delta || {};
-                if (typeof delta.content === "string" && delta.content) { content += delta.content; emit({ k: "d", v: delta.content }); }
-                if (Array.isArray(delta.tool_calls)) {
-                  for (const tc of delta.tool_calls) {
-                    const idx = tc.index ?? 0;
-                    const cur = toolAcc.get(idx) || { id: "", name: "", args: "" };
-                    if (tc.id) cur.id = tc.id;
-                    if (tc.function?.name) cur.name = tc.function.name;
-                    if (tc.function?.arguments) cur.args += tc.function.arguments;
-                    toolAcc.set(idx, cur);
-                  }
-                }
-                if (ch.finish_reason) finish = ch.finish_reason;
+            const toolAcc = new Map<number, { id: string; name: string; args: string }>();
+            let answered = false, stopped = false, lastErr = "";
+            for (const ns of pinned) {
+              const sp = splitId(ns);
+              const prov = sp && providers.find((x) => x.id === sp.provider);
+              if (!sp || !prov) continue;
+              abort = new AbortController();
+              // This model gets only what it supports: tools if it can call them (else
+              // the web context fetched above), and images only if it can read them.
+              const row = byId.get(ns);
+              const useTools = tools.length > 0 && row?.tools === 1;
+              const sendMsgs = [...(useTools ? [toolHintMsg] : webMsg ? [webMsg] : []), ...(hasImages(convo) && row?.vision !== 1 ? withoutImages(convo) : convo)];
+              let rr: Response;
+              try {
+                rr = await fetch(`${prov.base}/chat/completions`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json", accept: "text/event-stream", authorization: `Bearer ${prov.key}` },
+                  body: JSON.stringify({ model: sp.id, messages: sendMsgs, tools: useTools ? tools : undefined, stream: true }),
+                  signal: abort.signal,
+                });
+              } catch {
+                if (abort.signal.aborted) { stopped = true; break; }
+                lastErr = "the ai didn’t answer"; down(ns, lastErr); continue;
               }
+              if (!rr.ok || !rr.body) {
+                let msg: any = "the ai couldn’t answer that";
+                try { const j: any = await rr.json(); msg = j?.error?.message || msg; } catch { /* non-json */ }
+                lastErr = cleanErr(String(msg)); if (modelFault(rr.status)) down(ns, lastErr); continue; // a 4xx is this request's fault, not the model's
+              }
+
+              // Stream it. Reasoning some models put inside `content` as <think> is hidden.
+              const filter = new ThinkFilter();
+              let emitted = false;
+              content = ""; finish = null; toolAcc.clear();
+              try {
+                for await (const j of readSSE(rr)) {
+                  const ch = j?.choices?.[0];
+                  if (!ch) continue;
+                  const delta = ch.delta || {};
+                  if (typeof delta.content === "string" && delta.content) {
+                    let v = filter.push(delta.content);
+                    if (!emitted) v = v.replace(/^\s+/, ""); // some models stream blank lines before the answer
+                    if (v) { content += v; emitted = true; emit({ k: "d", v }); }
+                  }
+                  if (Array.isArray(delta.tool_calls)) {
+                    for (const tc of delta.tool_calls) {
+                      const idx = tc.index ?? 0;
+                      const cur = toolAcc.get(idx) || { id: "", name: "", args: "" };
+                      if (tc.id) cur.id = tc.id;
+                      if (tc.function?.name) cur.name = tc.function.name;
+                      if (tc.function?.arguments) cur.args += tc.function.arguments;
+                      toolAcc.set(idx, cur);
+                    }
+                  }
+                  if (ch.finish_reason) finish = ch.finish_reason;
+                }
+              } catch {
+                if (abort.signal.aborted) { stopped = true; break; }                       // the user pressed Stop
+                if (!emitted && toolAcc.size === 0) { lastErr = "the ai’s stream broke"; down(ns, lastErr); continue; }
+                // broke mid-answer: keep what already reached the client
+              }
+              const tail = emitted ? filter.flush() : filter.flush().replace(/^\s+/, "");
+              if (tail) { content += tail; emitted = true; emit({ k: "d", v: tail }); }
+              if (!emitted && toolAcc.size === 0) { lastErr = "the ai returned nothing"; if (!afterTools) down(ns, lastErr); continue; } // an empty 200: next model
+              answered = true;
+              if (ns !== usedModel) { emit({ k: "model", v: ns, wanted: candidates[0] !== ns ? candidates[0] : undefined }); usedModel = ns; }
+              pinned = [ns];
+              break;
+            }
+            if (stopped) break;
+            if (!answered) {
+              if (afterTools && !nudged) { nudged = true; convo.push({ role: "user", content: "(Using the tool results above, answer in plain text now.)" }); continue; }
+              emit({ k: "err", v: lastErr || "the ai couldn’t answer that" }); break;
             }
 
             // Tool calls → run them, feed outputs back, loop again.
             if (toolAcc.size > 0 && finish !== "stop") {
               const toolCalls = [...toolAcc.values()].filter((t) => t.name).map((t) => ({ id: t.id || crypto.randomUUID(), type: "function", function: { name: t.name, arguments: t.args || "{}" } }));
+              afterTools = true;
               convo.push({ role: "assistant", content, tool_calls: toolCalls });
               for (const tc of toolCalls) {
                 let args: any = {};

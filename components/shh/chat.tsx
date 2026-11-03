@@ -10,20 +10,19 @@ import rehypeKatex from "rehype-katex";
 import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, Feather, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
+import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/model-picker";
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
 import { toast } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-interface Model { id: string; label: string; vision: boolean }
 interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
-interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean; orig?: string }
+interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean; orig?: string; via?: { model: string; wanted?: string } }
 interface Thread { id: string; title: string; updatedAt: number }
 interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string }
 interface RoomMsg { id: number; handle: string | null; role: string; content: string; steps?: Step[] }
 
 const CODE_KEY = "shh:code";
-const MODEL_KEY = "shh:model";
 const THREADS_KEY = "shh:threads";
 const ACTIVE_KEY = "shh:active";
 const PREFS_KEY = "shh:prefs";
@@ -406,8 +405,8 @@ export function ShhChat({ me }: { me?: string }) {
   const [codeInput, setCodeInput] = useState("");
   const [unlocking, setUnlocking] = useState(false);
 
-  const [models, setModels] = useState<Model[]>([]);
-  const [model, setModel] = useState("");
+  const { models, defaultId, checking, loaded: modelsLoaded, rechecking, recheck } = useModelList(code);
+  const [model, setModel] = useSelectedModel(models, defaultId, modelsLoaded);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -440,7 +439,6 @@ export function ShhChat({ me }: { me?: string }) {
   useEffect(() => {
     try {
       const c = localStorage.getItem(CODE_KEY); if (c) setCode(c);
-      const mdl = localStorage.getItem(MODEL_KEY); if (mdl) setModel(mdl);
       const p = localStorage.getItem(PREFS_KEY); if (p) setPrefsState({ ...DEFAULT_PREFS, ...JSON.parse(p) });
       let list: Thread[] = [];
       try { list = JSON.parse(localStorage.getItem(THREADS_KEY) || "[]"); } catch { list = []; }
@@ -488,20 +486,10 @@ export function ShhChat({ me }: { me?: string }) {
     return () => clearTimeout(t);
   }, [msgs, activeId]);
 
-  useEffect(() => { if (model) try { localStorage.setItem(MODEL_KEY, model); } catch { /* */ } }, [model]);
   useEffect(() => { setHumState(loadHumPrefs()); try { setNatural(localStorage.getItem("shh:natural") === "1"); } catch { /* */ } }, []);
   const setHum = (p: HumPrefs) => { setHumState(p); try { localStorage.setItem("shh:hum", JSON.stringify(p)); } catch { /* */ } };
   const toggleNatural = () => setNatural((n) => { const v = !n; try { localStorage.setItem("shh:natural", v ? "1" : "0"); } catch { /* */ } return v; });
   const setPrefs = (p: Prefs) => { setPrefsState(p); try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* */ } };
-
-  useEffect(() => {
-    if (!code) return;
-    fetch(`/api/shh?code=${encodeURIComponent(code)}`).then((r) => r.json()).then((d) => {
-      const list: Model[] = d.models ?? [];
-      setModels(list);
-      setModel((m) => m || d.default || list.find((x) => x.vision)?.id || list[0]?.id || "glm-5.3-flash");
-    }).catch(() => {});
-  }, [code]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy, roomMsgs, roomBusy]);
   useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = "0px"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; } }, [input]);
@@ -606,6 +594,7 @@ export function ShhChat({ me }: { me?: string }) {
             return { ...a, steps, pending: false };
           });
           else if (ev.k === "mem") patch((a) => ({ ...a, memories: [...(a.memories || []), ev.v] }));
+          else if (ev.k === "model") patch((a) => ({ ...a, via: { model: String(ev.v), wanted: ev.wanted ? String(ev.wanted) : undefined } }));
           else if (ev.k === "err") patch((a) => ({ ...a, content: (a.content ? a.content + "\n\n" : "") + `⚠ ${ev.v}`, pending: false }));
         }
       }
@@ -629,6 +618,7 @@ export function ShhChat({ me }: { me?: string }) {
     if (images.length && !models.find((m) => m.id === model)?.vision) {
       const vm = models.find((m) => m.vision);
       if (vm) { useModel = vm.id; setModel(vm.id); toast("switched to a vision model 👁"); }
+      else toast("no working model can read images right now, so it won’t see the picture");
     }
     setImages([]);
     setDocs([]);
@@ -779,6 +769,8 @@ export function ShhChat({ me }: { me?: string }) {
   }
 
   const selVision = models.find((m) => m.id === model)?.vision;
+  const anyVision = models.some((m) => m.vision);
+  const selTools = !!models.find((m) => m.id === model)?.tools;
 
   // ---- chat ----
   return (
@@ -817,10 +809,7 @@ export function ShhChat({ me }: { me?: string }) {
           </DM.Portal>
         </DM.Root>
 
-        <select value={model} onChange={(e) => setModel(e.target.value)} className="h-10 max-w-[220px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold outline-none focus:border-frost-hot">
-          {models.length === 0 && <option value={model}>{model || "default"}</option>}
-          {models.map((m) => <option key={m.id} value={m.id}>{m.id}{m.vision ? " 👁" : ""}</option>)}
-        </select>
+        <ModelPicker models={models} value={model} onChange={setModel} checking={checking} loaded={modelsLoaded} rechecking={rechecking} onRecheck={recheck} />
         <span className="flex-1" />
         {/* quick decoy: pick a skin to throw up instantly */}
         <DM.Root>
@@ -908,6 +897,9 @@ export function ShhChat({ me }: { me?: string }) {
                 {m.role === "assistant" ? (
                   m.content ? <Markdown text={m.content} /> : m.pending ? <Loader2 className="size-4 animate-spin text-frost-hot" /> : null
                 ) : m.content}
+                {m.role === "assistant" && m.via?.wanted ? (
+                  <p className="mt-2 text-[11.5px] font-semibold text-plum-muted">answered by {m.via.model.split(":").pop()} · {m.via.wanted.split(":").pop()} wasn’t responding</p>
+                ) : null}
                 {m.role === "assistant" && m.memories?.length ? (
                   <div className="mt-2 flex flex-col gap-1">
                     {m.memories.map((f, n) => <span key={n} className="flex items-center gap-1.5 rounded-lg bg-cream-blush px-2 py-1 text-[11.5px] font-bold text-frost-text"><Brain className="size-3" />remembered: {f}</span>)}
@@ -939,7 +931,7 @@ export function ShhChat({ me }: { me?: string }) {
         </div>
       )}
       {images.length > 0 && !selVision && (
-        <p className="-mt-1 px-1 text-[12px] font-semibold text-plum-muted">this model can’t read images — i’ll switch to a 👁 model when you send.</p>
+        <p className="-mt-1 px-1 text-[12px] font-semibold text-plum-muted">{anyVision ? "this model can’t read images — i’ll switch to a 👁 model when you send." : "no working model can read images right now, so it won’t see the picture."}</p>
       )}
       {docs.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -959,7 +951,7 @@ export function ShhChat({ me }: { me?: string }) {
           <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" title="attach image" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
           <button type="button" onClick={() => docRef.current?.click()} aria-label="Attach file" title="attach a text / doc file" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><Paperclip className="size-[18px]" /></button>
           <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="search the web (it decides when to search and read links)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
-          <button type="button" onClick={() => setExec((x) => !x)} aria-pressed={exec} title="let it run code in a sandbox" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", exec ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Terminal className="size-5" /></button>
+          <button type="button" onClick={() => { if (!exec && !selTools) toast("this model can’t run code. pick one marked ⚙"); setExec((x) => !x); }} aria-pressed={exec} title="let it run code in a sandbox (needs a ⚙ model)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", exec ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Terminal className="size-5" /></button>
           <button type="button" onClick={toggleNatural} aria-pressed={natural} title="natural voice: replies are written like a person from the start" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", natural ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Feather className="size-5" /></button>
         </div>
         <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
