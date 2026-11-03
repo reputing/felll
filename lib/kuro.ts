@@ -69,6 +69,36 @@ export async function signHandoff(uid: string, secret: string, ttlMs = 120_000):
   return `${payload}.${bytesToB64url(await crypto.subtle.sign("HMAC", key, enc.encode(payload)))}`;
 }
 
+// A short-lived pass for app/api/anivexa/proxy: proves a stream/segment
+// request came from kirari's watch-together (app/api/internal/resolve-episode
+// minted it after kirari already checked the caller is a real member in a
+// live call), without putting the raw KIRARI_SERVICE_KEY itself in a URL that
+// a video element will fetch dozens of times and that ends up in access logs
+// on both ends. Not bound to one specific URL: an HLS playlist fans out into
+// many segment/key/subtitle requests the proxy rewrites on the fly (see its
+// rewritePlaylist), so this is a blanket pass for the viewing session instead
+// - the same shape currentUser()'s own session cookie already is, just
+// shorter-lived (a few hours, not a whole signed-in session).
+export async function signKirariAccess(secret: string, ttlMs = 6 * 60 * 60_000): Promise<string> {
+  const exp = Date.now() + ttlMs;
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return `${exp}.${bytesToB64url(await crypto.subtle.sign("HMAC", key, enc.encode(String(exp))))}`;
+}
+
+export async function verifyKirariAccess(token: string, secret: string): Promise<boolean> {
+  const parts = (token || "").split(".");
+  if (parts.length !== 2 || !secret) return false;
+  const [expStr, sig] = parts;
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || Date.now() > exp) return false;
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  try {
+    return await crypto.subtle.verify("HMAC", key, b64urlToBytes(sig), enc.encode(expStr));
+  } catch {
+    return false;
+  }
+}
+
 export interface KuroProfile {
   uid: string;
   handle: string;

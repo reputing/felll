@@ -58,6 +58,13 @@ interface CloudflareEnv {
   KURO_SERVICE_KEY?: string;
   /** "1" to admit kuro+ members only */
   REQUIRE_KURO_PLUS?: string;
+  /** kirari's half of the trust boundary for watch-together: kirari's server
+   *  carries this as x-kirari-key when it calls resolve-episode, and this
+   *  site signs the short-lived kt= tokens that stream requests then carry
+   *  back in on the proxy (see lib/kuro.ts's signKirariAccess/verifyKirariAccess
+   *  and app/api/internal/resolve-episode). Must match kirari's
+   *  CUPCAKE_SERVICE_KEY. Secret. */
+  KIRARI_SERVICE_KEY?: string;
   /** comma-separated kuro handles with admin rights on cupcake */
   ADMIN_HANDLES?: string;
   /** a self-hosted Jikan, if you run one */
