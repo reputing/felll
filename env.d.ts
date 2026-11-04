@@ -49,6 +49,8 @@ declare module "cloudflare:workers" {
 
 interface CloudflareEnv {
   DB: D1Database;
+  /** the kuro worker, for cupcake.gg/<handle> member pages (worker.ts) */
+  KURO?: { fetch(request: Request): Promise<Response> };
   NEXT_PUBLIC_SITE_NAME?: string;
   /** kuro's sign-in hub, e.g. https://kuro.rip */
   KURO_URL?: string;
