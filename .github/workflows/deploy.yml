@@ -46,16 +46,16 @@ jobs:
         run: |
           if [ -n "$KURO_SERVICE_KEY" ]; then printf '%s' "$KURO_SERVICE_KEY" | npx wrangler secret put KURO_SERVICE_KEY; fi
           if [ -n "$KURO_SUPABASE_URL" ]; then printf '%s' "$KURO_SUPABASE_URL" | npx wrangler secret put KURO_SUPABASE_URL; fi
-      # The AI backends for /shh. Hybra (the main one) needs no config: its key is the
-      # public one printed in hybra.lol/docs. Dahl is a PAID key, so it is a secret and
-      # never code (this repo is public). Add DAHL_API_KEY as a GitHub Actions secret;
-      # set only when present, so this is a no-op until you add it, and /shh just runs
-      # on Hybra alone in the meantime.
-      - name: Sync AI provider secrets to the worker
+      # Keys for the /shh AI and the Exa search tool. Set only when the GitHub Actions
+      # secret exists, so the site runs without them (with search falling back to
+      # DuckDuckGo, and /shh saying it has no model until INCEPTION_API_KEY is set).
+      - name: Sync AI and search secrets to the worker
         env:
-          DAHL_API_KEY: ${{ secrets.DAHL_API_KEY }}
+          INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
         run: |
-          if [ -n "$DAHL_API_KEY" ]; then printf '%s' "$DAHL_API_KEY" | npx wrangler secret put DAHL_API_KEY; fi
+          if [ -n "$INCEPTION_API_KEY" ]; then printf '%s' "$INCEPTION_API_KEY" | npx wrangler secret put INCEPTION_API_KEY; fi
+          if [ -n "$EXA_API_KEY" ]; then printf '%s' "$EXA_API_KEY" | npx wrangler secret put EXA_API_KEY; fi
       # Apply any new D1 migrations before the new code goes live (idempotent —
       # wrangler skips migrations already recorded in the d1_migrations table).
       - run: npx wrangler d1 migrations apply felll --remote

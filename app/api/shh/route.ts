@@ -10,11 +10,11 @@ import { formatHits, htmlToText, isPublicHttpUrl, parseDuckLite } from "@/lib/we
 // default "SEMINOLE") that the client sends with every call — so the AI endpoint
 // isn't open to anyone who merely has a session.
 //
-// Backends (lib/ai.ts): Hybra, the main provider (free, public key, flaky pool), and
-// Dahl once DAHL_API_KEY is set. The model list is never taken on trust: models are
-// PROBED with real requests and only the ones that recently answered are offered
-// (see /api/shh GET), and a request that hits a dead model fails over to a working
-// one. Override the Hybra key/base with HYBRA_API_KEY / HYBRA_API_URL.
+// Backend (lib/ai.ts): Inception Labs, keyed from INCEPTION_API_KEY.
+// The model list is never taken on trust: models are PROBED with real requests and only
+// the ones that recently answered are offered (see /api/shh GET). A request that hits a
+// dead or stalled model fails over to a working one. Web search uses Exa when EXA_API_KEY
+// is set, with DuckDuckGo as the fallback.
 //
 // Chat is STREAMED: the POST chat op returns newline-delimited JSON events
 // (see the loop at the bottom) so the client paints tokens as they arrive. The
@@ -37,7 +37,9 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 async function modelsFor(e: Record<string, string | undefined>, requested?: string, opts: { vision?: boolean; tools?: boolean } = {}) {
   const providers = providersFor(e);
   const rows = await d1Store.rows().catch(() => [] as ModelRow[]);
-  const working = workingModels(rows, nowSec());
+  // only models from providers this deployment has keys for (old rows may linger)
+  const live = new Set(providers.map((p) => p.id));
+  const working = workingModels(rows, nowSec()).filter((r) => live.has(splitId(r.id)?.provider ?? ""));
   // A request with images goes to a model that can read them, when one is working; one
   // that asks for code execution goes to a model that can call tools. (If none can, the
   // best model answers anyway: it just can't do that part.)
@@ -80,9 +82,11 @@ async function webContext(query: string): Promise<any | null> {
   const urls = [...new Set(query.match(/https?:\/\/[^\s<>"')]+/g) || [])].slice(0, 3);
   const body = urls.length
     ? (await Promise.all(urls.map(async (u) => `SOURCE ${u}:\n${await readUrl(u)}`))).join("\n\n---\n\n")
-    : "WEB SEARCH RESULTS (DuckDuckGo):\n" + (await webSearch(query));
+    : await webSearch(query);
   return { role: "system", content: "You have live web access for this question. Freshly fetched web content is below; use it to answer and cite the sources (titles/URLs) you rely on.\n\n" + body.slice(0, 18_000) };
 }
+const FIRST_BYTE_MS = 20_000; // a model that hasn't started answering in this long is replaced
+const STALL_MS = 20_000;     // ...and one that goes silent mid-answer for this long
 const NO_MODELS = "no ai models are responding right now. i’m re-checking them; try again in a minute.";
 
 const codeOf = (e: Record<string, string | undefined>) => e.SHH_CODE || "SEMINOLE";
@@ -144,12 +148,36 @@ async function readUrl(u: string): Promise<string> {
     return `(couldn't read ${u})`;
   } catch { return `(couldn't reach ${u})`; }
 }
+// Search for the model. Exa first (semantic search with the page highlights the
+// model needs; the request shape follows the build-with-exa skill: query, type auto,
+// highlights). Without an EXA_API_KEY, or if Exa fails, DuckDuckGo answers instead.
+async function exaSearch(query: string, key: string): Promise<string | null> {
+  try {
+    const r = await fetch("https://api.exa.ai/search", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json", "x-api-key": key },
+      body: JSON.stringify({ query, type: "auto", contents: { highlights: true } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) return null;
+    const d: any = await r.json();
+    const hits = (d?.results ?? []).slice(0, 8).map((x: any, i: number) => {
+      const hl = (Array.isArray(x.highlights) ? x.highlights : []).map((h: string) => String(h).replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 3);
+      const date = x.publishedDate ? ` (${String(x.publishedDate).slice(0, 10)})` : "";
+      return `${i + 1}. ${x.title || x.url}${date}\n   ${x.url}${hl.length ? "\n   " + hl.join(" … ") : ""}`;
+    });
+    return hits.length ? "WEB SEARCH RESULTS (Exa):\n" + hits.join("\n\n") : null;
+  } catch { return null; }
+}
+
 async function webSearch(q: string): Promise<string> {
   const query = String(q ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   if (!query) return "(empty query)";
+  const exaKey = ((await readEnv()).EXA_API_KEY ?? "").trim();
+  if (exaKey) { const hit = await exaSearch(query, exaKey); if (hit) return hit; }
   try {
     const r = await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, { headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36", accept: "text/html" }, signal: AbortSignal.timeout(15_000) });
-    if (r.ok) { const hits = parseDuckLite(await r.text()); if (hits.length) return formatHits(hits); }
+    if (r.ok) { const hits = parseDuckLite(await r.text()); if (hits.length) return "WEB SEARCH RESULTS (DuckDuckGo):\n" + formatHits(hits); }
   } catch { /* fall through to the reader proxy */ }
   try {
     const r = await fetch(`https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(20_000) });
@@ -515,7 +543,12 @@ export async function POST(req: Request) {
               const sp = splitId(ns);
               const prov = sp && providers.find((x) => x.id === sp.provider);
               if (!sp || !prov) continue;
-              abort = new AbortController();
+              const ac = new AbortController(); abort = ac;
+              // A model that stops responding is replaced, not waited on: 15s to the
+              // first byte, then 20s of silence between chunks. (Stop is separate.)
+              let stalled = false, idle: ReturnType<typeof setTimeout> | undefined;
+              const arm = (ms: number) => { clearTimeout(idle); idle = setTimeout(() => { stalled = true; ac.abort(); }, ms); };
+              arm(FIRST_BYTE_MS);
               // This model gets only what it supports: tools if it can call them (else
               // the web context fetched above), and images only if it can read them.
               const row = byId.get(ns);
@@ -527,13 +560,16 @@ export async function POST(req: Request) {
                   method: "POST",
                   headers: { "content-type": "application/json", accept: "text/event-stream", authorization: `Bearer ${prov.key}` },
                   body: JSON.stringify({ model: sp.id, messages: sendMsgs, tools: useTools ? tools : undefined, stream: true }),
-                  signal: abort.signal,
+                  signal: ac.signal,
                 });
               } catch {
-                if (abort.signal.aborted) { stopped = true; break; }
+                clearTimeout(idle);
+                if (stalled) { lastErr = "no answer in time"; down(ns, lastErr); continue; }
+                if (ac.signal.aborted) { stopped = true; break; }
                 lastErr = "the ai didn’t answer"; down(ns, lastErr); continue;
               }
               if (!rr.ok || !rr.body) {
+                clearTimeout(idle);
                 let msg: any = "the ai couldn’t answer that";
                 try { const j: any = await rr.json(); msg = j?.error?.message || msg; } catch { /* non-json */ }
                 lastErr = cleanErr(String(msg)); if (modelFault(rr.status)) down(ns, lastErr); continue; // a 4xx is this request's fault, not the model's
@@ -545,6 +581,7 @@ export async function POST(req: Request) {
               content = ""; finish = null; toolAcc.clear();
               try {
                 for await (const j of readSSE(rr)) {
+                  arm(STALL_MS);
                   const ch = j?.choices?.[0];
                   if (!ch) continue;
                   const delta = ch.delta || {};
@@ -566,10 +603,13 @@ export async function POST(req: Request) {
                   if (ch.finish_reason) finish = ch.finish_reason;
                 }
               } catch {
-                if (abort.signal.aborted) { stopped = true; break; }                       // the user pressed Stop
-                if (!emitted && toolAcc.size === 0) { lastErr = "the ai’s stream broke"; down(ns, lastErr); continue; }
-                // broke mid-answer: keep what already reached the client
+                clearTimeout(idle);
+                if (stalled && !emitted && toolAcc.size === 0) { lastErr = "no answer in time"; down(ns, lastErr); continue; }
+                if (stalled) { /* went quiet mid-answer: keep what already reached the client */ }
+                else if (ac.signal.aborted) { stopped = true; break; }                     // the user pressed Stop
+                else if (!emitted && toolAcc.size === 0) { lastErr = "the ai’s stream broke"; down(ns, lastErr); continue; }
               }
+              clearTimeout(idle);
               const tail = emitted ? filter.flush() : filter.flush().replace(/^\s+/, "");
               if (tail) { content += tail; emitted = true; emit({ k: "d", v: tail }); }
               if (!emitted && toolAcc.size === 0) { lastErr = "the ai returned nothing"; if (!afterTools) down(ns, lastErr); continue; } // an empty 200: next model

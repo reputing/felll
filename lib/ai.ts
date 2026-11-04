@@ -1,36 +1,33 @@
-// The AI backends for /shh. Two OpenAI-compatible providers:
-//   hybra  https://hybra.lol/docs: a free proxy over a rotating pool of upstreams.
-//          The main provider. Its key is the public one printed in its own docs, so
-//          it lives in code. Its upstreams go up and down all day.
-//   dahl   https://inference.dahl.global: a paid account with three models. The key
-//          is a secret (DAHL_API_KEY); this repo is public, so it is never in code,
-//          and the provider is simply absent until the secret is set.
+// The AI backend for /shh: Inception Labs (https://inceptionlabs.ai), an OpenAI-compatible
+// API. Its key is a secret, read from the environment (INCEPTION_API_KEY), never code:
+// this repo is public. Without the key, /shh has no model to offer and says so.
 //
-// Because the pool flakes, the model list is never taken on trust: every model is
+// Because upstreams flake, the model list is never taken on trust: every model is
 // PROBED with a real request, and only the ones that actually answered recently are
 // offered. Everything here is pure (fetch and storage are injected) so it runs in
 // the route and in tests alike.
 //
-// Everything is STREAMED, including probes and one-shot calls. Measured against
-// Hybra: the Gemini models answer 3/3 when streamed and 0/3 when not, so a
-// non-streaming probe would report a working model as dead.
+// Everything is STREAMED, including probes and one-shot calls, because that is how the
+// chat sends requests; a probe must test the same path the user will take.
 
 type Env = Record<string, string | undefined>;
 type F = typeof fetch;
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // ---- providers ------------------------------------------------------------------
-export interface Provider { id: string; label: string; base: string; key: string }
+// `concurrency` is how many probes may run at once against this provider.
+export interface Provider { id: string; label: string; base: string; key: string; concurrency: number }
 
-export const HYBRA_BASE = "https://hybra.lol/v1";
-export const HYBRA_KEY = "femboysex"; // published in Hybra's own docs; shared and public by design
-export const DAHL_BASE = "https://inference.dahl.global/v1";
+const PROVIDERS: { id: string; label: string; base: string; keyVar: string; concurrency: number }[] = [
+  { id: "inception", label: "Inception", base: "https://api.inceptionlabs.ai/v1", keyVar: "INCEPTION_API_KEY", concurrency: 4 },
+];
 
-/** Hybra always; Dahl only once its secret is set. Order = priority (main first). */
+/** The providers this deployment has keys for. */
 export function providersFor(env: Env): Provider[] {
-  const out: Provider[] = [{ id: "hybra", label: "Hybra", base: (env.HYBRA_API_URL || HYBRA_BASE).replace(/\/+$/, ""), key: env.HYBRA_API_KEY || HYBRA_KEY }];
-  if (env.DAHL_API_KEY) out.push({ id: "dahl", label: "Dahl", base: (env.DAHL_API_URL || DAHL_BASE).replace(/\/+$/, ""), key: env.DAHL_API_KEY });
-  return out;
+  return PROVIDERS.flatMap((p) => {
+    const key = (env[p.keyVar] ?? "").trim();
+    return key ? [{ id: p.id, label: p.label, base: p.base, key, concurrency: p.concurrency }] : [];
+  });
 }
 
 // A model is addressed as "provider:model-id" everywhere (client, DB, requests),
@@ -42,8 +39,9 @@ export function splitId(v: string): { provider: string; id: string } | null {
 }
 export const providerOf = (providers: Provider[], v: string) => { const s = splitId(v); return s ? providers.find((p) => p.id === s.provider) ?? null : null; };
 
-// image/*, whisper, tts and embedding entries share the /models list but aren't chat.
-export const isChatId = (id: string) => !/^image\//i.test(id) && !/whisper|tts|embed|rerank/i.test(id);
+// image/*, whisper, tts, embedding, reward and safety-classifier entries share the /models
+// list but aren't chat models. (llama-guard answers "safe" to everything: it must not be offered.)
+export const isChatId = (id: string) => !/^image\//i.test(id) && !/whisper|tts|embed|rerank|guard|safety|reward|classif|moderat|detector|parse|nvclip|vila|neva|speech|asr|translate/i.test(id);
 
 // ---- streaming ------------------------------------------------------------------
 /** Parsed `data:` chunks of an SSE response, until [DONE] or the stream ends. */
@@ -74,7 +72,32 @@ export class ThinkFilter {
   private buf = "";
   private inThink = false;
   private justClosed = false;
+  // Some models open their answer with an internal channel marker ("thought" then
+  // "<channel|>") instead of a think tag. That is decided from the first characters,
+  // so the start of the text is held back until there are enough to judge.
+  private head: string | null = "";
+  private static readonly CHANNEL_PREFIX = /^\s*thought\s*\n\s*<\|?channel\|?>\s*|^\s*<\|?channel\|?>\s*/i;
+  private static readonly CHANNEL_TAG = /<\|?channel\|?>/gi;
+
   push(chunk: string): string {
+    if (this.head !== null) {
+      this.head += chunk;
+      if (this.head.length < 40 && !/<\|?channel\|?>/i.test(this.head)) return "";
+      const h = this.head; this.head = null;
+      return this.think(h.replace(ThinkFilter.CHANNEL_PREFIX, "").replace(ThinkFilter.CHANNEL_TAG, ""));
+    }
+    return this.think(chunk);
+  }
+
+  flush(): string {
+    let out = "";
+    if (this.head !== null) { const h = this.head; this.head = null; out += this.think(h.replace(ThinkFilter.CHANNEL_PREFIX, "").replace(ThinkFilter.CHANNEL_TAG, "")); }
+    out += this.end();
+    return out;
+  }
+
+  // Think-block handling for text that has already passed the head check.
+  private think(chunk: string): string {
     this.buf += chunk;
     let out = "";
     for (;;) {
@@ -95,7 +118,9 @@ export class ThinkFilter {
     }
     return out;
   }
-  flush(): string { const r = this.inThink ? "" : this.take(this.buf); this.buf = ""; return r; }
+
+  private end(): string { const r = this.inThink ? "" : this.take(this.buf); this.buf = ""; return r; }
+
   // after a closed think block, drop the blank lines the model leaves before its answer
   private take(s: string): string { if (!s) return s; if (this.justClosed) { s = s.replace(/^\s+/, ""); if (s) this.justClosed = false; } return s; }
 }
@@ -171,12 +196,13 @@ export const isDegenerate = (visible: string) => visible.length > 400 || /(.{3,2
 
 /** Does it answer, sensibly? Reasoning-only output counts: the model is up, just
  *  thinking. Looping or rambling output does not. */
-export async function probeText(f: F, p: Provider, id: string, timeoutMs = 40_000): Promise<{ ok: boolean; ms: number; err: string }> {
+export async function probeText(f: F, p: Provider, id: string, timeoutMs = 25_000): Promise<{ ok: boolean; ms: number; err: string }> {
   const r = await chat(f, p, { model: id, messages: [{ role: "user", content: "Reply with exactly one word: pong" }], max_tokens: 160 }, timeoutMs);
-  const answered = r.status === 200 && (r.raw.length > 0 || r.reasoning.length > 0);
+  // Visible text is what the user sees: a model that only emits reasoning is not usable.
+  const answered = r.status === 200 && r.raw.length > 0;
   const bad = answered && isDegenerate(r.content);
   const ok = answered && !bad;
-  return { ok, ms: r.ms, err: ok ? "" : bad ? "degenerate output (loops or rambles)" : r.err || `HTTP ${r.status}, empty reply` };
+  return { ok, ms: r.ms, err: ok ? "" : bad ? "degenerate output (loops or rambles)" : r.err || (r.status === 200 ? (r.reasoning ? "reasoning only, no visible answer" : "empty reply") : `HTTP ${r.status}`) };
 }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // A capability is "no" only on a definite answer. A timeout, 429 or 5xx says nothing
@@ -192,7 +218,7 @@ async function capability(run: () => Promise<Reply>, passes: (r: Reply) => boole
 }
 
 /** Can it actually read an image? */
-export function probeVision(f: F, p: Provider, id: string, timeoutMs = 40_000): Promise<boolean> {
+export function probeVision(f: F, p: Provider, id: string, timeoutMs = 25_000): Promise<boolean> {
   return capability(
     () => chat(f, p, { model: id, max_tokens: 200, messages: [{ role: "user", content: [{ type: "text", text: "What is the main color of this image? Answer with one word." }, { type: "image_url", image_url: { url: RED_PNG } }] }] }, timeoutMs),
     (r) => r.status === 200 && /\bred\b/i.test(r.content || r.raw),
@@ -206,7 +232,7 @@ const WEATHER_TOOL = { type: "function", function: { name: "get_weather", descri
  *  (2) is not a formality. Some models accept tools and then answer with nothing
  *  (Gemini via Hybra), or emit malformed <think> markup that swallows the answer
  *  (MiniMax on Dahl), and every /shh message carries the memory tool. */
-export async function probeTools(f: F, p: Provider, id: string, timeoutMs = 40_000): Promise<boolean> {
+export async function probeTools(f: F, p: Provider, id: string, timeoutMs = 25_000): Promise<boolean> {
   const calls = await capability(
     () => chat(f, p, { model: id, max_tokens: 200, messages: [{ role: "user", content: "What is the weather in Osaka right now? Use the tool." }], tools: [WEATHER_TOOL] }, timeoutMs),
     (r) => r.status === 200 && r.toolCalls.some((c) => c.name === "get_weather"),
@@ -221,13 +247,11 @@ export async function probeTools(f: F, p: Provider, id: string, timeoutMs = 40_0
 // ---- which models to show, in what order ------------------------------------------
 export interface ModelRow { id: string; ok: number; vision: number; tools: number; ms: number | null; err: string | null; checked_at: number }
 
-// Provider first (hybra is the main one), then newest strong family, then speed.
-const PROVIDER_ORDER = ["hybra", "dahl"];
-const PREFER = [/gemini-3\.\d+-flash$/, /gemini-3\.\d+-pro$/, /gemini-2\.5-pro/, /gemini-3\./, /gemini/, /glm-5/i, /deepseek/i, /minimax/i];
+// Provider order (only one for now), then speed.
+const PROVIDER_ORDER = ["inception"];
 const rankId = (ns: string) => {
-  const s = splitId(ns); const raw = s?.id ?? ns;
-  const pi = PROVIDER_ORDER.indexOf(s?.provider ?? ""); const fi = PREFER.findIndex((re) => re.test(raw));
-  return (pi < 0 ? PROVIDER_ORDER.length : pi) * 100 + (fi < 0 ? PREFER.length : fi);
+  const pi = PROVIDER_ORDER.indexOf(splitId(ns)?.provider ?? "");
+  return pi < 0 ? PROVIDER_ORDER.length : pi;
 };
 
 export const MAX_AGE_SEC = 45 * 60; // a pass older than this no longer counts
@@ -313,11 +337,10 @@ export async function refreshModels(f: F, providers: Provider[], store: Store, o
   const cap = o.maxRequests ?? 45;
   let requests = 0;
   const listErrors: string[] = [];
-  const byProv = new Map<string, Provider>();
   const ids: string[] = [];
   for (const p of providers) {
     requests++;
-    try { for (const id of await listModels(f, p)) { ids.push(nsId(p.id, id)); byProv.set(p.id, p); } }
+    try { for (const id of await listModels(f, p)) ids.push(nsId(p.id, id)); }
     catch (e) { listErrors.push(`${p.id}: ${(e as Error)?.message || "model list unreachable"}`); }
   }
 
@@ -326,20 +349,23 @@ export async function refreshModels(f: F, providers: Provider[], store: Store, o
   const todo = (o.force ? [...ids] : needsProbe(ids, rows, nowSec)).slice(0, o.budget ?? 24);
   const known = new Map(rows.map((r) => [r.id, r]));
   const start = clock();
-  let probed = 0, okCount = 0, next = 0;
-  const to = o.timeoutMs ?? 40_000;
+  let probed = 0, okCount = 0;
+  const to = o.timeoutMs ?? 25_000;
+  const deadline = o.deadlineMs ?? 22_000;
 
-  const worker = async () => {
+  // Each provider has its own lanes (one provider may allow fewer parallel requests), and a
+  // provider's lanes never exceed its limit, whatever the other providers are doing.
+  const runLane = async (queue: string[], p: Provider) => {
     for (;;) {
-      if (clock() - start > (o.deadlineMs ?? 22_000) || requests >= cap) return;
-      const ns = todo[next++];
+      if (clock() - start > deadline || requests >= cap) return;
+      const ns = queue.shift();
       if (ns === undefined) return;
-      const s = splitId(ns)!; const p = byProv.get(s.provider)!;
+      const s = splitId(ns)!;
       requests++;
       const t = await probeText(f, p, s.id, to);
       const prev = known.get(ns);
       const row: ModelRow = { id: ns, ok: t.ok ? 1 : 0, vision: t.ok ? (prev?.vision ?? 0) : 0, tools: t.ok ? (prev?.tools ?? 0) : 0, ms: t.ok ? t.ms : null, err: t.ok ? null : t.err, checked_at: Math.floor(clock() / 1000) };
-      if (t.ok && (!prev || !prev.checked_at || o.force) && requests + 2 <= cap) {
+      if (t.ok && (!prev || !prev.checked_at || o.force) && requests + 2 <= cap && clock() - start < deadline) {
         requests += 2;
         const [v, tl] = await Promise.all([probeVision(f, p, s.id, to), probeTools(f, p, s.id, to)]);
         row.vision = v ? 1 : 0; row.tools = tl ? 1 : 0;
@@ -348,7 +374,12 @@ export async function refreshModels(f: F, providers: Provider[], store: Store, o
       probed++; if (row.ok) okCount++;
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(o.concurrency ?? 4, todo.length)) }, worker));
+  const lanes: Promise<void>[] = [];
+  for (const p of providers) {
+    const queue = todo.filter((ns) => splitId(ns)?.provider === p.id);
+    for (let i = 0; i < Math.min(p.concurrency, queue.length); i++) lanes.push(runLane(queue, p));
+  }
+  await Promise.all(lanes);
   return { probed, ok: okCount, skipped: false, requests, listErrors };
 }
 

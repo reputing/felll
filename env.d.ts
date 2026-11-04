@@ -95,15 +95,10 @@ interface CloudflareEnv {
   VIDCORE_EMBED_BASE?: string;
   /** The code that unlocks the private AI corner (/shh). Default "SEMINOLE". */
   SHH_CODE?: string;
-  /** The /shh AI backends (lib/ai.ts). Hybra is the main provider and works with no
-   *  config: its key is the public one from hybra.lol/docs. Override here if needed. */
-  HYBRA_API_URL?: string;
-  HYBRA_API_KEY?: string;
-  /** Dahl (inference.dahl.global), the second provider. A PAID key, so it is a secret
-   *  (this repo is public): the provider is simply absent until this is set. Add it as
-   *  the GitHub Actions secret DAHL_API_KEY; deploy.yml syncs it to the worker. */
-  DAHL_API_KEY?: string;
-  DAHL_API_URL?: string;
+  /** The /shh AI (Inception Labs, lib/ai.ts). Without it /shh has no model to offer. */
+  INCEPTION_API_KEY?: string;
+  /** Exa (exa.ai) web search for the /shh web tool. DuckDuckGo is the fallback. */
+  EXA_API_KEY?: string;
   /** The global chat room Durable Object (live WebSocket fan-out) */
   CHAT: DurableObjectNamespace;
 }

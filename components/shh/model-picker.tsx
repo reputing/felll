@@ -84,7 +84,7 @@ export function useSelectedModel(models: ModelInfo[], defaultId: string | null, 
   return [model, setModel] as const;
 }
 
-const PROVIDER_LABEL: Record<string, string> = { hybra: "Hybra", dahl: "Dahl" };
+const PROVIDER_LABEL: Record<string, string> = { inception: "Inception" };
 
 export function ModelPicker({ models, value, onChange, checking, loaded, rechecking, onRecheck }: {
   models: ModelInfo[]; value: string; onChange: (id: string) => void;

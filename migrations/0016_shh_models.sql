@@ -1,6 +1,6 @@
 -- /shh model health. Hybra fronts free upstreams that go up and down by the hour,
 -- so the model picker only lists models a real request recently got an answer
--- from. One row per model, written by the probe in lib/hybra.ts:
+-- from. One row per model, written by the probe in lib/ai.ts:
 --   ok / vision / tools  1 when a live probe passed (answered; read an image; called a tool)
 --   ms                   how long the text probe took
 --   err                  why the last probe failed (shown nowhere, kept for debugging)
