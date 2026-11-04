@@ -63,6 +63,15 @@ export default {
       fwd.searchParams.set("u", JSON.stringify(user));
       return stub.fetch(new Request(fwd.toString(), request));
     }
+    // /name/ (with the slash) is how a member's own website at their root address is reached on kuro. This
+    // site would answer it by redirecting to /name, kuro redirects /name back to /name/, and the two loop.
+    // So a trailing-slash name goes to kuro first; only if kuro has nothing is it this site's turn.
+    if (env.KURO && url.hostname === "cupcake.gg" && /^\/@?[a-z0-9._~!$*+=-]{1,32}\/$/i.test(url.pathname)) {
+      try {
+        const k: Response = await env.KURO.fetch(request.clone());
+        if (k.status !== 404) return k;
+      } catch { /* kuro unreachable: carry on with this site */ }
+    }
     // the body can only be read once, so keep a copy for the second try
     const retry = env.KURO && url.hostname === "cupcake.gg" && kuroMayHave(url) ? request.clone() : null;
     const res: Response = await handler.fetch(request, env, ctx);
