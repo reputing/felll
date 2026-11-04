@@ -34,6 +34,23 @@ async function chatUser(request: Request, env: CloudflareEnv) {
   }
 }
 
+// kuro.rip members who are on kuro+ can wear cupcake.gg as their page's address (cupcake.gg/<handle>).
+// This site answers first; only what it has no page for (a 404) is tried on kuro, and only for the
+// few kinds of path a kuro page is made of, so nothing here is ever taken over by it:
+//   /<handle> or /@<handle>      the member's page
+//   /_next/..., /m/...           the page's scripts and uploaded media
+//   /api/... (not chat, warm)    the page's own calls (this site's chat and warm-up keep their names)
+//   anything with a file ending  pictures, fonts and the like that kuro serves from its own folders
+// Names that belong to this site (anime titles, its own pages) are never member pages: kuro keeps the
+// same list (CUPCAKE_RESERVED) and answers 404 for them, so they stay with cupcake.
+const HANDLE = /^\/@?[a-z0-9._~!$*+=-]{1,32}\/?$/i;
+const FILE = /\.[a-z0-9]{2,5}$/i;
+function kuroMayHave(url: URL): boolean {
+  const p = url.pathname;
+  if (p === "/api/chat" || p.startsWith("/api/chat/") || p === "/api/warm") return false;
+  return HANDLE.test(p) || p.startsWith("/_next/") || p.startsWith("/m/") || p.startsWith("/api/") || FILE.test(p);
+}
+
 export default {
   async fetch(request: Request, env: CloudflareEnv, ctx: { waitUntil(p: Promise<unknown>): void }) {
     const url = new URL(request.url);
@@ -46,7 +63,16 @@ export default {
       fwd.searchParams.set("u", JSON.stringify(user));
       return stub.fetch(new Request(fwd.toString(), request));
     }
-    return handler.fetch(request, env, ctx);
+    // the body can only be read once, so keep a copy for the second try
+    const retry = env.KURO && url.hostname === "cupcake.gg" && kuroMayHave(url) ? request.clone() : null;
+    const res: Response = await handler.fetch(request, env, ctx);
+    if (retry && res.status === 404) {
+      try {
+        const k: Response = await env.KURO!.fetch(retry);
+        if (k.status !== 404) return k;
+      } catch { /* kuro unreachable: this site's own 404 stands */ }
+    }
+    return res;
   },
   async scheduled(_event: unknown, env: CloudflareEnv, ctx: { waitUntil(p: Promise<unknown>): void }) {
     ctx.waitUntil(handler.fetch(new Request("https://cupcake.internal/api/warm"), env, ctx));

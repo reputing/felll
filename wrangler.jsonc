@@ -15,6 +15,8 @@
   "routes": [
     { "pattern": "cupcake.gg", "custom_domain": true }
   ],
+  // kuro, for cupcake.gg/<handle> pages (see worker.ts)
+  "services": [{ "binding": "KURO", "service": "kuro" }],
   // Members, lists, comments, video sources and the Jikan cache.
   // `npx wrangler d1 create felll` prints the id to paste here.
   "d1_databases": [
