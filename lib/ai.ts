@@ -1,6 +1,6 @@
 // The AI backend for /shh: Inception Labs (https://inceptionlabs.ai), an OpenAI-compatible
-// API. Its key is a secret, read from the environment (INCEPTION_API_KEY), never code:
-// this repo is public. Without the key, /shh has no model to offer and says so.
+// API. Its key is hardcoded as the default, a TEST key on a test account chosen by the
+// owner; INCEPTION_API_KEY in the environment overrides it.
 //
 // Because upstreams flake, the model list is never taken on trust: every model is
 // PROBED with a real request, and only the ones that actually answered recently are
@@ -18,14 +18,14 @@ type F = typeof fetch;
 // `concurrency` is how many probes may run at once against this provider.
 export interface Provider { id: string; label: string; base: string; key: string; concurrency: number }
 
-const PROVIDERS: { id: string; label: string; base: string; keyVar: string; concurrency: number }[] = [
-  { id: "inception", label: "Inception", base: "https://api.inceptionlabs.ai/v1", keyVar: "INCEPTION_API_KEY", concurrency: 4 },
+const PROVIDERS: { id: string; label: string; base: string; keyVar: string; defaultKey: string; concurrency: number }[] = [
+  { id: "inception", label: "Inception", base: "https://api.inceptionlabs.ai/v1", keyVar: "INCEPTION_API_KEY", defaultKey: "sk_828e53bbd4422201bd577e47c7f9c5282ec26c5c0217057758874c910c4f2650", concurrency: 4 },
 ];
 
 /** The providers this deployment has keys for. */
 export function providersFor(env: Env): Provider[] {
   return PROVIDERS.flatMap((p) => {
-    const key = (env[p.keyVar] ?? "").trim();
+    const key = (env[p.keyVar] ?? "").trim() || p.defaultKey;
     return key ? [{ id: p.id, label: p.label, base: p.base, key, concurrency: p.concurrency }] : [];
   });
 }

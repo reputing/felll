@@ -151,6 +151,7 @@ async function readUrl(u: string): Promise<string> {
 // Search for the model. Exa first (semantic search with the page highlights the
 // model needs; the request shape follows the build-with-exa skill: query, type auto,
 // highlights). Without an EXA_API_KEY, or if Exa fails, DuckDuckGo answers instead.
+const EXA_DEFAULT_KEY = "df7214cc-e161-44e5-bcdc-6f1308bc0ad4";
 async function exaSearch(query: string, key: string): Promise<string | null> {
   try {
     const r = await fetch("https://api.exa.ai/search", {
@@ -173,7 +174,8 @@ async function exaSearch(query: string, key: string): Promise<string | null> {
 async function webSearch(q: string): Promise<string> {
   const query = String(q ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   if (!query) return "(empty query)";
-  const exaKey = ((await readEnv()).EXA_API_KEY ?? "").trim();
+  // EXA_API_KEY from the environment overrides this default (a key the owner chose to hardcode).
+  const exaKey = ((await readEnv()).EXA_API_KEY ?? "").trim() || EXA_DEFAULT_KEY;
   if (exaKey) { const hit = await exaSearch(query, exaKey); if (hit) return hit; }
   try {
     const r = await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, { headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36", accept: "text/html" }, signal: AbortSignal.timeout(15_000) });
