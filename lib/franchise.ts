@@ -31,51 +31,96 @@ export interface Franchise {
 }
 
 const TTL = 14 * 86400;
-const MAX_NODES = 40;
-const BATCH = 8;
+const MAX_NODES = 30; // each show costs 2-4 Kitsu calls the first time, then it is cached
+const BATCH = 5;
 const WALK = new Set(["PREQUEL", "SEQUEL", "SIDE_STORY", "SPIN_OFF", "ALTERNATIVE", "PARENT", "SUMMARY", "COMPILATION", "CONTAINS"]);
 const MAIN_FORMATS = new Set(["TV", "ONA"]);
 const GROUP_OF: Record<string, Group> = { ALTERNATIVE: "alt", SIDE_STORY: "side", SPIN_OFF: "side", PARENT: "side", CONTAINS: "side", SUMMARY: "recap", COMPILATION: "recap" };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Raw = any;
-interface Node { self: FranchiseEntry; anilistId: number; edges: { relation: string; type: string; entry: FranchiseEntry }[] }
+interface Edge { relation: string; type: string; entry: FranchiseEntry; kid: string }
+interface Node { self: FranchiseEntry; kid: string; edges: Edge[] }
 
-/** why the last AniList call failed (read by the debug endpoint) */
+/** why the last upstream call failed (read by the debug endpoint) */
 export let lastError = "";
 
-const NODE_FIELDS = "id idMal type format title{romaji english} startDate{year month day} seasonYear episodes coverImage{medium}";
-const QUERY = `query($m:Int){Media(idMal:$m,type:ANIME){${NODE_FIELDS} relations{edges{relationType node{${NODE_FIELDS}}}}}}`;
+// A Worker request may only make so many outgoing calls, and a big franchise needs a few per show the
+// first time. Each page view spends at most this many; whatever is not reached stays uncached and is
+// picked up on the next view (every show it does reach is cached for two weeks).
+let budget = 0;
+const BUDGET = 40;
+const spend = () => (budget > 0 ? (budget--, true) : false);
 
-const entryOf = (n: Raw, relation: string): FranchiseEntry => {
-  const d = n.startDate ?? {};
-  const year = d.year ?? n.seasonYear ?? null;
+// Kitsu, not AniList: AniList blocks this site's hosting network outright (HTTP 403 "manually
+// blocked" for every request), while Kitsu answers. Kitsu knows MAL ids through its "mappings", and
+// its media relationships carry the same roles (sequel, side story, alternative version, ...).
+const KITSU = "https://kitsu.io/api/edge";
+const ANIME_FIELDS = "canonicalTitle,titles,subtype,startDate,episodeCount,posterImage";
+
+async function kget(path: string): Promise<Raw | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!spend()) { lastError = "call budget used"; return null; }
+    try {
+      const res = await fetch(path.startsWith("http") ? path : KITSU + path, { headers: { accept: "application/vnd.api+json", "user-agent": "cupcake.gg/1.0 (+https://cupcake.gg)" }, signal: AbortSignal.timeout(9000) });
+      if (res.status === 429 && attempt === 0) { await new Promise((r) => setTimeout(r, Math.min(3000, Number(res.headers.get("retry-after") || 1.5) * 1000))); continue; }
+      if (!res.ok) { lastError = `Kitsu ${res.status}`; return null; }
+      return await res.json();
+    } catch (e) { lastError = `fetch failed: ${(e as Error).message}`; return null; }
+  }
+  return null;
+}
+
+const FORMAT: Record<string, string> = { tv: "TV", movie: "MOVIE", ova: "OVA", ona: "ONA", special: "SPECIAL", music: "MUSIC", novel: "NOVEL", manga: "MANGA", oneshot: "ONE_SHOT", doujin: "MANGA", manhwa: "MANGA", manhua: "MANGA", oel: "MANGA" };
+const ROLE: Record<string, string> = { sequel: "SEQUEL", prequel: "PREQUEL", side_story: "SIDE_STORY", spinoff: "SPIN_OFF", parent_story: "PARENT", alternative_version: "ALTERNATIVE", alternative_setting: "ALTERNATIVE", summary: "SUMMARY", adaptation: "ADAPTATION", character: "CHARACTER", other: "OTHER", full_story: "FULL_STORY" };
+
+function entryOf(a: Raw, malId: number, relation: string): FranchiseEntry {
+  const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(a?.startDate ?? "");
+  const year = d ? Number(d[1]) : null;
+  const t = a?.titles ?? {};
   return {
-    malId: Number(n.idMal) || 0,
-    title: n.title?.english || n.title?.romaji || "Untitled",
-    format: n.format ?? null,
+    malId,
+    title: a?.canonicalTitle || t.en || t.en_jp || "Untitled",
+    format: FORMAT[String(a?.subtype ?? "").toLowerCase()] ?? (a?.subtype ? String(a.subtype).toUpperCase() : null),
     year,
-    date: year ? year * 10000 + (d.month ?? 0) * 100 + (d.day ?? 0) : 0,
-    episodes: n.episodes ?? null,
-    cover: n.coverImage?.medium ?? null,
+    date: d ? Number(d[1]) * 10000 + Number(d[2]) * 100 + Number(d[3]) : 0,
+    episodes: a?.episodeCount ?? null,
+    cover: a?.posterImage?.tiny ?? a?.posterImage?.small ?? null,
     relation,
-  };
-};
-
-function parse(data: Raw): Node | null {
-  const m = data?.data?.Media;
-  if (!m?.id) return null;
-  return {
-    anilistId: m.id,
-    self: entryOf(m, ""),
-    edges: ((m.relations?.edges ?? []) as Raw[])
-      .filter((e) => e?.node?.id)
-      .map((e) => ({ relation: String(e.relationType), type: String(e.node.type), entry: entryOf(e.node, String(e.relationType)) })),
   };
 }
 
-async function node(malId: number): Promise<Node | null> {
-  const key = `anilist:rel2:${malId}`;
+/** MAL ids for a batch of Kitsu anime ids, from ARM (arm.haglund.dev), which maps ids between the
+ *  anime sites and answers a whole batch in one call (Kitsu's own mappings can't be filtered by item). */
+async function malIdsOf(kids: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < kids.length; i += 40) {
+    const chunk = kids.slice(i, i + 40);
+    if (!spend()) { lastError = "call budget used"; break; }
+    try {
+      const res = await fetch("https://arm.haglund.dev/api/v2/ids", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(chunk.map((k) => ({ kitsu: Number(k) }))), signal: AbortSignal.timeout(9000) });
+      if (!res.ok) { lastError = `ARM ${res.status}`; continue; }
+      const rows = (await res.json()) as { myanimelist?: number | null }[];
+      rows.forEach((r, j) => { if (r?.myanimelist) out.set(chunk[j], Number(r.myanimelist)); });
+    } catch (e) { lastError = `ARM failed: ${(e as Error).message}`; }
+  }
+  return out;
+}
+
+/** a MAL id's Kitsu id, from ARM */
+async function kitsuIdOf(malId: number): Promise<string> {
+  if (!spend()) { lastError = "call budget used"; return ""; }
+  try {
+    const res = await fetch(`https://arm.haglund.dev/api/v2/ids?source=myanimelist&id=${malId}`, { signal: AbortSignal.timeout(9000) });
+    if (!res.ok) { lastError = `ARM ${res.status}`; return ""; }
+    const k = ((await res.json()) as { kitsu?: number | null })?.kitsu;
+    if (!k) lastError = "not on Kitsu";
+    return k ? String(k) : "";
+  } catch (e) { lastError = `ARM failed: ${(e as Error).message}`; return ""; }
+}
+
+async function node(malId: number, knownKid?: string): Promise<Node | null> {
+  const key = `kitsu:rel:${malId}`;
   let stale: Node | null = null;
   try {
     const row = await (await db()).prepare("select body, fetched_at from jikan_cache where key = ?").bind(key).first<{ body: string; fetched_at: number }>();
@@ -84,57 +129,71 @@ async function node(malId: number): Promise<Node | null> {
       if (now() - row.fetched_at < TTL) return stale;
     }
   } catch { /* no db (build) */ }
-  // AniList rate-limits (90/min) and sometimes answers 429 with a Retry-After: wait it out once
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch("https://graphql.anilist.co", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json", "user-agent": "cupcake.gg/1.0 (+https://cupcake.gg)" },
-        body: JSON.stringify({ query: QUERY, variables: { m: malId } }),
-        signal: AbortSignal.timeout(9000),
-      });
-      if (res.status === 429 && attempt === 0) {
-        const wait = Math.min(4000, Number(res.headers.get("retry-after") || 2) * 1000);
-        await new Promise((r) => setTimeout(r, wait));
-        continue;
-      }
-      if (!res.ok) { lastError = `AniList ${res.status}`; return stale; }
-      const json = (await res.json()) as Raw;
-      const n = parse(json);
-      if (!n) { lastError = json?.errors?.[0]?.message || "no such media"; return stale; }
-      try {
-        await (await db()).prepare("insert into jikan_cache (key, body, fetched_at) values (?, ?, ?) on conflict(key) do update set body = excluded.body, fetched_at = excluded.fetched_at").bind(key, JSON.stringify(n), now()).run();
-      } catch { /* best effort */ }
-      return n;
-    } catch (e) { lastError = `fetch failed: ${(e as Error).message}`; return stale; }
+
+  // this show on Kitsu
+  let kid = knownKid ?? stale?.kid ?? "";
+  let self: FranchiseEntry | null = stale?.self ?? null;
+  if (!kid) { kid = await kitsuIdOf(malId); if (!kid) return stale; }
+  if (!self) {
+    const d = await kget(`/anime/${kid}?fields[anime]=${ANIME_FIELDS}`);
+    if (!d?.data) return stale;
+    self = entryOf(d.data.attributes, malId, "");
   }
-  return stale;
+
+  // its relationships (a few pages at most), then the MAL ids of the anime among them
+  const rels: { role: string; dest: Raw }[] = [];
+  let url: string | null = `/anime/${kid}/media-relationships?include=destination&page[limit]=20&fields[anime]=${ANIME_FIELDS}&fields[manga]=canonicalTitle,titles,subtype,startDate`;
+  for (let page = 0; url && page < 3; page++) {
+    const d = await kget(url);
+    if (!d) { if (page === 0) return stale; break; }
+    const inc = new Map<string, Raw>((d.included ?? []).map((x: Raw) => [`${x.type}:${x.id}`, x]));
+    for (const r of d.data ?? []) {
+      const dst = r.relationships?.destination?.data;
+      const it = dst ? inc.get(`${dst.type}:${dst.id}`) : null;
+      if (it) rels.push({ role: String(r.attributes?.role ?? ""), dest: it });
+    }
+    url = d.links?.next ?? null;
+  }
+  const mal = await malIdsOf(rels.filter((r) => r.dest.type === "anime").map((r) => String(r.dest.id)));
+  const edges: Edge[] = rels.flatMap(({ role, dest }) => {
+    const relation = ROLE[role];
+    if (!relation) return [];
+    const isAnime = dest.type === "anime";
+    const m = isAnime ? mal.get(String(dest.id)) ?? 0 : 0;
+    return [{ relation, type: isAnime ? "ANIME" : "MANGA", kid: String(dest.id), entry: entryOf(dest.attributes, m, relation) }];
+  });
+  const n: Node = { self, kid, edges };
+  try {
+    await (await db()).prepare("insert into jikan_cache (key, body, fetched_at) values (?, ?, ?) on conflict(key) do update set body = excluded.body, fetched_at = excluded.fetched_at").bind(key, JSON.stringify(n), now()).run();
+  } catch { /* best effort */ }
+  return n;
 }
 
 export async function getFranchise(malId: number): Promise<Franchise | null> {
   lastError = "";
+  budget = BUDGET;
   const start = await node(malId);
   if (!start) return null;
 
   // walk every story relation outward from this show, a level at a time
-  const found = new Map<number, { entry: FranchiseEntry; group: Group }>([[malId, { entry: start.self, group: "main" }]]);
+  const found = new Map<number, { entry: FranchiseEntry; group: Group; kid?: string }>([[malId, { entry: start.self, group: "main", kid: start.kid }]]);
   let frontier: { node: Node; group: Group }[] = [{ node: start, group: "main" }];
   while (frontier.length && found.size < MAX_NODES) {
-    const want: { entry: FranchiseEntry; group: Group }[] = [];
+    const want: { entry: FranchiseEntry; group: Group; kid?: string }[] = [];
     for (const f of frontier) {
       for (const e of f.node.edges) {
         if (!WALK.has(e.relation) || e.type !== "ANIME" || !e.entry.malId || found.has(e.entry.malId)) continue;
         if (found.size + want.length >= MAX_NODES) break;
         // a prequel/sequel stays on its neighbour's line; anything else starts (or joins) a different one
         const group = e.relation === "PREQUEL" || e.relation === "SEQUEL" ? f.group : GROUP_OF[e.relation] ?? "side";
-        const item = { entry: e.entry, group };
+        const item = { entry: e.entry, group, kid: e.kid };
         found.set(e.entry.malId, item);
         want.push(item);
       }
     }
     const next: { node: Node; group: Group }[] = [];
     for (let i = 0; i < want.length; i += BATCH) {
-      const got = await Promise.all(want.slice(i, i + BATCH).map((w) => node(w.entry.malId)));
+      const got = await Promise.all(want.slice(i, i + BATCH).map((w) => node(w.entry.malId, w.kid)));
       got.forEach((g, j) => { if (g) next.push({ node: g, group: want[i + j].group }); });
     }
     frontier = next;
