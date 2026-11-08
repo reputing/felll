@@ -10,7 +10,7 @@ interface Body {
   progress?: number;
 }
 
-type Row = { status: ListStatus | null; score: number | null; favorite: number; progress: number; started_at: number | null; finished_at: number | null };
+type Row = { episodes?: number | null; status: ListStatus | null; score: number | null; favorite: number; progress: number; started_at: number | null; finished_at: number | null };
 
 // Save / rate / favourite / progress, in any combination. Clearing everything
 // removes the row. Each real change lands in the activity feed.
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   if ("status" in b && b.status !== null && !isStatus(b.status)) return Response.json({ error: "bad status" }, { status: 400 });
   if ("score" in b && b.score !== null && !(Number.isInteger(b.score) && b.score! >= 1 && b.score! <= 10)) return Response.json({ error: "scores are 1–10" }, { status: 400 });
 
-  const old = await first<Row>("select status, score, favorite, progress, started_at, finished_at from library where user_id = ? and mal_id = ?", me.id, id);
+  const old = await first<Row>("select status, score, favorite, progress, episodes, started_at, finished_at from library where user_id = ? and mal_id = ?", me.id, id);
   const episodes = Number.isInteger(a.episodes) ? a.episodes! : null;
   const next: Row = {
     status: "status" in b ? b.status ?? null : old?.status ?? null,
@@ -38,7 +38,10 @@ export async function POST(req: Request) {
   if (next.status === "watching" && !next.started_at) next.started_at = t;
   if (next.status === "completed") {
     next.finished_at ??= t;
-    if (episodes) next.progress = episodes;
+    // the total the page sent, else the one we already stored: completing a show whose
+    // count the page didn't have used to leave the bar at 0
+    const total = episodes ?? old?.episodes ?? null;
+    if (total) next.progress = total;
   }
 
   const title = String(a.title).slice(0, 200);

@@ -59,7 +59,12 @@ export function BoxGrid({ rows, readOnly, initialTab = "watching" }: { rows: Box
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3.5">
           {shown.map((r) => {
-            const pct = r.episodes ? (r.progress / r.episodes) * 100 : 0;
+            // A finished show is a full bar, whatever the stored count says: rows completed
+            // before the episode total was known (or on the way in from elsewhere) kept
+            // progress 0 and showed "0/291" under a COMPLETED badge.
+            const done = r.status === "completed";
+            const shownProgress = done && r.episodes ? Math.max(r.progress, r.episodes) : r.progress;
+            const pct = done ? 100 : r.episodes ? (r.progress / r.episodes) * 100 : 0;
             return (
               <div key={r.mal_id} className="spotlight group flex flex-col gap-2 rounded-3xl border-1.5 border-line bg-cream-card p-2 transition hover:border-line-hot">
                 <Link href={`/anime/${r.mal_id}`} className="relative">
@@ -71,8 +76,8 @@ export function BoxGrid({ rows, readOnly, initialTab = "watching" }: { rows: Box
                 <Link href={`/anime/${r.mal_id}`} className="line-clamp-2 px-1 text-[13.5px] font-extrabold leading-tight hover:text-frost-text">{r.title}</Link>
                 {r.kind !== "Movie" && (
                   <div className="mt-auto flex items-center gap-2 px-1">
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-cream-tint"><div className="h-full rounded-full bg-frost-hot" style={{ width: `${Math.max(pct, r.progress ? 4 : 0)}%` }} /></div>
-                    <span className="font-mono text-[11px] text-plum-muted">{r.progress}/{r.episodes ?? "?"}</span>
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-cream-tint"><div className="h-full rounded-full bg-frost-hot" style={{ width: `${Math.max(pct, shownProgress ? 4 : 0)}%` }} /></div>
+                    <span className="font-mono text-[11px] text-plum-muted">{done && !r.episodes ? "done" : `${shownProgress}/${r.episodes ?? "?"}`}</span>
                     {!readOnly && r.status === "watching" && (
                       <button type="button" aria-label="Watched one more" onClick={() => saveEntry({ id: r.mal_id, title: r.title, poster: r.image, episodes: r.episodes, format: r.kind ?? "TV" }, { progress: r.progress + 1, ...(r.episodes && r.progress + 1 >= r.episodes ? { status: "completed" as const } : {}) })}
                         className="grid size-7 place-items-center rounded-full border-1.5 border-line hover:border-frost-hot hover:text-frost-text"><Plus className="size-3.5" strokeWidth={2.8} /></button>

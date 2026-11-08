@@ -55,7 +55,11 @@ export default async function AnimePage({ params, searchParams }: Props) {
   const live = Number((watchingNow.results[0] as { n: number }).n);
   const r = resume.results[0] as { episode: number; position: number; duration: number } | undefined;
   const progress = Number((mine.results[0] as { progress: number } | undefined)?.progress ?? 0);
-  const continueEp = r ? (r.duration && r.position / r.duration > 0.9 ? r.episode + 1 : r.episode) : progress ? progress + 1 : 1;
+  const rawNext = r ? (r.duration && r.position / r.duration > 0.9 ? r.episode + 1 : r.episode) : progress ? progress + 1 : 1;
+  // Finished the last episode: there is nothing to "continue" (it used to say EP 14 on a
+  // 13-episode show and link to EP 13). Offer a rewatch from the top instead.
+  const finishedAll = !!a.episodes && rawNext > a.episodes;
+  const continueEp = finishedAll ? 1 : rawNext;
   const next = nextAiring(a);
   const ref = refOf(a);
   const info: [string, React.ReactNode][] = [
@@ -116,7 +120,7 @@ export default async function AnimePage({ params, searchParams }: Props) {
             </dl>
             <div className="mt-2 flex flex-wrap items-center gap-2.5">
               <Button size="lg" asChild className="pl-[18px] font-extrabold">
-                <Link href={`/watch/${a.id}/${Math.min(continueEp, a.episodes ?? continueEp)}`}><Play className="size-4" fill="currentColor" />{continueEp > 1 ? `Continue · EP ${continueEp}` : a.group === "film" ? "Watch the film" : "Watch episode 1"}</Link>
+                <Link href={`/watch/${a.id}/${Math.min(continueEp, a.episodes ?? continueEp)}`}><Play className="size-4" fill="currentColor" />{finishedAll ? "Rewatch from EP 1" : continueEp > 1 ? `Continue · EP ${continueEp}` : a.group === "film" ? "Watch the film" : "Watch episode 1"}</Link>
               </Button>
               {a.trailer && (
                 <TrailerButton id={a.trailer} title={a.title}>

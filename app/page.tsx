@@ -16,6 +16,8 @@ const ERRORS: Record<string, string> = {
   expired: "That sign-in link expired. Give it another go.",
   used: "That sign-in link was already used. Give it another go.",
   no_account: "We couldn’t find that kuro account.",
+  key: "kuro and this site disagree on the sign-in key, so the link was refused. Use your handle and password for now; it's being fixed.",
+  no_backend: "This site can't look up kuro profiles yet. Use your handle and password for now.",
   plus_only: "cupcake is open to kuro+ members right now.",
   sso_off: "One-click sign-in isn’t set up yet. Use your handle and password below.",
 };
