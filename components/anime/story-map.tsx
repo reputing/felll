@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Poster } from "@/components/poster";
 import { cn } from "@/lib/utils";
 import type { Group, TimelineEntry } from "@/lib/franchise";
@@ -15,14 +15,32 @@ const GROUPS: { key: Group; label: string; chip: string; tag: string }[] = [
   { key: "recap", label: "Recap", chip: "bg-cream-tint text-plum-muted", tag: "text-plum-muted" },
 ];
 
-export function StoryMap({ timeline }: { timeline: TimelineEntry[] }) {
+export function StoryMap({ timeline: first, malId, partial }: { timeline: TimelineEntry[]; malId: number; partial?: boolean }) {
+  const [timeline, setTimeline] = useState(first);
   const [only, setOnly] = useState<Group | "all">("all");
+  const [more, setMore] = useState(!!partial);
+  // A big franchise is looked up a slice at a time (each slice is cached for everyone); keep asking
+  // until the whole map is in, so it completes by itself instead of needing a reload.
+  useEffect(() => {
+    if (!partial) return;
+    let stop = false;
+    (async () => {
+      for (let i = 0; i < 6 && !stop; i++) {
+        const d = await fetch(`/api/public/franchise?mal=${malId}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        if (stop || !d?.franchise) break;
+        setTimeline(d.franchise.timeline);
+        if (!d.franchise.partial) break;
+      }
+      if (!stop) setMore(false);
+    })();
+    return () => { stop = true; };
+  }, [partial, malId]);
   const counts = Object.fromEntries(GROUPS.map((g) => [g.key, timeline.filter((e) => e.group === g.key).length])) as Record<Group, number>;
   const shown = timeline.map((e, i) => ({ e, n: i + 1 })).filter(({ e }) => only === "all" || e.group === only || e.current);
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <div><div className="eyebrow">Story map</div><h2 className="mt-1 text-lg font-extrabold tracking-[-.4px]">{timeline.length} entries, in release order</h2></div>
+        <div><div className="eyebrow">Story map</div><h2 className="mt-1 text-lg font-extrabold tracking-[-.4px]">{timeline.length} entries, in release order{more ? " · finding the rest…" : ""}</h2></div>
         <div className="flex flex-wrap gap-1.5">
           <button type="button" aria-pressed={only === "all"} onClick={() => setOnly("all")} className={cn("h-8 rounded-full border-1.5 px-3 text-[12px] font-bold", only === "all" ? "border-frost-hot bg-frost text-frost-ink" : "border-line hover:border-frost-hot")}>All {timeline.length}</button>
           {GROUPS.filter((g) => counts[g.key] > 0).map((g) => (

@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const mal = Number(sp.get("mal"));
   if (!Number.isInteger(mal) || mal <= 0) return Response.json({ error: "mal id?" }, { status: 400 });
   const f = await getFranchise(mal).catch((e) => { return { error: String(e) } as never; });
-  return Response.json({ franchise: f ?? null, ...(sp.get("debug") ? { why: f ? "" : lastError || "nothing related found" } : {}) }, { headers: { "cache-control": "public, max-age=300" } });
+  return Response.json({ franchise: f ?? null, ...(sp.get("debug") ? { why: f ? "" : lastError || "nothing related found" } : {}) }, { headers: { "cache-control": f && f.partial ? "no-store" : "public, max-age=300" } });
 }
 
 // Which franchise data sources this server can actually reach (AniList 403s some hosting networks).

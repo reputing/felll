@@ -26,7 +26,7 @@ export async function Franchise({ id, title }: { id: number; title: string }) {
           </div>
         </div>
       )}
-      {f.timeline.length > 1 && <StoryMap timeline={f.timeline} />}
+      {f.timeline.length > 1 && <StoryMap timeline={f.timeline} malId={id} partial={f.partial} />}
       {f.source && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-cream-blush px-4 py-3">
           <BookOpen className="size-5 flex-none text-frost-deep" />

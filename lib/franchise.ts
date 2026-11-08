@@ -28,6 +28,8 @@ export interface Franchise {
   timeline: TimelineEntry[];                       // everything, in release order
   seasons: (FranchiseEntry & { current: boolean })[]; // the main line's TV/ONA entries
   source: FranchiseSource | null;
+  /** the call budget ran out before every show was reached; asking again carries on (cached shows are free) */
+  partial?: boolean;
 }
 
 const TTL = 14 * 86400;
@@ -213,5 +215,5 @@ export async function getFranchise(malId: number): Promise<Franchise | null> {
     }
   }
   if (timeline.length < 2 && !source) return null;
-  return { timeline, seasons, source };
+  return { timeline, seasons, source, partial: budget <= 0 };
 }
