@@ -58,8 +58,10 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
       at += 7 * 86400;
     }
   }
-  const total = Math.max(a.episodes ?? 0, known.length, anizipNums.length ? Math.max(...anizipNums) : 0, ...[...have.keys()]);
-  const allNumbers = known.length ? known.map((k) => k.number) : Array.from({ length: total }, (_, i) => i + 1);
+  // a finished show has the count it says it has (recaps/shorts from other lists must not pad it)
+  const settled = !!a.episodes && !a.airing;
+  const total = settled ? a.episodes! : Math.max(a.episodes ?? 0, known.length, anizipNums.length ? Math.max(...anizipNums) : 0, ...[...have.keys()]);
+  const allNumbers = (known.length ? known.map((k) => k.number) : Array.from({ length: total }, (_, i) => i + 1)).filter((n) => !settled || n <= total);
   const numbers = allNumbers.slice(0, 120);
   const more = allNumbers.length - numbers.length;
   if (!numbers.length && !upcoming.length) return null;

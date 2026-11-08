@@ -28,8 +28,13 @@ function parse(data: Raw): AnizipEpisodes | null {
   if (!eps || typeof eps !== "object") return null;
   const out: AnizipEpisodes = {};
   for (const [key, value] of Object.entries(eps as Record<string, Raw>)) {
-    const n = Number((value as Raw)?.episodeNumber ?? key);
-    if (!Number.isFinite(n) || n < 1) continue; // skip "S1", specials, recaps
+    // Only real episodes are keyed by a plain number. Specials, recaps and shorts are keyed "S1",
+    // "S2"... and carry their own episodeNumber (1, 2, ...), so reading that field let them overwrite
+    // the real episodes with the same numbers (Attack on Titan's "Chimi Chara Theater" and recap
+    // replacing episodes 1 to 9, and the list looking bunched together).
+    if (!/^\d+$/.test(key)) continue;
+    const n = Number(key);
+    if (!Number.isFinite(n) || n < 1) continue;
     const t = (value as Raw)?.title;
     const title = (typeof t === "object" ? t?.en || t?.["x-jat"] || t?.ja : t) ?? null;
     const runtime = Number((value as Raw)?.runtime);
@@ -75,7 +80,7 @@ async function refresh(anilistId: number, key: string): Promise<AnizipEpisodes |
 /** Episode art + overviews for an AniList id, cached in D1. Never throws. */
 export async function fetchAnizipEpisodes(anilistId: number | null): Promise<AnizipEpisodes> {
   if (!anilistId) return {};
-  const key = `anizip:eps:${anilistId}`;
+  const key = `anizip:eps2:${anilistId}`; // eps2: the first version cached specials over real episodes (see parse)
   let row: { body: string; fetched_at: number } | null = null;
   try {
     row = await (await db()).prepare("select body, fetched_at from jikan_cache where key = ?").bind(key).first();

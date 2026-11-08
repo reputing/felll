@@ -95,7 +95,11 @@ export default async function WatchPage({ params, searchParams }: Props) {
   // Episode count spans the self-hosted vault and Anivexa, so ongoing shows
   // (episodes = null, e.g. One Piece) list every streamable episode — not one.
   const extMax = anivexaEps.size ? Math.max(...anivexaEps) : 0;
-  const total = Math.max(a.episodes ?? 0, list.items.length, extMax, ep);
+  // A finished show has the episode count it says it has: stream providers also number recaps and
+  // shorts as extra "episodes" (27/25 on Attack on Titan), which bunched them into the list. Airing and
+  // open-ended shows still grow with whatever is streamable.
+  const settled = !!a.episodes && !a.airing;
+  const total = settled ? Math.max(a.episodes!, ep) : Math.max(a.episodes ?? 0, list.items.length, extMax, ep);
   if (a.episodes && ep > Math.max(a.episodes, extMax)) notFound();
 
   const sp = await searchParams;
@@ -112,7 +116,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
   const request = req.results[0] as { votes: number; voted: number } | undefined;
   const vaultSet = new Map(inVault.map((e) => [e.number, e.audio]));
   const streamableSet = new Set<number>([...vaultSet.keys(), ...anivexaEps]);
-  const numbers = Array.from({ length: Math.max(total, extMax, ...inVault.map((e) => e.number)) }, (_, i) => i + 1);
+  const numbers = Array.from({ length: settled ? total : Math.max(total, extMax, ...inVault.map((e) => e.number)) }, (_, i) => i + 1);
   const fillers = await getFillers([a.title, a.romaji, a.native, ...a.synonyms], a.episodes).catch(() => null);
   const episodeEntries: EpisodeEntry[] = numbers.map((n) => {
     const meta = list.items.find((e) => e.number === n);

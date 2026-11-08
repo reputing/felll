@@ -2,9 +2,10 @@
 import type Hls from "hls.js";
 import {
   Captions, ChevronRight, FastForward, Loader2, Maximize, Maximize2, Minimize, Pause, PictureInPicture2, Play,
-  RectangleHorizontal, Settings, SkipBack, SkipForward, Smile, Volume1, Volume2, VolumeX,
+  RectangleHorizontal, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Smile, Volume1, Volume2, VolumeX,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBox } from "@/lib/store";
 import { REACTIONS } from "@/lib/reactions";
@@ -44,6 +45,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const router = useRouter();
   const box = useRef<HTMLDivElement>(null);
   const anchor = useRef<HTMLDivElement>(null);
+  // The <video> sits alone in this wrapper: floating-window PiP moves just the video across, and React
+  // never inserts a sibling relative to a node that left ("Oh crumbs" when the whole box was moved).
+  const videoSlot = useRef<HTMLDivElement>(null);
+  const [pipBox, setPipBox] = useState<HTMLElement | null>(null);
   const video = useRef<HTMLVideoElement>(null);
   const hls = useRef<Hls | null>(null);
   const dub = useBox((s) => s.dub);
@@ -171,15 +176,18 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         w.document.documentElement.className = document.documentElement.className;
         w.document.documentElement.setAttribute("style", document.documentElement.getAttribute("style") || "");
         for (const a of Array.from(document.documentElement.attributes)) if (a.name.startsWith("data-")) w.document.documentElement.setAttribute(a.name, a.value);
-        w.document.body.style.cssText = "margin:0;background:#000;display:grid;place-items:center;height:100vh;overflow:hidden";
-        const home = el.parentElement, next = el.nextSibling;
-        el.style.width = "100%"; el.style.height = "100%"; el.style.borderRadius = "0";
-        w.document.body.append(el);
-        pipWin.current = w; setDocPip(true);
+        w.document.body.style.cssText = "margin:0;background:#000;height:100vh;overflow:hidden";
+        // the floating player: the video moves in, the controls are portalled in beside it
+        const pb = w.document.createElement("div");
+        pb.className = "group/player relative size-full overflow-hidden bg-black select-none";
+        w.document.body.append(pb);
+        const slotEl = videoSlot.current;
+        pb.appendChild(v);
+        pipWin.current = w; setPipBox(pb); setDocPip(true);
+        v.play().catch(() => {}); // moving a video between documents can pause it
         w.addEventListener("pagehide", () => {
-          el.style.width = ""; el.style.height = ""; el.style.borderRadius = "";
-          if (home && !home.contains(el)) home.insertBefore(el, next);
-          pipWin.current = null; setDocPip(false);
+          if (slotEl && !slotEl.contains(v)) slotEl.appendChild(v);
+          pipWin.current = null; setPipBox(null); setDocPip(false);
         });
         return;
       } catch { /* fall back to the plain video window */ }
@@ -213,9 +221,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       // the click that follows this press only meant "close the menu", not "pause the video"
       swallowClick.current = true; setTimeout(() => { swallowClick.current = false; }, 250);
     };
+    const pd = pipBox?.ownerDocument;
     document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [menuOpen]);
+    pd?.addEventListener("pointerdown", onDown);
+    return () => { document.removeEventListener("pointerdown", onDown); pd?.removeEventListener("pointerdown", onDown); };
+  }, [menuOpen, pipBox]);
 
   // Sleep timer: pause after N minutes.
   useEffect(() => {
@@ -401,6 +411,14 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     poke.current = setTimeout(() => setIdle(true), 2600);
   }, []);
 
+  // in the floating window the pointer drives the same fade-the-controls behaviour
+  useEffect(() => {
+    if (!pipBox) return;
+    const m = () => wake(), l = () => { if (video.current && !video.current.paused) setIdle(true); };
+    pipBox.addEventListener("mousemove", m); pipBox.addEventListener("mouseleave", l);
+    return () => { pipBox.removeEventListener("mousemove", m); pipBox.removeEventListener("mouseleave", l); };
+  }, [pipBox, wake]);
+
   const toggle = useCallback(() => {
     const v = video.current;
     if (!v) return;
@@ -412,6 +430,19 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + s));
     setFlash(s > 0 ? `+${s}s` : `${s}s`);
   }, []);
+  // The browser's own floating window (and phone lock screens) get skip back/forward 10s and
+  // previous/next episode, so you aren't stuck without them when the page isn't in front.
+  useEffect(() => {
+    const ms = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
+    if (!ms) return;
+    const set = (a: MediaSessionAction, h: MediaSessionActionHandler | null) => { try { ms.setActionHandler(a, h); } catch { /* unsupported action */ } };
+    try { ms.metadata = new MediaMetadata({ title: `${meta.title} · Episode ${meta.ep}`, artist: "cupcake.gg", artwork: meta.image ? [{ src: meta.image }] : [] }); } catch { /* */ }
+    set("seekbackward", () => seekBy(-10));
+    set("seekforward", () => seekBy(10));
+    set("previoustrack", prevHref ? () => router.push(prevHref) : null);
+    set("nexttrack", nextHref ? () => router.push(nextHref) : null);
+    return () => { set("seekbackward", null); set("seekforward", null); set("previoustrack", null); set("nexttrack", null); };
+  }, [seekBy, prevHref, nextHref, router, meta.title, meta.ep, meta.image]);
   const fullscreen = useCallback(() => {
     const el = box.current as (HTMLDivElement & { webkitRequestFullscreen?: () => void }) | null;
     const v = video.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void; webkitExitFullscreen?: () => void; webkitDisplayingFullscreen?: boolean }) | null;
@@ -490,8 +521,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       if (act[k]) { e.preventDefault(); act[k](); wake(); }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggle, fullscreen, seekBy, theater, setTheater, subtitles, extraSubs, mine, introEnd, nextHref, prevHref, router, wake]);
+    const pd = pipBox?.ownerDocument;
+    pd?.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); pd?.removeEventListener("keydown", onKey); };
+  }, [pipBox, toggle, fullscreen, seekBy, theater, setTheater, subtitles, extraSubs, mine, introEnd, nextHref, prevHref, router, wake]);
 
   // Captions: our own drawing handles every track we could read; the browser's <track> only
   // draws the chosen one when we couldn't (e.g. a cross-origin file we may not fetch).
@@ -526,17 +559,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
 
   const bar = "grid size-10 place-items-center rounded-full text-white/90 transition hover:bg-white/15 hover:text-white";
 
-  return (
-    <div ref={anchor} className="relative w-full">
-      {dock && <div aria-hidden className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-night" />}
-      {docPip && (
-        <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night text-center text-night-text">
-          <div className="flex flex-col items-center gap-3 p-4"><PictureInPicture2 className="size-8 text-frost" /><p className="text-[14px] font-bold">Playing in the floating window</p>
-            <button type="button" onClick={() => pipWin.current?.close()} className="h-9 rounded-full bg-frost px-4 text-[13px] font-extrabold text-frost-ink">Bring it back</button></div>
-        </div>
-      )}
-    <div ref={box} onMouseMove={wake} onMouseLeave={() => playing && setIdle(true)}
-      className={cn("group/player relative aspect-video w-full overflow-hidden rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] select-none", full && "rounded-none border-0", hidden && "cursor-none", dock && "fixed bottom-4 right-4 z-40 w-[min(384px,calc(100vw-1.5rem))] rounded-2xl shadow-[0_24px_48px_-20px_rgba(0,0,0,.8)] ring-1 ring-black/50 animate-in fade-in slide-in-from-bottom-4")}>
+  // Everything drawn over the picture. While the player floats in its own window this is rendered
+  // into that window through a portal (so React's events work there) and the <video> element alone is
+  // moved across; the main page keeps an empty box with a "Bring it back" note.
+  const chrome = (
+    <>
       {dock && (
         <button type="button" onClick={() => anchor.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
           aria-label="Back to full player"
@@ -549,28 +576,6 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
           <WatchParty video={video} malId={meta.malId} ep={meta.ep} title={meta.title} image={meta.image} />
         </div>
       )}
-      <video
-        ref={video}
-        playsInline
-        poster={poster ?? undefined}
-        className="size-full bg-black object-contain"
-        onClick={() => { if (!swallowClick.current) toggle(); }}
-        onDoubleClick={fullscreen}
-        onPlay={() => { setPlaying(true); ended.current = false; engaged.current = true; wake(); }}
-        onPause={() => { setPlaying(false); setIdle(false); report(true); }}
-        onWaiting={() => setLoading(true)}
-        onPlaying={() => setLoading(false)}
-        onCanPlay={() => setLoading(false)}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
-        onDurationChange={(e) => setDur(e.currentTarget.duration)}
-        onTimeUpdate={onTime}
-        onVolumeChange={(e) => { setVol(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
-        onRateChange={(e) => { setSpeed(e.currentTarget.playbackRate); savedSpeed.current = e.currentTarget.playbackRate; try { localStorage.setItem(`speed:${meta.malId}`, String(e.currentTarget.playbackRate)); } catch { /* storage off */ } }}
-        onEnded={() => { ended.current = true; report(true); if (autoNext && !stopAfterEp && nextHref && !nextDismissed.current) setNextIn((n) => n ?? 5); }}
-      >
-        {subs0.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
-      </video>
-
       {!classicPip && <SubtitleLayer video={video} cues={overlayOn ? cues : []} offset={offset} style={subStyle} preview={menuOpen && page === "subs"} />}
 
       {/* Cupcake broadcaster bug: a soft watermark while you're on our own server. */}
@@ -664,6 +669,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         </div>
         <div className="flex items-center gap-1">
           <button type="button" className={bar} onClick={toggle} aria-label={playing ? "Pause" : "Play"}>{playing ? <Pause className="size-5" fill="currentColor" /> : <Play className="size-5" fill="currentColor" />}</button>
+          <button type="button" className={cn(bar, "relative")} onClick={() => seekBy(-10)} aria-label="Back 10 seconds" title="Back 10s (J)"><RotateCcw className="size-[19px]" /><span className="pointer-events-none absolute text-[7.5px] font-black leading-none">10</span></button>
+          <button type="button" className={cn(bar, "relative")} onClick={() => seekBy(10)} aria-label="Forward 10 seconds" title="Forward 10s (L)"><RotateCw className="size-[19px]" /><span className="pointer-events-none absolute text-[7.5px] font-black leading-none">10</span></button>
           {prevHref && <button type="button" className={bar} onClick={() => router.push(prevHref)} aria-label="Previous episode"><SkipBack className="size-[18px]" /></button>}
           {nextHref && <button type="button" className={bar} onClick={() => router.push(nextHref)} aria-label="Next episode"><SkipForward className="size-[18px]" /></button>}
           <div className="group/vol flex items-center">
@@ -698,6 +705,44 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
           <button type="button" className={bar} onClick={fullscreen} aria-label="Fullscreen">{full ? <Minimize className="size-5" /> : <Maximize className="size-5" />}</button>
         </div>
       </div>
+    </>
+  );
+
+  return (
+    <div ref={anchor} className="relative w-full">
+      {dock && <div aria-hidden className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-night" />}
+    <div ref={box} onMouseMove={wake} onMouseLeave={() => playing && setIdle(true)}
+      className={cn("group/player relative aspect-video w-full overflow-hidden rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] select-none", full && "rounded-none border-0", hidden && "cursor-none", dock && "fixed bottom-4 right-4 z-40 w-[min(384px,calc(100vw-1.5rem))] rounded-2xl shadow-[0_24px_48px_-20px_rgba(0,0,0,.8)] ring-1 ring-black/50 animate-in fade-in slide-in-from-bottom-4")}>
+      <div ref={videoSlot} className="size-full">
+        <video
+          ref={video}
+          playsInline
+          poster={poster ?? undefined}
+          className="size-full bg-black object-contain"
+          onClick={() => { if (!swallowClick.current) toggle(); }}
+          onDoubleClick={fullscreen}
+          onPlay={() => { setPlaying(true); ended.current = false; engaged.current = true; wake(); }}
+          onPause={() => { setPlaying(false); setIdle(false); report(true); }}
+          onWaiting={() => setLoading(true)}
+          onPlaying={() => setLoading(false)}
+          onCanPlay={() => setLoading(false)}
+          onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+          onDurationChange={(e) => setDur(e.currentTarget.duration)}
+          onTimeUpdate={onTime}
+          onVolumeChange={(e) => { setVol(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
+          onRateChange={(e) => { setSpeed(e.currentTarget.playbackRate); savedSpeed.current = e.currentTarget.playbackRate; try { localStorage.setItem(`speed:${meta.malId}`, String(e.currentTarget.playbackRate)); } catch { /* storage off */ } }}
+          onEnded={() => { ended.current = true; report(true); if (autoNext && !stopAfterEp && nextHref && !nextDismissed.current) setNextIn((n) => n ?? 5); }}
+        >
+          {subs0.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
+        </video>
+      </div>
+      {docPip && (
+        <div className="absolute inset-0 z-20 grid place-items-center bg-night text-center text-night-text">
+          <div className="flex flex-col items-center gap-3 p-4"><PictureInPicture2 className="size-8 text-frost" /><p className="text-[14px] font-bold">Playing in the floating window</p>
+            <button type="button" onClick={() => pipWin.current?.close()} className="h-9 rounded-full bg-frost px-4 text-[13px] font-extrabold text-frost-ink">Bring it back</button></div>
+        </div>
+      )}
+      {docPip && pipBox ? createPortal(chrome, pipBox) : chrome}
     </div>
     </div>
   );
