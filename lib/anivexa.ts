@@ -90,16 +90,21 @@ export async function malToAnilist(malId: number): Promise<number | null> {
     // no db (e.g. build) — fall through to the live lookup
   }
   let anilist: number | null = null;
-  try {
-    const r = await fetch(`https://arm.haglund.dev/api/v2/ids?source=myanimelist&id=${malId}`, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (r.ok) anilist = ((await r.json()) as { anilist?: number })?.anilist ?? null;
-  } catch {
-    // leave null
+  let answered = false;
+  for (let attempt = 0; attempt < 2 && !answered; attempt++) {
+    try {
+      const r = await fetch(`https://arm.haglund.dev/api/v2/ids?source=myanimelist&id=${malId}`, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (r.ok) { anilist = ((await r.json()) as { anilist?: number })?.anilist ?? null; answered = true; }
+    } catch {
+      // try once more, then leave null
+    }
   }
-  malMap.set(malId, anilist);
+  // Remember a real answer (including "no mapping"), but not a failed lookup: a null from a
+  // timeout stayed in this map for the life of the worker and hid every stream for that show.
+  if (answered) malMap.set(malId, anilist);
   // Persist only a positive hit, so a transient ARM failure isn't pinned.
   if (anilist != null) {
     try {
@@ -153,7 +158,11 @@ export async function fetchAnivexaCatalog(anilistId: number): Promise<AnivexaCat
 }
 
 async function refreshAnivexaCatalog(anilistId: number, key: string): Promise<AnivexaCatalog | null> {
-  const catalog = parseAnivexaCatalog(await getJson(`/episodes/${anilistId}`));
+  // The backend is a container that sleeps: the first call after a quiet spell often times
+  // out or 5xx's while it wakes, which left the player with no streams until you opened
+  // another episode (by which time it was awake). Try once more before giving up.
+  let catalog = parseAnivexaCatalog(await getJson(`/episodes/${anilistId}`));
+  if (!catalog) catalog = parseAnivexaCatalog(await getJson(`/episodes/${anilistId}`));
   if (catalog) {
     try {
       await (await db())

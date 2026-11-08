@@ -1,5 +1,9 @@
 import { cn } from "@/lib/utils";
 
+// MangaDex covers go through our edge-cached proxy (app/api/manga-img) instead of every
+// browser fetching them from MangaDex: far less egress, and no blank tiles when their CDN is slow.
+const cover = (u: string) => (/^https:\/\/uploads\.mangadex\.org\/covers\//i.test(u) ? `/api/manga-img?u=${encodeURIComponent(u)}` : u);
+
 // Plain <img>: Next's optimiser isn't available on Workers without the Images
 // binding, and MAL's CDN already serves right-sized webp. Lazy by default; pass
 // eager for anything above the fold.
@@ -11,7 +15,7 @@ export function Poster({
       {src && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={src}
+          src={cover(src)}
           alt={alt}
           sizes={sizes}
           loading={eager ? "eager" : "lazy"}

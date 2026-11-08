@@ -5,10 +5,17 @@ import { currentUser } from "@/lib/auth";
 // /api/manga-img?u=<image>&r=<referer> and we fetch it with that Referer and
 // stream the bytes back. Members only.
 export async function GET(req: Request) {
-  if (!(await currentUser())) return new Response("sign in first", { status: 401 });
   const sp = new URL(req.url).searchParams;
   const u = sp.get("u");
   if (!u) return new Response("missing url", { status: 400 });
+  // MangaDex cover art is public, so it needs no sign-in (the proxy is still pinned to that one
+  // host for it) and is kept in the edge cache: a grid of covers used to go to MangaDex from every
+  // browser on every visit, which cost egress and left blank tiles whenever their CDN hiccuped.
+  const isCover = /^https:\/\/uploads\.mangadex\.org\/covers\/[\w-]+\/[\w.-]+\.jpg$/i.test(u);
+  if (!isCover && !(await currentUser())) return new Response("sign in first", { status: 401 });
+  const edge = isCover && typeof caches !== "undefined" ? (caches as unknown as { default?: Cache }).default : undefined;
+  const cacheKey = new Request(req.url, { method: "GET" });
+  if (edge) { const hit = await edge.match(cacheKey).catch(() => undefined); if (hit) return hit; }
 
   let target: URL;
   try {
@@ -56,9 +63,15 @@ export async function GET(req: Request) {
   if (!upstream) return new Response("image unreachable", { status: 502, headers: { "cache-control": "no-store" } });
 
   const ct = upstream.headers.get("content-type") || "image/jpeg";
-  const cache = upstream.ok ? "public, max-age=86400, immutable" : "no-store";
-  return new Response(upstream.ok ? upstream.body : null, {
+  // covers never change under a given file name, so keep them a year; pages a day
+  const cache = upstream.ok ? (isCover ? "public, max-age=31536000, immutable" : "public, max-age=86400, immutable") : "no-store";
+  const out = new Response(upstream.ok ? upstream.body : null, {
     status: upstream.status,
     headers: { "content-type": ct, "cache-control": cache },
   });
+  if (edge && upstream.ok) {
+    const copy = out.clone();
+    try { await edge.put(cacheKey, copy); } catch { /* the response still goes out */ }
+  }
+  return out;
 }

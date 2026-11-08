@@ -73,6 +73,11 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [idle, setIdle] = useState(false);
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
   const [nextIn, setNextIn] = useState<number | null>(null);
+  // Cancel has to stick for this episode: the outro check below runs on every timeupdate
+  // and the ended handler fires again, so without this the countdown restarted the moment
+  // it was dismissed ("loops back into that interaction again").
+  const nextDismissed = useRef(false);
+  useEffect(() => { nextDismissed.current = false; }, [meta.malId, meta.ep]);
   const [flash, setFlash] = useState<string | null>(null);
   const [stopAfterEp, setStopAfterEp] = useState(false);
   const [sleepMin, setSleepMin] = useState<number | null>(null);
@@ -427,7 +432,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setT(v.currentTime);
     if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
     report();
-    if (autoNext && !stopAfterEp && nextHref && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
+    if (autoNext && !stopAfterEp && nextHref && !nextDismissed.current && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
   };
 
   if (!sources.length) return null;
@@ -478,7 +483,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         onTimeUpdate={onTime}
         onVolumeChange={(e) => { setVol(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
         onRateChange={(e) => { setSpeed(e.currentTarget.playbackRate); savedSpeed.current = e.currentTarget.playbackRate; try { localStorage.setItem(`speed:${meta.malId}`, String(e.currentTarget.playbackRate)); } catch { /* storage off */ } }}
-        onEnded={() => { ended.current = true; report(true); if (autoNext && !stopAfterEp && nextHref) setNextIn((n) => n ?? 5); }}
+        onEnded={() => { ended.current = true; report(true); if (autoNext && !stopAfterEp && nextHref && !nextDismissed.current) setNextIn((n) => n ?? 5); }}
       >
         {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
       </video>
@@ -509,12 +514,12 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
 
       {/* skip buttons — always a tap, never automatic */}
       {inIntro && (
-        <button type="button" onClick={() => { video.current!.currentTime = introEnd!; }} className="absolute bottom-24 right-5 flex h-11 items-center gap-2 rounded-full border-1.5 border-white/30 bg-black/60 px-5 text-[14px] font-extrabold text-white backdrop-blur-md transition hover:bg-frost hover:text-frost-ink animate-in fade-in slide-in-from-right-4">
+        <button type="button" onClick={() => { video.current!.currentTime = introEnd!; }} className="absolute bottom-24 right-5 z-20 flex h-11 items-center gap-2 rounded-full border-1.5 border-white/30 bg-black/60 px-5 text-[14px] font-extrabold text-white backdrop-blur-md transition hover:bg-frost hover:text-frost-ink animate-in fade-in slide-in-from-right-4">
           <FastForward className="size-4" /> Skip intro
         </button>
       )}
       {inOutro && nextIn === null && (
-        <button type="button" onClick={() => router.push(nextHref!)} className="absolute bottom-24 right-5 flex h-11 items-center gap-2 rounded-full bg-frost px-5 text-[14px] font-extrabold text-frost-ink shadow-press animate-in fade-in slide-in-from-right-4">
+        <button type="button" onClick={() => router.push(nextHref!)} className="absolute bottom-24 right-5 z-20 flex h-11 items-center gap-2 rounded-full bg-frost px-5 text-[14px] font-extrabold text-frost-ink shadow-press animate-in fade-in slide-in-from-right-4">
           Next episode <ChevronRight className="size-4" />
         </button>
       )}
@@ -529,7 +534,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
               <span className="font-mono text-[22px] sm:text-[30px]">{nextIn}</span>
             </div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setNextIn(null)} className="h-10 rounded-full border-1.5 border-white/30 px-5 text-[13.5px] font-bold hover:bg-white/10">Cancel</button>
+              <button type="button" onClick={() => { nextDismissed.current = true; setNextIn(null); }} className="h-10 rounded-full border-1.5 border-white/30 px-5 text-[13.5px] font-bold hover:bg-white/10">Cancel</button>
               <button type="button" onClick={() => router.push(nextHref)} className="h-10 rounded-full bg-frost px-5 text-[13.5px] font-extrabold text-frost-ink">Play now</button>
             </div>
           </div>
