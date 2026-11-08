@@ -1,24 +1,8 @@
 import Link from "next/link";
 import { BookOpen } from "lucide-react";
-import { Poster } from "@/components/poster";
+import { StoryMap } from "@/components/anime/story-map";
 import { cn } from "@/lib/utils";
-import { getFranchise, type FranchiseEntry } from "@/lib/franchise";
-
-const LABEL: Record<string, string> = {
-  SIDE_STORY: "Side story", SPIN_OFF: "Spin-off", ALTERNATIVE: "Alternative", CHARACTER: "Shared characters",
-  SUMMARY: "Recap", COMPILATION: "Compilation", PARENT: "Parent story", OTHER: "Related", CONTAINS: "Contains",
-};
-const FORMAT: Record<string, string> = { TV: "TV", TV_SHORT: "Short", MOVIE: "Movie", OVA: "OVA", ONA: "ONA", SPECIAL: "Special", MUSIC: "Music" };
-
-function Tile({ e, label }: { e: FranchiseEntry; label: string }) {
-  return (
-    <Link href={`/anime/${e.malId}`} className="group flex w-[118px] flex-none flex-col gap-1">
-      <Poster src={e.cover} className="aspect-[2/3] rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot" />
-      <span className="text-[10.5px] font-bold uppercase tracking-[.1em] text-plum-muted">{label}</span>
-      <span className="line-clamp-2 text-[12.5px] font-extrabold leading-tight">{e.title}</span>
-    </Link>
-  );
-}
+import { getFranchise } from "@/lib/franchise";
 
 /** Every season in one place (S1 S2 S3 ...), plus movies, side stories and where the story
  *  continues in the manga. Renders nothing for a show with no relations. */
@@ -27,7 +11,7 @@ export async function Franchise({ id, title }: { id: number; title: string }) {
   if (!f) return null;
   const card = "rounded-box border-1.5 border-line bg-cream-card p-5";
   return (
-    <section className={cn(card, "flex flex-col gap-5")} aria-label="Seasons and related">
+    <section id="story" className={cn(card, "flex scroll-mt-28 flex-col gap-5")} aria-label="Seasons and story map">
       {f.seasons.length > 1 && (
         <div>
           <div className="eyebrow">Seasons</div>
@@ -42,22 +26,7 @@ export async function Franchise({ id, title }: { id: number; title: string }) {
           </div>
         </div>
       )}
-      {f.extras.length > 0 && (
-        <div>
-          <div className="eyebrow">Movies &amp; specials</div>
-          <div className="scrollbar-none mt-2.5 flex gap-3 overflow-x-auto pb-1">
-            {f.extras.map((e) => <Tile key={e.malId} e={e} label={[FORMAT[e.format ?? ""] ?? e.format, e.year, e.relation === "PREQUEL" ? "before" : "after"].filter(Boolean).join(" · ")} />)}
-          </div>
-        </div>
-      )}
-      {f.related.length > 0 && (
-        <div>
-          <div className="eyebrow">Side stories &amp; spin-offs</div>
-          <div className="scrollbar-none mt-2.5 flex gap-3 overflow-x-auto pb-1">
-            {f.related.map((e) => <Tile key={e.malId} e={e} label={LABEL[e.relation] ?? e.relation.toLowerCase().replace(/_/g, " ")} />)}
-          </div>
-        </div>
-      )}
+      {f.timeline.length > 1 && <StoryMap timeline={f.timeline} />}
       {f.source && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-cream-blush px-4 py-3">
           <BookOpen className="size-5 flex-none text-frost-deep" />
