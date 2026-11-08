@@ -72,7 +72,8 @@ export default async function Profile({ params }: Props) {
   const gMax = genres[0]?.[1] ?? 1;
 
   const accent = u.accent;
-  const badges = computeBadges(stats);
+  // earned first, so the page opens on what they have rather than a wall of locks
+  const badges = [...computeBadges(stats)].sort((a, b) => Number(b.earned) - Number(a.earned));
   const earnedBadges = badges.filter((b) => b.earned).length;
   const tiles = [
     { k: "Completed", v: stats.completed },
@@ -137,9 +138,10 @@ export default async function Profile({ params }: Props) {
         )}
       </section>
 
-      <dl className="grid grid-cols-3 gap-2.5 lg:grid-cols-6">
+      {/* flex-wrap with growing tiles: however the row breaks, the last row stretches to fill it (a grid left "Manga read" alone) */}
+      <dl className="flex flex-wrap gap-2.5">
         {tiles.map((t) => (
-          <div key={t.k} className="rounded-3xl border-1.5 border-line bg-cream-card px-4 py-3.5">
+          <div key={t.k} className="min-w-[120px] flex-1 basis-[130px] rounded-3xl border-1.5 border-line bg-cream-card px-4 py-3.5">
             <dt className="text-[10px] font-bold uppercase tracking-[.12em] text-plum-muted">{t.k}</dt>
             <dd className="mt-1 font-mono text-[24px] leading-none" style={{ color: accent }}>{t.v}</dd>
           </div>

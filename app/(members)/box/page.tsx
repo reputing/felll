@@ -38,9 +38,9 @@ export default async function Box() {
           <Button asChild><Link href={`/u/${me.handle}`}>Your page</Link></Button>
         </div>
       </PageHead>
-      <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+      <dl className="flex flex-wrap gap-2.5">
         {tiles.map((t) => (
-          <div key={t.k} className="rounded-3xl border-1.5 border-line bg-cream-card px-4 py-3.5">
+          <div key={t.k} className="min-w-[120px] flex-1 basis-[130px] rounded-3xl border-1.5 border-line bg-cream-card px-4 py-3.5">
             <dt className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[.12em] text-plum-muted">{t.k === "Day streak" && <Flame className="size-3 text-sprinkle-peach" />}{t.k}</dt>
             <dd className="mt-1 font-mono text-[26px] leading-none text-frost-text">{t.v}</dd>
           </div>

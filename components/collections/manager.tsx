@@ -4,13 +4,14 @@ import { FolderPlus, Globe, Loader2, Lock, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createCollection, myCollections, type CollectionCard } from "@/lib/collections";
 import { toast } from "@/lib/store";
+import { Poster } from "@/components/poster";
+import { cn } from "@/lib/utils";
 
-export function CollectionCover({ covers }: { covers: string[] }) {
+export function CollectionCover({ covers, className }: { covers: string[]; className?: string }) {
   return (
-    <div className="grid aspect-[3/2] grid-cols-2 grid-rows-2 gap-0.5 overflow-hidden rounded-2xl border-1.5 border-line bg-cream-tint">
+    <div className={cn("grid aspect-[3/2] grid-cols-2 grid-rows-2 gap-0.5 overflow-hidden rounded-2xl border-1.5 border-line bg-cream-tint", className)}>
       {Array.from({ length: 4 }).map((_, i) => (
-        // eslint-disable-next-line @next/next/no-img-element
-        <span key={i} className="overflow-hidden bg-cream-blush">{covers[i] && <img src={covers[i]} alt="" referrerPolicy="no-referrer" className="size-full object-cover" />}</span>
+        <span key={i} className="overflow-hidden bg-cream-blush">{covers[i] && <Poster src={covers[i]} className="size-full" />}</span>
       ))}
     </div>
   );
