@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ChevronRight, Star } from "lucide-react";
 import { requireMember } from "@/lib/auth";
-import { movieDetail, movieEmbeds, movieSeasonEpisodes, moviesEnabled, type MovieMedia } from "@/lib/tmdb";
+import { movieDetail, movieStoryMap, movieEmbeds, movieSeasonEpisodes, moviesEnabled, type MovieMedia } from "@/lib/tmdb";
 import { Poster } from "@/components/poster";
 import { MoviePlayer } from "@/components/movies/player";
 import { cn } from "@/lib/utils";
@@ -37,9 +37,10 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
 
   // Embed servers (TMDB-keyed) render with the page. The direct 8Stream HLS for
   // a movie resolves lazily in the player via this endpoint, so the page is fast.
-  const [embeds, epList] = await Promise.all([
+  const [embeds, epList, story] = await Promise.all([
     movieEmbeds(d.media, d.id, se, ep),
     d.isSeries && se ? movieSeasonEpisodes(d.id, se) : Promise.resolve([]),
+    movieStoryMap(d.media, d.id).catch(() => null),
   ]);
   const streamSrc = d.media === "movie" && d.imdbId ? `/api/movie/stream?imdb=${encodeURIComponent(d.imdbId)}` : null;
 
@@ -69,6 +70,34 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
         </div>
         <Poster src={d.poster} className="hidden aspect-[2/3] w-[120px] flex-none rounded-2xl border-1.5 border-line sm:block" />
       </div>
+
+      {story && (
+        <section className="rounded-box border-1.5 border-line bg-cream-card p-5" aria-label="Story map">
+          <div className="eyebrow">Story map</div>
+          <h2 className="mt-1 text-lg font-extrabold tracking-[-.4px]">{story.kind === "collection" ? `${story.name} · ${story.items.length} films, in release order` : `${story.items.filter((i) => i.season).length} seasons${story.items.some((i) => i.season === 0) ? " and specials" : ""}`}</h2>
+          <ol className="scrollbar-none mt-3 flex gap-3 overflow-x-auto pb-1 pt-2">
+            {story.items.map((it, i) => {
+              const here = story.kind === "collection" ? it.id === d.id : it.season === se;
+              const href = story.kind === "collection" ? (it.slug ? `/movies/${it.slug}` : null) : it.season ? `/movies/${slug}?se=${it.season}&ep=1` : null;
+              const tile = (
+                <>
+                  <span className="relative block">
+                    <Poster src={it.poster} className={cn("aspect-[2/3] rounded-2xl border-1.5 transition", here ? "border-frost-hot" : "border-line group-hover:border-frost-hot")} />
+                    <span className="absolute left-1.5 top-1.5 grid h-6 min-w-6 place-items-center rounded-lg bg-black/75 px-1.5 font-mono text-[12px] font-extrabold text-white">{story.kind === "collection" ? i + 1 : it.season === 0 ? "SP" : it.season}</span>
+                  </span>
+                  <span className="mt-1.5 line-clamp-2 block text-[12.5px] font-extrabold leading-tight">{it.title}</span>
+                  <span className="block text-[11.5px] font-semibold text-plum-muted">{[it.year, it.note].filter(Boolean).join(" · ")}{here ? " · you are here" : ""}</span>
+                </>
+              );
+              return (
+                <li key={`${it.id}-${i}`} className="w-[118px] flex-none">
+                  {href ? <Link href={href} scroll={false} aria-current={here ? "page" : undefined} className="group block">{tile}</Link> : <div className="block opacity-70">{tile}</div>}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      )}
 
       {d.isSeries && d.seasons.length > 1 && (
         <div className="flex flex-wrap items-center gap-2 px-1">

@@ -232,3 +232,37 @@ export async function movieEmbeds(media: MovieMedia, tmdbId: number, se?: number
   const list = await providers();
   return list.map((p) => ({ name: p.name, url: media === "tv" ? p.tv(tmdbId, se || 1, ep || 1) : p.movie(tmdbId) }));
 }
+
+// --- story map ---------------------------------------------------------------------------------
+// Where this title sits in its story. A film: the collection it belongs to, in release order
+// (TMDB has no in-universe chronology, so release order is the honest one). A series: its seasons,
+// with years and episode counts, and the specials that sit beside them.
+export interface StoryMap {
+  kind: "collection" | "seasons";
+  name: string;
+  items: { id: number; slug: string | null; title: string; year: number | null; poster: string | null; note: string; season?: number }[];
+}
+
+export async function movieStoryMap(media: MovieMedia, id: number): Promise<StoryMap | null> {
+  if ((media !== "movie" && media !== "tv") || !Number.isInteger(id)) return null;
+  const data = await cached(`tmdb:detail:${media}:${id}`, () => tmdbGet(`/${media}/${id}?append_to_response=credits,external_ids`), 7 * 86400);
+  if (!data?.id) return null;
+  if (media === "tv") {
+    const seasons: Raw[] = Array.isArray(data.seasons) ? data.seasons : [];
+    const items = seasons.filter((s) => Number(s?.episode_count) > 0).map((s) => {
+      const n = Number(s.season_number);
+      const year = Number(String(s.air_date ?? "").slice(0, 4)) || null;
+      return { id: Number(s.id) || n, slug: null, title: n === 0 ? "Specials" : s.name || `Season ${n}`, year, poster: s.poster_path ? CARD + s.poster_path : null, note: `${s.episode_count} episode${s.episode_count === 1 ? "" : "s"}`, season: n };
+    });
+    return items.length > 1 ? { kind: "seasons", name: data.name ?? "", items } : null;
+  }
+  const colId = Number(data.belongs_to_collection?.id);
+  if (!Number.isInteger(colId)) return null;
+  const col = await cached(`tmdb:collection:${colId}`, () => tmdbGet(`/collection/${colId}`), 7 * 86400);
+  const parts: Raw[] = Array.isArray(col?.parts) ? col.parts : [];
+  const items = parts
+    .filter((p) => p?.id)
+    .sort((a, b) => String(a.release_date || "9999").localeCompare(String(b.release_date || "9999")))
+    .map((p) => ({ id: Number(p.id), slug: `movie-${p.id}`, title: p.title ?? "Untitled", year: Number(String(p.release_date ?? "").slice(0, 4)) || null, poster: p.poster_path ? CARD + p.poster_path : null, note: p.release_date ? "" : "unreleased" }));
+  return items.length > 1 ? { kind: "collection", name: col?.name ?? data.belongs_to_collection?.name ?? "Collection", items } : null;
+}
