@@ -1,5 +1,6 @@
 import { memberOr401 } from "@/lib/auth";
 import { db, first } from "@/lib/db";
+import { pushToAnilist } from "@/lib/sync";
 import { isStatus, STATUS_LABEL, type ListStatus } from "@/lib/utils";
 
 interface Body {
@@ -10,7 +11,7 @@ interface Body {
   progress?: number;
 }
 
-type Row = { episodes?: number | null; status: ListStatus | null; score: number | null; favorite: number; progress: number; started_at: number | null; finished_at: number | null };
+type Row = { rewatching?: number; episodes?: number | null; status: ListStatus | null; score: number | null; favorite: number; progress: number; started_at: number | null; finished_at: number | null };
 
 // Save / rate / favourite / progress, in any combination. Clearing everything
 // removes the row. Each real change lands in the activity feed.
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
   if ("status" in b && b.status !== null && !isStatus(b.status)) return Response.json({ error: "bad status" }, { status: 400 });
   if ("score" in b && b.score !== null && !(Number.isInteger(b.score) && b.score! >= 1 && b.score! <= 10)) return Response.json({ error: "scores are 1–10" }, { status: 400 });
 
-  const old = await first<Row>("select status, score, favorite, progress, episodes, started_at, finished_at from library where user_id = ? and mal_id = ?", me.id, id);
+  const old = await first<Row>("select status, score, favorite, progress, episodes, rewatching, started_at, finished_at from library where user_id = ? and mal_id = ?", me.id, id);
   const episodes = Number.isInteger(a.episodes) ? a.episodes! : null;
   const next: Row = {
     status: "status" in b ? b.status ?? null : old?.status ?? null,
@@ -68,6 +69,11 @@ export async function POST(req: Request) {
   if (next.status && next.status !== (old?.status ?? null)) log("status", STATUS_LABEL[next.status]);
   if (next.score && next.score !== (old?.score ?? null)) log("rated", String(next.score));
   if (next.favorite && !old?.favorite) log("favorite", "");
+  // finishing a show you were rewatching counts the rewatch
+  if (next.status === "completed" && old?.rewatching) stmts.push(d.prepare("update library set rewatching = 0, rewatches = rewatches + 1 where user_id = ? and mal_id = ?").bind(me.id, id));
   await d.batch(stmts);
+  if (next.status !== (old?.status ?? null) || next.progress !== (old?.progress ?? 0) || next.score !== (old?.score ?? null)) {
+    pushToAnilist(me.id, id, { status: next.status, progress: next.progress, score: next.score });
+  }
   return Response.json({ ok: true, entry: { ...next, favorite: !!next.favorite } });
 }

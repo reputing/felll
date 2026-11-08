@@ -40,7 +40,7 @@ export default async function Profile({ params }: Props) {
       d.prepare("select mal_id, episode, title from presence where user_id = ? and updated_at > unixepoch() - 90").bind(u.id),
     ]),
     memberStats(u.id),
-    all<BoxRow>("select mal_id, title, image, episodes, kind, updated_at, status, score, favorite, progress from library where user_id = ? order by updated_at desc", u.id),
+    all<BoxRow>("select mal_id, title, image, episodes, kind, updated_at, status, score, favorite, progress, rewatching from library where user_id = ? order by updated_at desc", u.id),
     all<{ kind: string; mal_id: number | null; episode: number | null; title: string | null; image: string | null; detail: string | null; created_at: number }>(
       "select kind, mal_id, episode, title, image, detail, created_at from activity where user_id = ? order by created_at desc limit 14", u.id),
     all<{ id: number; mal_id: number; episode: number | null; body: string; spoiler: number; created_at: number; likes: number }>(

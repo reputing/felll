@@ -12,7 +12,7 @@ export const metadata = { title: "My box" };
 export default async function Box() {
   const me = await requireMember("/box");
   const [rows, stats] = await Promise.all([
-    all<BoxRow>("select mal_id, title, image, episodes, kind, updated_at, status, score, favorite, progress from library where user_id = ? order by updated_at desc", me.id),
+    all<BoxRow>("select mal_id, title, image, episodes, kind, updated_at, status, score, favorite, progress, rewatching from library where user_id = ? order by updated_at desc", me.id),
     memberStats(me.id),
   ]);
   const tiles = [

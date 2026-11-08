@@ -8,7 +8,7 @@ import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { set, useBox } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-interface Hit { kind: "anime" | "manga" | "member" | "go"; href: string; title: string; sub: string; image?: string | null; Icon?: typeof Search }
+interface Hit { kind: "anime" | "manga" | "member" | "go"; href: string; title: string; sub: string; image?: string | null; Icon?: typeof Search; seasons?: { id: number; label: string; title: string }[] }
 
 const PAGES: Hit[] = [
   { kind: "go", href: "/home", title: "Explore", sub: "the watch box", Icon: Compass },
@@ -39,9 +39,9 @@ export function CommandPalette() {
     const t = setTimeout(async () => {
       const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { signal: ctl.signal }).catch(() => null);
       if (!res?.ok) return;
-      const body = (await res.json()) as { anime: { id: number; title: string; sub: string; image: string | null }[]; manga?: { id: string; title: string; sub: string; image: string | null }[]; members: { handle: string; display_name: string; avatar_url: string | null }[] };
+      const body = (await res.json()) as { anime: { id: number; title: string; sub: string; image: string | null; seasons?: { id: number; label: string; title: string }[] }[]; manga?: { id: string; title: string; sub: string; image: string | null }[]; members: { handle: string; display_name: string; avatar_url: string | null }[] };
       setHits([
-        ...body.anime.map((a) => ({ kind: "anime" as const, href: `/anime/${a.id}`, title: a.title, sub: a.sub, image: a.image })),
+        ...body.anime.map((a) => ({ kind: "anime" as const, href: `/anime/${a.id}`, title: a.title, sub: a.sub, image: a.image, seasons: a.seasons })),
         ...(body.manga ?? []).map((m) => ({ kind: "manga" as const, href: `/manga/${m.id}`, title: m.title, sub: m.sub, image: m.image })),
         ...body.members.map((m) => ({ kind: "member" as const, href: `/u/${m.handle}`, title: m.display_name, sub: `@${m.handle}`, image: m.avatar_url })),
       ]);
@@ -93,11 +93,12 @@ export function CommandPalette() {
           </div>
           <div ref={listRef} className="max-h-[56vh] overflow-y-auto p-2">
             {shown.map((h, n) => (
-              <button key={h.kind + h.href} data-i={n} type="button" onMouseMove={() => setI(n)} onClick={() => go(h)}
-                className={cn("grid w-full grid-cols-[40px_1fr_auto] items-center gap-3 rounded-2xl p-2 text-left", n === i && "bg-cream-blush")}>
+              <div key={h.kind + h.href} className={cn("rounded-2xl", n === i && "bg-cream-blush")}>
+              <button data-i={n} type="button" onMouseMove={() => setI(n)} onClick={() => go(h)}
+                className="grid w-full grid-cols-[40px_1fr_auto] items-center gap-3 rounded-2xl p-2 text-left">
                 {h.kind === "anime" || h.kind === "manga" ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <span className="h-[52px] w-10 overflow-hidden rounded-[10px] bg-cream-tint">{h.image && <img src={h.image} alt="" referrerPolicy="no-referrer" className="size-full object-cover" />}</span>
+                  <span className="h-[52px] w-10 overflow-hidden rounded-[10px] bg-cream-tint">{h.image && <img src={h.image.startsWith("https://uploads.mangadex.org/covers/") ? `/api/manga-img?u=${encodeURIComponent(h.image)}` : h.image} alt="" referrerPolicy="no-referrer" className="size-full object-cover" />}</span>
                 ) : h.kind === "member" ? (
                   <Avatar src={h.image} name={h.sub} size={40} />
                 ) : (
@@ -109,6 +110,15 @@ export function CommandPalette() {
                 </span>
                 <span className="text-[10.5px] font-bold uppercase tracking-[.1em] text-plum-faint">{h.kind === "go" ? "page" : h.kind}</span>
               </button>
+              {h.seasons && h.seasons.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 px-2 pb-2 pl-[60px]">
+                  {h.seasons.map((s) => (
+                    <button key={s.id} type="button" title={s.title} onClick={() => go({ kind: "anime", href: `/anime/${s.id}`, title: s.title, sub: "" })}
+                      className="h-6 rounded-full border-1.5 border-line bg-cream-card px-2.5 text-[11.5px] font-extrabold hover:border-frost-hot hover:text-frost-text">{s.label}</button>
+                  ))}
+                </div>
+              )}
+              </div>
             ))}
             {q.trim().length >= 2 && !busy && hits.length === 0 && (
               <p className="px-3 py-3 text-[13px] text-plum-muted">No quick matches. Press <kbd className="rounded-md border border-line bg-cream-tint px-1.5 font-mono text-[11px]">Enter</kbd> to search everything.</p>

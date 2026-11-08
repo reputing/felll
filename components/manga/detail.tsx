@@ -14,6 +14,9 @@ export function MangaDetail({ id }: { id: string }) {
   const [chapters, setChapters] = useState<Chapter[] | null>(null);
   const [resume, setResume] = useState<{ chapter_id: string; chapter_num: string; page: number } | null>(null);
   const [lang, setLang] = useState("en");
+  // /manga/<id>?ch=N comes from an AniList-tracked title: you've read up to chapter N elsewhere
+  const [tracked, setTracked] = useState<number | null>(null);
+  useEffect(() => { try { const v = Number(new URLSearchParams(window.location.search).get("ch")); if (v > 0) setTracked(v); } catch { /* */ } }, []);
 
   // the reader shares this preference, so picking a language here sticks
   useEffect(() => { try { const s = localStorage.getItem("manga:lang"); if (s) setLang(s); } catch { /* */ } }, []);
@@ -35,6 +38,7 @@ export function MangaDetail({ id }: { id: string }) {
 
   const first = chapters?.[0];
   const resumeCh = resume && chapters?.find((c) => c.id === resume.chapter_id);
+  const trackedCh = !resumeCh && tracked != null ? chapters?.find((c) => Number(c.chapter) === tracked + 1) ?? chapters?.find((c) => Number(c.chapter) === tracked) : undefined;
   const extFirst = first?.external ?? null;
   // The language actually being shown (chapters may fall back if the picked one
   // isn't hosted here). English first in the picker.
@@ -66,6 +70,10 @@ export function MangaDetail({ id }: { id: string }) {
               {resumeCh ? (
                 <Button size="lg" asChild className="font-extrabold">
                   <Link href={`/manga/${id}/${resume!.chapter_id}`}><Play className="size-4" fill="currentColor" />Continue · Ch. {resume!.chapter_num || resumeCh.chapter}</Link>
+                </Button>
+              ) : trackedCh ? (
+                <Button size="lg" asChild className="font-extrabold">
+                  <Link href={`/manga/${id}/${trackedCh.id}`}><Play className="size-4" fill="currentColor" />Continue · Ch. {trackedCh.chapter}</Link>
                 </Button>
               ) : extFirst ? (
                 <Button size="lg" asChild className="font-extrabold">

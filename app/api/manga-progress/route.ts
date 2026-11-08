@@ -16,7 +16,12 @@ export async function GET(req: Request) {
       "select manga_id, chapter_id, chapter_num, page, title, cover, updated_at from manga_progress where user_id = ? order by updated_at desc limit 20",
       me.id,
     );
-    return Response.json({ reading: rows }, { headers: { "cache-control": "no-store" } });
+    // titles you're reading on a linked AniList (see /api/sync), for the same rail
+    const tracked = await all(
+      "select anilist_id, title, cover, progress from manga_tracked where user_id = ? and status in ('CURRENT','REPEATING') order by updated_at desc limit 12",
+      me.id,
+    ).catch(() => []);
+    return Response.json({ reading: rows, tracked }, { headers: { "cache-control": "no-store" } });
   } catch {
     return Response.json({ reading: [], progress: null }, { headers: { "cache-control": "no-store" } });
   }
@@ -43,11 +48,13 @@ export async function POST(req: Request) {
 }
 
 // Clear the member's reading history (resume points). Lists stay.
-export async function DELETE() {
+export async function DELETE(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
+  const one = new URL(req.url).searchParams.get("mangaId");
   try {
-    await run("delete from manga_progress where user_id = ?", me.id);
+    if (one) await run("delete from manga_progress where user_id = ? and manga_id = ?", me.id, one);
+    else await run("delete from manga_progress where user_id = ?", me.id);
   } catch {
     return Response.json({ error: "unavailable" }, { status: 503 });
   }

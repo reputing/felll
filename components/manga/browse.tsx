@@ -24,6 +24,8 @@ function Card({ m }: { m: MangaCard }) {
 
 export function MangaBrowse({ adult = false }: { adult?: boolean }) {
   const [q, setQ] = useState("");
+  // /manga?q=… opens with that search (the anime page links here for "read the manga")
+  useEffect(() => { try { const v = new URLSearchParams(window.location.search).get("q"); if (v) setQ(v.slice(0, 80)); } catch { /* */ } }, []);
   const [f, setF] = useState<Omit<BrowseParams, "q" | "limit" | "offset" | "adult">>({});
   // The 18+ (pornographic) catalogue is its own gated section (/manga/18): this
   // browse shows it when `adult` is set, with the total count. The main /manga

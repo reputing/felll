@@ -1,3 +1,4 @@
+import { Franchise } from "@/components/anime/franchise";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
@@ -41,7 +42,7 @@ export default async function AnimePage({ params, searchParams }: Props) {
       d.prepare("select round(avg(score), 2) as avg, count(score) as n, count(*) as saves from library where mal_id = ?").bind(id),
       d.prepare("select count(*) as n from presence where mal_id = ? and updated_at > unixepoch() - 90").bind(id),
       d.prepare("select episode, position, duration from watch_progress where user_id = ? and mal_id = ? order by updated_at desc limit 1").bind(me.id, id),
-      d.prepare("select progress from library where user_id = ? and mal_id = ?").bind(me.id, id),
+      d.prepare("select progress, rewatching from library where user_id = ? and mal_id = ?").bind(me.id, id),
     ]),
   ]);
   if (!a) notFound();
@@ -55,6 +56,7 @@ export default async function AnimePage({ params, searchParams }: Props) {
   const live = Number((watchingNow.results[0] as { n: number }).n);
   const r = resume.results[0] as { episode: number; position: number; duration: number } | undefined;
   const progress = Number((mine.results[0] as { progress: number } | undefined)?.progress ?? 0);
+  const rewatching = !!(mine.results[0] as { rewatching?: number } | undefined)?.rewatching;
   const rawNext = r ? (r.duration && r.position / r.duration > 0.9 ? r.episode + 1 : r.episode) : progress ? progress + 1 : 1;
   // Finished the last episode: there is nothing to "continue" (it used to say EP 14 on a
   // 13-episode show and link to EP 13). Offer a rewatch from the top instead.
@@ -140,6 +142,7 @@ export default async function AnimePage({ params, searchParams }: Props) {
         <div className="flex min-w-0 flex-col gap-6">
           <section className={card}>
             <div className="flex flex-col gap-4">
+              {rewatching && <span className="w-fit rounded-full bg-sprinkle-lilac/20 px-3 py-1 text-[12px] font-extrabold text-sprinkle-lilac">Rewatching</span>}
               <LibraryControls anime={ref} />
               <RatingPicker anime={ref} />
             </div>
@@ -149,6 +152,7 @@ export default async function AnimePage({ params, searchParams }: Props) {
             <p className="mt-2 whitespace-pre-line text-pretty text-[14.5px] leading-relaxed text-plum-body">{a.description || "No synopsis yet."}</p>
             {a.background && <p className="mt-3 whitespace-pre-line text-[13px] leading-relaxed text-plum-muted">{a.background}</p>}
           </section>
+          <Suspense fallback={null}><Franchise id={a.id} title={a.title} /></Suspense>
           <Suspense fallback={<SectionSkeleton h={320} />}><Episodes a={a} progress={progress} /></Suspense>
           <Suspense fallback={<SectionSkeleton h={260} />}><Characters id={a.id} /></Suspense>
           <Suspense fallback={<ShelfSkeleton />}><Recommendations id={a.id} /></Suspense>

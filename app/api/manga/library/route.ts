@@ -38,10 +38,11 @@ export async function POST(req: Request) {
   }
   const status = b.status && STATUSES.includes(b.status) ? b.status : "reading";
   await run(
-    `insert into manga_library (user_id, manga_id, status, favorite, title, cover) values (?, ?, ?, ?, ?, ?)
-     on conflict(user_id, manga_id) do update set status = excluded.status, favorite = excluded.favorite,
+    // changing the status must not un-favourite it: favorite only changes when the caller sends it
+    `insert into manga_library (user_id, manga_id, status, favorite, title, cover) values (?1, ?2, ?3, ?4, ?5, ?6)
+     on conflict(user_id, manga_id) do update set status = excluded.status, favorite = coalesce(?7, manga_library.favorite),
        title = excluded.title, cover = excluded.cover, updated_at = unixepoch()`,
-    me.id, mangaId, status, b.favorite ? 1 : 0, String(b.title || "").slice(0, 300), b.cover ?? null,
+    me.id, mangaId, status, b.favorite ? 1 : 0, String(b.title || "").slice(0, 300), b.cover ?? null, typeof b.favorite === "boolean" ? (b.favorite ? 1 : 0) : null,
   );
   return Response.json({ ok: true, saved: true, status }, { headers: { "cache-control": "no-store" } });
 }

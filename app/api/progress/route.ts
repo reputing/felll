@@ -1,5 +1,6 @@
 import { memberOr401 } from "@/lib/auth";
 import { db, first } from "@/lib/db";
+import { pushToAnilist } from "@/lib/sync";
 
 interface Body {
   malId?: number; ep?: number; position?: number; duration?: number; start?: boolean;
@@ -35,8 +36,21 @@ export async function POST(req: Request) {
     );
   }
   let finished = false;
+  const lib = await first<{ progress: number; status: string | null; rewatching: number }>("select progress, status, rewatching from library where user_id = ? and mal_id = ?", me.id, malId);
+  const totalEps = Number.isInteger(b.episodes) ? b.episodes! : null;
+  // Watching something you already finished is a rewatch: flag it (and tell AniList "repeating"),
+  // and when the last episode is done again, count it and clear the flag.
+  if (lib?.status === "completed") {
+    const lastDone = !!totalEps && ep >= totalEps && dur > 0 && pos / dur >= 0.85;
+    if (lib.rewatching && lastDone) {
+      stmts.push(d.prepare("update library set rewatching = 0, rewatches = rewatches + 1, updated_at = unixepoch() where user_id = ? and mal_id = ?").bind(me.id, malId));
+      pushToAnilist(me.id, malId, { status: "completed", progress: totalEps ?? ep });
+    } else if (!lib.rewatching && !lastDone && pos > 30) {
+      stmts.push(d.prepare("update library set rewatching = 1, updated_at = unixepoch() where user_id = ? and mal_id = ?").bind(me.id, malId));
+      pushToAnilist(me.id, malId, { status: "completed", progress: ep, rewatching: true });
+    }
+  }
   if (dur > 0 && pos / dur >= 0.85) {
-    const lib = await first<{ progress: number; status: string | null }>("select progress, status from library where user_id = ? and mal_id = ?", me.id, malId);
     if (!lib || lib.progress < ep) {
       finished = true;
       const total = Number.isInteger(b.episodes) ? b.episodes! : null;
@@ -57,12 +71,19 @@ export async function POST(req: Request) {
     }
   }
   await d.batch(stmts);
+  if (finished) pushToAnilist(me.id, malId, { status: totalEps && ep >= totalEps ? "completed" : "watching", progress: ep });
   return Response.json({ ok: true, finished });
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
+  // ?malId=… takes one show off "Keep watching" (e.g. you dropped it); no param clears everything
+  const one = Number(new URL(req.url).searchParams.get("malId"));
+  if (Number.isInteger(one) && one > 0) {
+    await (await db()).prepare("delete from watch_progress where user_id = ? and mal_id = ?").bind(me.id, one).run();
+    return Response.json({ ok: true });
+  }
   await (await db()).prepare("delete from watch_progress where user_id = ?").bind(me.id).run();
   return Response.json({ ok: true });
 }

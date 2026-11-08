@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { saveEntry, useBox } from "@/lib/store";
 import { cn, STATUS_LABEL, STATUSES, type ListStatus } from "@/lib/utils";
 
-export interface BoxRow { mal_id: number; title: string; image: string | null; episodes: number | null; kind: string | null; updated_at: number; status: ListStatus | null; score: number | null; favorite: number; progress: number }
+export interface BoxRow { mal_id: number; title: string; image: string | null; episodes: number | null; kind: string | null; updated_at: number; status: ListStatus | null; score: number | null; favorite: number; progress: number; rewatching?: number }
 
 const TABS = ["all", ...STATUSES, "favorites"] as const;
 type Tab = (typeof TABS)[number];
@@ -71,7 +71,7 @@ export function BoxGrid({ rows, readOnly, initialTab = "watching" }: { rows: Box
                   <Poster src={r.image} className="aspect-[2/3] rounded-[18px] transition duration-300 group-hover:scale-[1.02]" />
                   {r.favorite ? <Heart className="absolute right-2 top-2 size-6 rounded-full bg-frost-hot p-1 text-white" fill="currentColor" /> : null}
                   {r.score ? <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-night/85 px-2 py-0.5 text-[11.5px] font-extrabold text-night-text backdrop-blur"><Star className="size-3 fill-sprinkle-star text-sprinkle-star" />{r.score}</span> : null}
-                  {r.status && <span className="absolute bottom-2 left-2 rounded-full bg-cream-card/90 px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-[.06em] text-plum backdrop-blur">{STATUS_LABEL[r.status]}</span>}
+                  {r.status && <span className="absolute bottom-2 left-2 rounded-full bg-cream-card/90 px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-[.06em] text-plum backdrop-blur">{r.rewatching ? "Rewatching" : STATUS_LABEL[r.status]}</span>}
                 </Link>
                 <Link href={`/anime/${r.mal_id}`} className="line-clamp-2 px-1 text-[13.5px] font-extrabold leading-tight hover:text-frost-text">{r.title}</Link>
                 {r.kind !== "Movie" && (

@@ -3,6 +3,7 @@ import { all } from "@/lib/db";
 import { PageHead } from "@/components/page-head";
 import { ProfileEditor } from "@/components/settings/editor";
 import { PlaybackSettings } from "@/components/settings/playback";
+import { SyncPanel } from "@/components/settings/sync-panel";
 
 export const metadata = { title: "Customize" };
 
@@ -25,6 +26,7 @@ export default async function Settings() {
           shh_label: me.shh_label ?? "", hide_slogan: !!me.hide_slogan, is_plus: !!me.is_plus,
         }}
       />
+      <SyncPanel />
       <PlaybackSettings />
     </div>
   );

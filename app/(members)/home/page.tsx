@@ -5,7 +5,8 @@ import { episodeAt, getCatalogTop, getForYou, getHome, nextAiring, type Anime } 
 import { Hero } from "@/components/home/hero";
 import { KeepWatching, type Resume } from "@/components/home/keep-watching";
 import { QueueRail } from "@/components/queue/queue-rail";
-import { MangaHomeRail } from "@/components/manga/home-rail";
+import { MangaKeepReading, MangaPopular } from "@/components/manga/home-rail";
+import { HomeSections, type HomeSection } from "@/components/home/home-sections";
 import { MoviesHomeRail } from "@/components/movies/home-rail";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
 import { TopRow } from "@/components/home/top-row";
@@ -32,6 +33,17 @@ export default async function Home() {
     ),
   ]);
 
+  // Shows you are watching on your list (e.g. synced from AniList) that you haven't started here:
+  // "Keep watching" picks them up at the next episode, so a synced list is a continue row too.
+  const have = new Set(resume.map((r) => r.mal_id));
+  const fromList = (await all<{ mal_id: number; progress: number; episodes: number | null; title: string; image: string | null }>(
+    `select mal_id, progress, episodes, title, image from library where user_id = ? and (status = 'watching' or rewatching = 1) and kind is not 'Movie'
+     order by updated_at desc limit 12`,
+    me.id,
+  ).catch(() => [])).filter((r) => !have.has(r.mal_id) && (!r.episodes || r.progress < r.episodes))
+    .map((r): Resume => ({ mal_id: r.mal_id, episode: r.progress + 1, position: 0, duration: 0, title: r.title, image: r.image }));
+  resume.push(...fromList.slice(0, Math.max(0, 12 - resume.length)));
+
   // One pool feeds the hero and the genre rows. Everything on the page is a
   // horizontal row — no sidebars, no dashboard panels.
   const seen = new Set<number>();
@@ -52,6 +64,23 @@ export default async function Home() {
   const topGenres = Object.entries(genreCount).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([g]) => g);
   const empty = pool.length === 0;
 
+  // Everything under the hero is a movable row (see HomeSections). Continue-watching and
+  // continue-reading come first so picking up where you left off never takes a long scroll.
+  const sections: HomeSection[] = [
+    { id: "keep-watching", label: "Keep watching", node: <KeepWatching items={resume} /> },
+    { id: "keep-reading", label: "Keep reading", node: <MangaKeepReading /> },
+    { id: "queue", label: "Your queue", node: <QueueRail /> },
+    { id: "top10", label: "Top 10 this week", node: <TopRow eyebrow="Most played here" title="Top 10 this week" items={ranked.length ? ranked : toItems(trending)} href="/rankings" /> },
+    { id: "trending", label: "Trending", node: <Shelf eyebrow="Hot right now" title="Trending" items={toItems(trending)} href="/browse" /> },
+    { id: "for-you", label: "For you", node: <Suspense fallback={<ShelfSkeleton />}><ForYou userId={me.id} /></Suspense> },
+    { id: "season", label: "New this season", node: <Shelf eyebrow="Just dropped" title="New this season" items={toItems(season)} href="/seasonal" /> },
+    ...topGenres.map((g) => ({ id: `genre-${g}`, label: `Genre: ${g}`, node: <Shelf eyebrow="Genre" title={g} items={toItems(pool.filter((m) => m.genres.includes(g)).slice(0, 18))} href="/browse" /> })),
+    { id: "popular-manga", label: "Popular manga", node: <MangaPopular /> },
+    { id: "movies", label: "Movies", node: <Suspense fallback={null}><MoviesHomeRail /></Suspense> },
+    { id: "greats", label: "All-time greats", node: <Shelf eyebrow="Timeless" title="All-time greats" items={toItems(top)} href="/rankings" /> },
+    { id: "schedule", label: "Airing schedule", node: <FreshSchedule items={slots} /> },
+  ];
+
   return (
     <>
       {empty ? (
@@ -64,21 +93,7 @@ export default async function Home() {
         // hero and rows share the same container so every left edge lines up.
         <div className="mx-auto flex max-w-[1500px] flex-col gap-9 px-4 pb-16 pt-4 sm:px-6">
           <Hero items={trending.slice(0, 5)} />
-          <KeepWatching items={resume} />
-          <QueueRail />
-          <TopRow eyebrow="Most played here" title="Top 10 this week" items={ranked.length ? ranked : toItems(trending)} href="/rankings" />
-          <Shelf eyebrow="Hot right now" title="Trending" items={toItems(trending)} href="/browse" />
-          <Suspense fallback={<ShelfSkeleton />}>
-            <ForYou userId={me.id} />
-          </Suspense>
-          <Shelf eyebrow="Just dropped" title="New this season" items={toItems(season)} href="/seasonal" />
-          {topGenres.map((g) => (
-            <Shelf key={g} eyebrow="Genre" title={g} items={toItems(pool.filter((m) => m.genres.includes(g)).slice(0, 18))} href="/browse" />
-          ))}
-          <MangaHomeRail />
-          <Suspense fallback={null}><MoviesHomeRail /></Suspense>
-          <Shelf eyebrow="Timeless" title="All-time greats" items={toItems(top)} href="/rankings" />
-          <FreshSchedule items={slots} />
+          <HomeSections sections={sections} />
         </div>
       )}
     </>
