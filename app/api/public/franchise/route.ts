@@ -15,8 +15,27 @@ export async function GET(req: Request) {
   const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "unknown";
   if (throttled(ip)) return Response.json({ error: "slow down" }, { status: 429 });
   const sp = new URL(req.url).searchParams;
+  if (sp.get("probe")) return Response.json(await probe(), { headers: { "cache-control": "no-store" } });
   const mal = Number(sp.get("mal"));
   if (!Number.isInteger(mal) || mal <= 0) return Response.json({ error: "mal id?" }, { status: 400 });
   const f = await getFranchise(mal).catch((e) => { return { error: String(e) } as never; });
   return Response.json({ franchise: f ?? null, ...(sp.get("debug") ? { why: f ? "" : lastError || "nothing related found" } : {}) }, { headers: { "cache-control": "public, max-age=300" } });
+}
+
+// Which franchise data sources this server can actually reach (AniList 403s some hosting networks).
+async function probe() {
+  const out: Record<string, string> = {};
+  const q = JSON.stringify({ query: "query{Media(idMal:5081,type:ANIME){id}}" });
+  const tries: [string, () => Promise<Response>][] = [
+    ["anilist: no extra headers", () => fetch("https://graphql.anilist.co", { method: "POST", headers: { "content-type": "application/json" }, body: q })],
+    ["anilist: custom UA", () => fetch("https://graphql.anilist.co", { method: "POST", headers: { "content-type": "application/json", "user-agent": "cupcake.gg/1.0 (+https://cupcake.gg)" }, body: q })],
+    ["anilist: browser UA", () => fetch("https://graphql.anilist.co", { method: "POST", headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", origin: "https://anilist.co", referer: "https://anilist.co/" }, body: q })],
+    ["kitsu mappings", () => fetch("https://kitsu.io/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]=5081&include=item", { headers: { accept: "application/vnd.api+json" } })],
+    ["jikan relations", () => fetch("https://api.jikan.moe/v4/anime/5081/relations")],
+    ["arm ids", () => fetch("https://arm.haglund.dev/api/v2/ids?source=myanimelist&id=5081")],
+  ];
+  for (const [name, f] of tries) {
+    try { const r = await f(); out[name] = `${r.status} ${(await r.text()).slice(0, 80).replace(/\s+/g, " ")}`; } catch (e) { out[name] = `error ${(e as Error).message}`; }
+  }
+  return out;
 }

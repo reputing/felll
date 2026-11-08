@@ -12,6 +12,7 @@ export function SyncPanel() {
   const [link, setLink] = useState<Link | null | undefined>(undefined);
   const [username, setUsername] = useState("");
   const [token, setToken] = useState("");
+  const [clientId, setClientId] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -62,9 +63,21 @@ export function SyncPanel() {
         <div className="flex flex-col gap-2.5">
           <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="AniList username" className={field} autoComplete="off" />
           <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="Access token (optional, lets cupcake update your AniList)" className={field} type="password" autoComplete="off" />
-          <p className="text-[12px] text-plum-muted">
-            A token comes from anilist.co → Settings → Developer → create a client with redirect URL <code>https://anilist.co/api/v2/oauth/pin</code>, then open <code>anilist.co/api/v2/oauth/authorize?client_id=YOUR_ID&amp;response_type=token</code>. It is stored on cupcake&apos;s server and only used to update your list; unlink removes it.
-          </p>
+          <div className="rounded-2xl border-1.5 border-line-soft bg-paper p-3 text-[12px] leading-relaxed text-plum-muted">
+            <p className="font-bold text-plum-body">Optional: let cupcake update your AniList too</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-4">
+              <li>
+                <a href="https://anilist.co/settings/developer" target="_blank" rel="noopener noreferrer" className="font-bold text-frost-text underline">Open AniList developer settings</a>, press <b>Create New Client</b>, name it anything, set the redirect URL to <code className="rounded bg-cream-tint px-1">https://anilist.co/api/v2/oauth/pin</code> and save. Copy the <b>ID</b> number it shows.
+              </li>
+              <li className="flex flex-wrap items-center gap-2">
+                Paste the ID:
+                <input value={clientId} onChange={(e) => setClientId(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="e.g. 12345" className="h-8 w-[110px] rounded-full border-1.5 border-line bg-cream-card px-3 font-mono text-[12.5px] outline-none focus:border-frost-hot" />
+                <a href={clientId ? `https://anilist.co/api/v2/oauth/authorize?client_id=${clientId}&response_type=token` : undefined} target="_blank" rel="noopener noreferrer" aria-disabled={!clientId}
+                  className={"inline-flex h-8 items-center rounded-full bg-frost px-3 text-[12px] font-extrabold text-frost-ink " + (clientId ? "" : "pointer-events-none opacity-50")}>Get my token</a>
+              </li>
+              <li>Press <b>Authorize</b> on AniList; it shows a long token. Copy it into the token box above. It is stored on cupcake&apos;s server and only used to update your list; unlink removes it.</li>
+            </ol>
+          </div>
           <button type="button" disabled={busy || (!username && !token)} onClick={save} className="h-10 w-fit rounded-full bg-frost px-5 text-[13.5px] font-extrabold text-frost-ink disabled:opacity-60">Link AniList</button>
         </div>
       )}
