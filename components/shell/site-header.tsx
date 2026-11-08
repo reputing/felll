@@ -24,6 +24,7 @@ const MORE = [
   { href: "/schedule", label: "Schedule" },
   { href: "/seasonal", label: "Seasonal" },
   { href: "/rankings", label: "Rankings" },
+  { href: "/rooms", label: "Watch rooms" },
   { href: "/community", label: "Community" },
 ];
 const ALL = [...PRIMARY, ...MORE];

@@ -16,6 +16,7 @@ export interface EpisodeEntry {
   audio: string | null; // "sub", "sub,dub", … or null
   streamable: boolean;
   filler: boolean;
+  fillerKind?: "filler" | "mixed" | "anime" | null;
 }
 
 // The watch-page episode list, with a search box — essential for 1000+ episode
@@ -110,7 +111,7 @@ export function EpisodeRail({ id, current, total, streamableCount, episodes, air
                 )
               ) : (
                 <span className="mt-0.5 block text-[11px] font-semibold text-plum-muted">
-                  {e.audio ? e.audio.replace(",", " · ").toUpperCase() : e.streamable ? "Stream" : "Not uploaded"}{e.filler ? " · filler" : ""}
+                  {e.audio ? e.audio.replace(",", " · ").toUpperCase() : e.streamable ? "Stream" : "Not uploaded"}{e.fillerKind === "mixed" ? " · mixed" : e.fillerKind === "anime" ? " · anime canon" : e.filler ? " · filler" : ""}
                 </span>
               )}
             </span>
@@ -119,7 +120,7 @@ export function EpisodeRail({ id, current, total, streamableCount, episodes, air
             <li key={e.n} ref={on ? activeRef : undefined}>
               {aired ? (
                 <Link href={`/watch/${id}/${e.n}`} aria-current={on ? "page" : undefined} scroll={false}
-                  className={cn("flex items-start gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep")}>
+                  className={cn("flex items-start gap-2.5 rounded-2xl p-1.5 text-[13px] transition hover:bg-cream-tint", on && "bg-cream-blush text-frost-deep", e.fillerKind === "filler" || (!e.fillerKind && e.filler) ? "border-l-[4px] border-l-red-500" : e.fillerKind === "mixed" ? "border-l-[4px] border-l-amber-500" : e.fillerKind === "anime" ? "border-l-[4px] border-l-sky-500" : "")}>
                   {thumb}{body}
                 </Link>
               ) : (

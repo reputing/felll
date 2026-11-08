@@ -2,7 +2,11 @@
 import type Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Captions } from "lucide-react";
 import type { MovieStream, MovieSource, MovieEmbed } from "@/lib/tmdb";
+import { SettingsPanel } from "@/components/watch/settings-panel";
+import { SubtitleLayer, useSubStyle } from "@/components/watch/subtitles";
+import { useNativeCues, useSubs } from "@/components/watch/use-subs";
 
 // Movie/series player. Two kinds of server:
 //   • Cupcake — 8Stream's direct HLS for a movie, played in a native <video>
@@ -10,7 +14,7 @@ import type { MovieStream, MovieSource, MovieEmbed } from "@/lib/tmdb";
 //     proxy so no CORS/Referer check can block it.
 //   • VidSrc / VidLink / … — TMDB-keyed iframe embeds. Instant and resilient
 //     (the embed host handles the CDN), and the only option for TV episodes.
-export function MoviePlayer({ streamSrc, embeds = [], poster }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null }) {
+export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string }) {
   const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
   // The direct 8Stream sources resolve lazily (see effect below), so the page
   // never blocks on them. "Cupcake" is offered optimistically until proven dead.
@@ -25,6 +29,23 @@ export function MoviePlayer({ streamSrc, embeds = [], poster }: { streamSrc?: st
   const video = useRef<HTMLVideoElement>(null);
   const hls = useRef<Hls | null>(null);
   const [cur, setCur] = useState<MovieSource | undefined>(undefined);
+
+  // Your own subtitles for this title (upload, timing, auto-sync, look). Shown over the picture;
+  // inside the browser's own fullscreen/PiP, which our overlay can't reach, they ride a native track.
+  const [caption, setCaption] = useState<string | number | null>(null);
+  const [subStyle, patchSubStyle, resetSubStyle] = useSubStyle();
+  const [subsOpen, setSubsOpen] = useState(false);
+  const [native, setNative] = useState(false);
+  const subs = useSubs({ video, subKey: subKey ?? "m:none", title: "movie", ep: null, tracks: [], caption, setCaption });
+  useEffect(() => { if (subs.mine) setCaption((c) => c ?? "mine"); }, [subs.mine]);
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    const upd = () => setNative(document.fullscreenElement === v || !!document.pictureInPictureElement || !!(v as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }).webkitDisplayingFullscreen);
+    for (const ev of ["fullscreenchange", "webkitbeginfullscreen", "webkitendfullscreen", "enterpictureinpicture", "leavepictureinpicture"]) (ev.startsWith("fullscreen") ? document : v).addEventListener(ev, upd);
+    return () => { for (const ev of ["fullscreenchange", "webkitbeginfullscreen", "webkitendfullscreen", "enterpictureinpicture", "leavepictureinpicture"]) (ev.startsWith("fullscreen") ? document : v).removeEventListener(ev, upd); };
+  }, [useEmbed, cur]);
+  useNativeCues(video, subs.cues, subs.offset, native && subs.overlayOn);
 
   // Resolve 8Stream's HLS only when the Cupcake server is actually in use.
   useEffect(() => {
@@ -104,10 +125,28 @@ export function MoviePlayer({ streamSrc, embeds = [], poster }: { streamSrc?: st
           sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
           className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black" />
       ) : (
-        <video ref={video} controls playsInline poster={poster ?? undefined}
-          className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)]">
-          {subtitles.map((t, i) => <track key={i} kind="subtitles" src={t.url} srcLang={t.lang} label={t.label} default={i === 0} />)}
-        </video>
+        <div className="relative" data-settings>
+          <video ref={video} controls playsInline poster={poster ?? undefined}
+            className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)]">
+            {subtitles.map((t, i) => <track key={i} kind="subtitles" src={t.url} srcLang={t.lang} label={t.label} default={i === 0} />)}
+          </video>
+          {subKey && !native && <SubtitleLayer video={video} cues={subs.overlayOn ? subs.cues : []} offset={subs.offset} style={subStyle} preview={subsOpen} />}
+          {subKey && (
+            <button type="button" onClick={() => setSubsOpen((o) => !o)} aria-label="Subtitles" aria-expanded={subsOpen}
+              className="absolute right-3 top-3 z-10 flex h-9 items-center gap-1.5 rounded-full bg-black/60 px-3 text-[12.5px] font-extrabold text-white backdrop-blur hover:bg-black/80">
+              <Captions className="size-4" />{subs.mine ? "Subtitles" : "Add subtitles"}
+            </button>
+          )}
+          {subKey && subsOpen && (
+            <SettingsPanel subsOnly page="subs" onPage={() => {}} onClose={() => setSubsOpen(false)}
+              sources={[]} dead={new Set()} failed={new Set()} onPick={() => {}} speed={1} onSpeed={() => {}}
+              subs={subs.mine ? [{ id: "mine", language: "und", label: `My file · ${subs.mine.name}`, url: "", is_default: 0 }] : []} caption={caption} onCaption={setCaption}
+              mineName={subs.mine?.name ?? null} onUpload={subs.uploadSubs} onRemoveMine={subs.removeMine}
+              offset={subs.offset} onOffset={subs.setOffset} onAutoSync={subs.autoSync} sync={subs.sync} hasCues={subs.cues.length > 0} onDownload={subs.downloadSubs}
+              style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
+              autoNext={false} onAutoNext={() => {}} stopAfter={false} onStopAfter={() => {}} sleepMin={null} onSleep={() => {}} />
+          )}
+        </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {servers.length > 1 && (

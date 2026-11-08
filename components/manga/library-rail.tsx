@@ -16,7 +16,7 @@ export function MangaLibraryRail() {
   return (
     <section className="flex flex-col gap-3">
       <div className="px-1"><div className="eyebrow">Your library</div><h2 className="mt-1 text-xl font-extrabold tracking-[-.6px]">Saved manga</h2></div>
-      <div className="scrollbar-none flex gap-3 overflow-x-auto pb-1">
+      <div className="scrollbar-none -mt-2 flex gap-3 overflow-x-auto pb-1 pt-2">
         {lib.map((m) => (
           <Link key={m.manga_id} href={`/manga/${m.manga_id}`} className="group w-[128px] flex-none">
             <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot">

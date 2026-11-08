@@ -16,6 +16,7 @@ const PAGES: Hit[] = [
   { kind: "go", href: "/rankings", title: "Rankings", sub: "top airing, all time, most loved", Icon: Trophy },
   { kind: "go", href: "/box", title: "My box", sub: "your anime lists", Icon: LibraryBig },
   { kind: "go", href: "/collections", title: "Collections", sub: "your custom lists", Icon: FolderHeart },
+  { kind: "go", href: "/rooms", title: "Watch rooms", sub: "public rooms playing now", Icon: Users },
   { kind: "go", href: "/community", title: "Community", sub: "feed, members, leaderboard", Icon: Users },
   { kind: "go", href: "/api/random", title: "Surprise me", sub: "a random anime", Icon: Dice5 },
   { kind: "go", href: "/settings", title: "Customize", sub: "your page and skin", Icon: Settings },

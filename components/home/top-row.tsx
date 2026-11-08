@@ -15,7 +15,7 @@ export function TopRow({ title, eyebrow, items, href }: { title: string; eyebrow
         </div>
         {href && <Link href={href} className="text-[13px] font-bold text-frost-text hover:text-frost-deep">See all</Link>}
       </div>
-      <div className="scrollbar-none -mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1">
+      <div className="scrollbar-none -mx-1 -mt-2 flex snap-x gap-3 overflow-x-auto px-1 pb-1 pt-2">
         {items.slice(0, 10).map((a, i) => (
           <Link key={a.id} href={`/anime/${a.id}`} className="group w-[148px] flex-none snap-start">
             <span className="relative block">

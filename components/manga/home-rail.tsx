@@ -14,7 +14,7 @@ function Row({ eyebrow, title, children, href }: { eyebrow: string; title: strin
         <div><div className="eyebrow">{eyebrow}</div><h2 className="mt-1 text-xl font-extrabold tracking-[-.6px]">{title}</h2></div>
         <Link href={href} className="flex items-center gap-1 text-[12.5px] font-bold text-frost-text hover:text-frost-deep">All manga<ChevronRight className="size-3.5" strokeWidth={2.6} /></Link>
       </div>
-      <div className="scrollbar-none flex gap-3 overflow-x-auto pb-1">{children}</div>
+      <div className="scrollbar-none -mt-2 flex gap-3 overflow-x-auto pb-1 pt-2">{children}</div>
     </section>
   );
 }

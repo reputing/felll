@@ -24,7 +24,7 @@ export function KeepWatching({ items }: { items: Resume[] }) {
         <h2 id="kw" className="text-xl font-extrabold tracking-[-.6px]">Keep watching</h2>
         <Link href="/box/history" className="text-[13px] font-bold text-frost-text hover:text-frost-deep">History</Link>
       </div>
-      <div className="scrollbar-none flex gap-3.5 overflow-x-auto pb-1">
+      <div className="scrollbar-none -mt-2 flex gap-3.5 overflow-x-auto pb-1 pt-2">
         {shown.map((r) => {
           const pct = r.duration ? (r.position / r.duration) * 100 : 0;
           return (

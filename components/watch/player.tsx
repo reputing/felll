@@ -1,18 +1,20 @@
 "use client";
 import type Hls from "hls.js";
-import * as Menu from "@radix-ui/react-dropdown-menu";
 import {
-  Captions, Check, ChevronRight, FastForward, Loader2, Maximize, Maximize2, Minimize, Pause, PictureInPicture2, Play,
+  Captions, ChevronRight, FastForward, Loader2, Maximize, Maximize2, Minimize, Pause, PictureInPicture2, Play,
   RectangleHorizontal, Settings, SkipBack, SkipForward, Smile, Volume1, Volume2, VolumeX,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { POPUP, POPUP_ITEM, POPUP_LABEL, POPUP_SEPARATOR } from "@/components/ui/popup";
 import { useBox } from "@/lib/store";
 import { REACTIONS } from "@/lib/reactions";
 import { fetchAniSkip } from "@/lib/aniskip";
 import { clock, cn } from "@/lib/utils";
 import { WatchParty } from "./watch-party";
+import { SettingsPanel } from "./settings-panel";
+import { useSubs } from "./use-subs";
+import { SubtitleLayer, useSubStyle } from "./subtitles";
+import { type Cue } from "@/lib/subs";
 
 export interface Source { id: string | number; label: string; audio: "sub" | "dub" | "raw" }
 export interface Track { id: string | number; language: string; label: string; url: string; is_default: number }
@@ -37,9 +39,6 @@ function usePref(key: string, fallback: boolean): [boolean, (v: boolean) => void
   }, [key]);
   return [val, useCallback((v: boolean) => { setVal(v); try { localStorage.setItem(key, v ? "1" : "0"); } catch {} }, [key])];
 }
-
-const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
-const AUDIO = { sub: "Sub", dub: "Dub", raw: "Raw" };
 
 export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHref, startAt, meta, poster }: Props) {
   const router = useRouter();
@@ -81,6 +80,13 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const [flash, setFlash] = useState<string | null>(null);
   const [stopAfterEp, setStopAfterEp] = useState(false);
   const [sleepMin, setSleepMin] = useState<number | null>(null);
+  // settings panel + subtitles (own drawing, upload, timing, style; see subtitles.tsx / lib/subs.ts)
+  const [menuOpen, setMenuOpen] = useState(false);
+  const swallowClick = useRef(false);
+  const [page, setPage] = useState<"main" | "subs">("main");
+  const [subStyle, patchSubStyle, resetSubStyle] = useSubStyle();
+  const [classicPip, setClassicPip] = useState(false);
+  const [docPip, setDocPip] = useState(false);
   // This show's remembered playback speed, applied when a source loads.
   const savedSpeed = useRef<number | null>(null);
   // Crowd-sourced skip markers (fallback when no provider/vault markers) and
@@ -138,6 +144,78 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setCurrent(s);
     try { localStorage.setItem(`audio:${meta.malId}`, s.audio); } catch { /* storage off */ }
   }, [meta.malId]);
+
+  // ---- subtitles (the engine lives in use-subs.ts, shared with the movie player) ---------------
+  const subKey = `a:${meta.malId}:${meta.ep}`;
+  const subs0 = extraSubs.length ? extraSubs : subtitles;   // the stream's own tracks
+  const { mine, cues, offset, setOffset, sync, uploadSubs, removeMine, downloadSubs, autoSync, overlayOn } = useSubs({ video, subKey, title: meta.title, ep: meta.ep, tracks: subs0, caption, setCaption });
+
+  // ---- picture in picture ---------------------------------------------------------------------
+  // Chrome/Edge: the whole player (our subtitles and controls included) moves into a floating window.
+  // Elsewhere the video alone floats, and our cues are handed to the browser so they still show.
+  const pipWin = useRef<Window | null>(null);
+  const togglePip = useCallback(async () => {
+    const v = video.current, el = box.current;
+    if (!v || !el) return;
+    if (document.pictureInPictureElement) { await document.exitPictureInPicture().catch(() => {}); return; }
+    if (pipWin.current) { pipWin.current.close(); return; }
+    const dpip = (window as unknown as { documentPictureInPicture?: { requestWindow(o: { width: number; height: number }): Promise<Window> } }).documentPictureInPicture;
+    if (dpip) {
+      try {
+        const w = await dpip.requestWindow({ width: Math.min(720, el.clientWidth), height: Math.min(405, el.clientHeight) });
+        // the player's styles come with it
+        for (const sheet of Array.from(document.styleSheets)) {
+          try { const st = w.document.createElement("style"); st.textContent = Array.from(sheet.cssRules).map((r) => r.cssText).join("\n"); w.document.head.appendChild(st); }
+          catch { if (sheet.href) { const l = w.document.createElement("link"); l.rel = "stylesheet"; l.href = sheet.href; w.document.head.appendChild(l); } }
+        }
+        w.document.documentElement.className = document.documentElement.className;
+        w.document.documentElement.setAttribute("style", document.documentElement.getAttribute("style") || "");
+        for (const a of Array.from(document.documentElement.attributes)) if (a.name.startsWith("data-")) w.document.documentElement.setAttribute(a.name, a.value);
+        w.document.body.style.cssText = "margin:0;background:#000;display:grid;place-items:center;height:100vh;overflow:hidden";
+        const home = el.parentElement, next = el.nextSibling;
+        el.style.width = "100%"; el.style.height = "100%"; el.style.borderRadius = "0";
+        w.document.body.append(el);
+        pipWin.current = w; setDocPip(true);
+        w.addEventListener("pagehide", () => {
+          el.style.width = ""; el.style.height = ""; el.style.borderRadius = "";
+          if (home && !home.contains(el)) home.insertBefore(el, next);
+          pipWin.current = null; setDocPip(false);
+        });
+        return;
+      } catch { /* fall back to the plain video window */ }
+    }
+    v.requestPictureInPicture?.().catch(() => {});
+  }, []);
+  useEffect(() => () => pipWin.current?.close(), []);
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    const on = () => setClassicPip(true), off = () => setClassicPip(false);
+    v.addEventListener("enterpictureinpicture", on); v.addEventListener("leavepictureinpicture", off);
+    return () => { v.removeEventListener("enterpictureinpicture", on); v.removeEventListener("leavepictureinpicture", off); };
+  }, []);
+  // plain PiP can't show our overlay, so give the browser the (time-shifted) cues as a track while it's open
+  useEffect(() => {
+    const v = video.current;
+    if (!classicPip || !v || !cues.length) return;
+    const tt = v.addTextTrack("subtitles", "cupcake", "en");
+    tt.mode = "showing";
+    for (const c of cues) { try { tt.addCue(new VTTCue(c.start + offset, c.end + offset, c.text.replace(/<[^>]+>/g, ""))); } catch { /* bad cue */ } }
+    return () => { tt.mode = "disabled"; Array.from(tt.cues ?? []).forEach((c) => tt.removeCue(c)); };
+  }, [classicPip, cues, offset]);
+
+  // close the settings panel on an outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: Event) => {
+      if ((e.target as HTMLElement).closest?.("[data-settings]")) return;
+      setMenuOpen(false); setPage("main");
+      // the click that follows this press only meant "close the menu", not "pause the video"
+      swallowClick.current = true; setTimeout(() => { swallowClick.current = false; }, 250);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [menuOpen]);
 
   // Sleep timer: pause after N minutes.
   useEffect(() => {
@@ -401,7 +479,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         arrowup: () => { v.volume = Math.min(1, v.volume + 0.1); setFlash(`${Math.round(v.volume * 100)}%`); },
         arrowdown: () => { v.volume = Math.max(0, v.volume - 0.1); setFlash(`${Math.round(v.volume * 100)}%`); },
         t: () => setTheater(!theater),
-        c: () => setCaption((c) => { const l = extraSubs.length ? extraSubs : subtitles; return c ? null : (l.find((s) => s.is_default) ?? l[0])?.id ?? null; }),
+        c: () => setCaption((c) => { const l = extraSubs.length ? extraSubs : subtitles; return c ? null : mine ? "mine" : (l.find((s) => s.is_default) ?? l[0])?.id ?? null; }),
         s: () => { if (introEnd != null) v.currentTime = introEnd; },
         n: () => { if (nextHref) router.push(nextHref); },
         p: () => { if (prevHref) router.push(prevHref); },
@@ -413,19 +491,17 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggle, fullscreen, seekBy, theater, setTheater, subtitles, extraSubs, introEnd, nextHref, prevHref, router, wake]);
+  }, [toggle, fullscreen, seekBy, theater, setTheater, subtitles, extraSubs, mine, introEnd, nextHref, prevHref, router, wake]);
 
-  // captions: show the chosen track only
+  // Captions: our own drawing handles every track we could read; the browser's <track> only
+  // draws the chosen one when we couldn't (e.g. a cross-origin file we may not fetch).
   useEffect(() => {
     const v = video.current;
     if (!v) return;
-    // Match the <track> elements to our subs by order (same order they render)
-    // and show only the one whose unique id is selected — many providers hand
-    // back several tracks with the same language code, so keying by language
-    // would show them all at once.
-    const list = extraSubs.length ? extraSubs : subtitles;
-    Array.from(v.textTracks).forEach((tr, i) => { tr.mode = list[i] && list[i].id === caption ? "showing" : "disabled"; });
-  }, [caption, current, extraSubs, subtitles]);
+    // match <track> elements to our list by order, and show only the one whose unique id is
+    // selected: providers hand back several tracks with the same language code
+    Array.from(v.textTracks).forEach((tr, i) => { if (i < subs0.length) tr.mode = !overlayOn && subs0[i].id === caption ? "showing" : "disabled"; });
+  }, [caption, current, subs0, overlayOn]);
 
   const onTime = () => {
     const v = video.current!;
@@ -436,34 +512,41 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   };
 
   if (!sources.length) return null;
+  const dock = docked && !full && !docPip;
 
   // Local episodes carry their subtitles as a prop; Anivexa streams return them
   // with the stream (extraSubs). Only one applies to a given source.
-  const subs = extraSubs.length ? extraSubs : subtitles;
+  const subs: Track[] = mine ? [{ id: "mine", language: "und", label: `My file · ${mine.name}`, url: "", is_default: 0 }, ...subs0] : subs0;
 
   const inIntro = introStart != null && introEnd != null && t >= introStart && t < introEnd;
   const inOutro = outroStartEff != null && nextHref != null && t >= outroStartEff;
   const VolIcon = muted || vol === 0 ? VolumeX : vol < 0.5 ? Volume1 : Volume2;
   const pct = dur ? (t / dur) * 100 : 0;
-  const hidden = playing && idle && !hover;
+  const hidden = playing && idle && !hover && !menuOpen;
 
   const bar = "grid size-10 place-items-center rounded-full text-white/90 transition hover:bg-white/15 hover:text-white";
 
   return (
     <div ref={anchor} className="relative w-full">
-      {docked && !full && <div aria-hidden className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-night" />}
+      {dock && <div aria-hidden className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-night" />}
+      {docPip && (
+        <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night text-center text-night-text">
+          <div className="flex flex-col items-center gap-3 p-4"><PictureInPicture2 className="size-8 text-frost" /><p className="text-[14px] font-bold">Playing in the floating window</p>
+            <button type="button" onClick={() => pipWin.current?.close()} className="h-9 rounded-full bg-frost px-4 text-[13px] font-extrabold text-frost-ink">Bring it back</button></div>
+        </div>
+      )}
     <div ref={box} onMouseMove={wake} onMouseLeave={() => playing && setIdle(true)}
-      className={cn("group/player relative aspect-video w-full overflow-hidden rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] select-none", full && "rounded-none border-0", hidden && "cursor-none", docked && !full && "fixed bottom-4 right-4 z-40 w-[min(384px,calc(100vw-1.5rem))] rounded-2xl shadow-[0_24px_48px_-20px_rgba(0,0,0,.8)] ring-1 ring-black/50 animate-in fade-in slide-in-from-bottom-4")}>
-      {docked && !full && (
+      className={cn("group/player relative aspect-video w-full overflow-hidden rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] select-none", full && "rounded-none border-0", hidden && "cursor-none", dock && "fixed bottom-4 right-4 z-40 w-[min(384px,calc(100vw-1.5rem))] rounded-2xl shadow-[0_24px_48px_-20px_rgba(0,0,0,.8)] ring-1 ring-black/50 animate-in fade-in slide-in-from-bottom-4")}>
+      {dock && (
         <button type="button" onClick={() => anchor.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
           aria-label="Back to full player"
           className="absolute left-2 top-2 z-10 grid size-7 place-items-center rounded-full bg-black/60 text-white/90 backdrop-blur transition hover:bg-black/80 hover:text-white">
           <Maximize2 className="size-3.5" />
         </button>
       )}
-      {!docked && (
+      {!dock && (
         <div className={cn("absolute right-3 top-3 z-10 transition-opacity duration-300", hidden && "pointer-events-none opacity-0")}>
-          <WatchParty video={video} malId={meta.malId} ep={meta.ep} />
+          <WatchParty video={video} malId={meta.malId} ep={meta.ep} title={meta.title} image={meta.image} />
         </div>
       )}
       <video
@@ -471,7 +554,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         playsInline
         poster={poster ?? undefined}
         className="size-full bg-black object-contain"
-        onClick={toggle}
+        onClick={() => { if (!swallowClick.current) toggle(); }}
         onDoubleClick={fullscreen}
         onPlay={() => { setPlaying(true); ended.current = false; engaged.current = true; wake(); }}
         onPause={() => { setPlaying(false); setIdle(false); report(true); }}
@@ -485,11 +568,13 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         onRateChange={(e) => { setSpeed(e.currentTarget.playbackRate); savedSpeed.current = e.currentTarget.playbackRate; try { localStorage.setItem(`speed:${meta.malId}`, String(e.currentTarget.playbackRate)); } catch { /* storage off */ } }}
         onEnded={() => { ended.current = true; report(true); if (autoNext && !stopAfterEp && nextHref && !nextDismissed.current) setNextIn((n) => n ?? 5); }}
       >
-        {subs.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
+        {subs0.map((s) => <track key={s.id} kind="subtitles" src={s.url} srcLang={s.language} label={s.label} />)}
       </video>
 
+      {!classicPip && <SubtitleLayer video={video} cues={overlayOn ? cues : []} offset={offset} style={subStyle} preview={menuOpen && page === "subs"} />}
+
       {/* Cupcake broadcaster bug: a soft watermark while you're on our own server. */}
-      {current?.label === "Cupcake" && !docked && !error && (
+      {current?.label === "Cupcake" && !dock && !error && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src="/cupcake.png"
@@ -541,6 +626,22 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
         </div>
       )}
 
+      {menuOpen && (
+        <div data-settings>
+          <SettingsPanel
+            sources={sources} current={current} dead={dead} failed={failed} onPick={pick}
+            speed={speed} onSpeed={(x) => { if (video.current) video.current.playbackRate = x; }}
+            subs={subs} caption={caption} onCaption={setCaption}
+            mineName={mine?.name ?? null} onUpload={uploadSubs} onRemoveMine={removeMine}
+            offset={offset} onOffset={setOffset} onAutoSync={autoSync} sync={sync} hasCues={cues.length > 0} onDownload={downloadSubs}
+            style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
+            autoNext={autoNext} onAutoNext={setAutoNext} stopAfter={stopAfterEp} onStopAfter={setStopAfterEp}
+            sleepMin={sleepMin} onSleep={setSleepMin}
+            page={page} onPage={setPage} onClose={() => { setMenuOpen(false); setPage("main"); }}
+          />
+        </div>
+      )}
+
       {/* controls */}
       <div className={cn("absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-2 pb-1.5 pt-14 transition-opacity duration-300 sm:px-4 sm:pb-3", (hidden || nextIn !== null) && "pointer-events-none opacity-0")}>
         <div
@@ -582,62 +683,22 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
             )}
           </div>
           {subs.length > 0 && (
-            <button type="button" className={cn(bar, caption && "text-frost")} onClick={() => setCaption((c) => (c ? null : (subs.find((s) => s.is_default) ?? subs[0])?.id ?? null))} aria-label="Captions" aria-pressed={!!caption}>
+            <button type="button" className={cn(bar, caption && "text-frost")} onClick={() => setCaption((c) => (c ? null : mine ? "mine" : (subs.find((s) => s.is_default) ?? subs[0])?.id ?? null))} aria-label="Captions" aria-pressed={!!caption}>
               <Captions className="size-5" />
             </button>
           )}
-          <Menu.Root modal={false} onOpenChange={(o) => { if (o) probeServers(); }}>
-            <Menu.Trigger className={bar} aria-label="Settings"><Settings className="size-5 transition group-data-[state=open]:rotate-45" /></Menu.Trigger>
-            <Menu.Portal container={box.current}>
-              <Menu.Content side="top" align="end" sideOffset={10} className={cn(POPUP, "max-h-[60vh] w-[250px] overflow-y-auto")}>
-                <div className={POPUP_LABEL}>Server</div>
-                {sources.filter((s) => s.id === current?.id || (!dead.has(s.id) && !failed.has(s.id))).map((s) => (
-                  <Menu.Item key={s.id} disabled={failed.has(s.id)} className={POPUP_ITEM} onSelect={() => pick(s)}>
-                    <span className="w-9 text-[10.5px] font-extrabold uppercase text-plum-muted">{AUDIO[s.audio]}</span>
-                    <span className="flex-1">{s.label}</span>{current?.id === s.id && <Check className="size-4" strokeWidth={3} />}
-                  </Menu.Item>
-                ))}
-                <Menu.Separator className={POPUP_SEPARATOR} />
-                <div className={POPUP_LABEL}>Speed</div>
-                <div className="grid grid-cols-6 gap-1 px-2 pb-2">
-                  {SPEEDS.map((s) => (
-                    <button key={s} type="button" onClick={() => { if (video.current) video.current.playbackRate = s; }} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", speed === s ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>{s}×</button>
-                  ))}
-                </div>
-                {subs.length > 0 && (
-                  <>
-                    <Menu.Separator className={POPUP_SEPARATOR} />
-                    <div className={POPUP_LABEL}>Captions</div>
-                    <Menu.Item className={POPUP_ITEM} onSelect={() => setCaption(null)}><span className="flex-1">Off</span>{!caption && <Check className="size-4" strokeWidth={3} />}</Menu.Item>
-                    {subs.map((s) => (
-                      <Menu.Item key={s.id} className={POPUP_ITEM} onSelect={() => setCaption(s.id)}><span className="flex-1">{s.label}</span>{caption === s.id && <Check className="size-4" strokeWidth={3} />}</Menu.Item>
-                    ))}
-                  </>
-                )}
-                <Menu.Separator className={POPUP_SEPARATOR} />
-                <Menu.CheckboxItem checked={autoNext} onCheckedChange={setAutoNext} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Auto-next</span><Toggle on={autoNext} /></Menu.CheckboxItem>
-                <Menu.CheckboxItem checked={stopAfterEp} onCheckedChange={setStopAfterEp} onSelect={(e) => e.preventDefault()} className={POPUP_ITEM}><span className="flex-1">Stop after this episode</span><Toggle on={stopAfterEp} /></Menu.CheckboxItem>
-                <Menu.Separator className={POPUP_SEPARATOR} />
-                <div className={POPUP_LABEL}>Sleep timer{sleepMin ? ` · ${sleepMin}m` : ""}</div>
-                <div className="grid grid-cols-4 gap-1 px-2 pb-2">
-                  {[15, 30, 60].map((m) => (
-                    <button key={m} type="button" onClick={() => setSleepMin((cur) => (cur === m ? null : m))} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", sleepMin === m ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>{m}m</button>
-                  ))}
-                  <button type="button" onClick={() => setSleepMin(null)} className={cn("h-8 rounded-lg text-[11.5px] font-extrabold", sleepMin == null ? "bg-frost text-frost-ink" : "bg-cream-tint hover:bg-cream-blush")}>Off</button>
-                </div>
-              </Menu.Content>
-            </Menu.Portal>
-          </Menu.Root>
+          <div className="relative" data-settings>
+            <button type="button" className={cn(bar, menuOpen && "text-frost")} aria-label="Settings" aria-expanded={menuOpen}
+              onClick={() => { setMenuOpen((o) => { if (!o) { probeServers(); setPage("main"); } return !o; }); }}>
+              <Settings className={cn("size-5 transition", menuOpen && "rotate-45")} />
+            </button>
+          </div>
           <button type="button" className={cn(bar, "hidden md:grid", theater && "text-frost")} onClick={() => setTheater(!theater)} aria-label="Theater mode" aria-pressed={theater}><RectangleHorizontal className="size-5" /></button>
-          <button type="button" className={cn(bar, "hidden sm:grid")} onClick={() => video.current?.requestPictureInPicture?.().catch(() => {})} aria-label="Picture in picture"><PictureInPicture2 className="size-5" /></button>
+          <button type="button" className={cn(bar, "hidden sm:grid", (docPip || classicPip) && "text-frost")} onClick={togglePip} aria-label="Picture in picture" aria-pressed={docPip || classicPip}><PictureInPicture2 className="size-5" /></button>
           <button type="button" className={bar} onClick={fullscreen} aria-label="Fullscreen">{full ? <Minimize className="size-5" /> : <Maximize className="size-5" />}</button>
         </div>
       </div>
     </div>
     </div>
   );
-}
-
-function Toggle({ on }: { on: boolean }) {
-  return <span className={cn("relative h-5 w-9 rounded-full transition", on ? "bg-frost-hot" : "bg-line")}><span className={cn("absolute top-0.5 size-4 rounded-full bg-paper shadow transition-all", on ? "left-[18px]" : "left-0.5")} /></span>;
 }

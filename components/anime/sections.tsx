@@ -1,3 +1,4 @@
+import { getFillers, type FillerKind } from "@/lib/fillers";
 import Link from "next/link";
 import { Play } from "lucide-react";
 import { all } from "@/lib/db";
@@ -10,6 +11,21 @@ import { Shelf } from "@/components/shelf";
 import { cn, compact } from "@/lib/utils";
 
 export const card = "rounded-box border-1.5 border-line bg-cream-card p-5 sm:p-6";
+
+const FILLER_STYLE: Record<FillerKind, { label: string; text: string; dot: string; border: string }> = {
+  filler: { label: "filler", text: "text-red-500", dot: "bg-red-500", border: "border-l-red-500" },
+  mixed: { label: "mixed canon/filler", text: "text-amber-500", dot: "bg-amber-500", border: "border-l-amber-500" },
+  anime: { label: "anime canon", text: "text-sky-500", dot: "bg-sky-500", border: "border-l-sky-500" },
+};
+const FILLER_STYLE_BORDER = (k: FillerKind | null) => (k ? cn("border-l-[5px]", FILLER_STYLE[k].border) : "");
+function FillerLegend() {
+  return (
+    <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] font-semibold text-plum-muted">
+      {(Object.keys(FILLER_STYLE) as FillerKind[]).map((k) => <span key={k} className="flex items-center gap-1.5"><span className={cn("size-2 rounded-full", FILLER_STYLE[k].dot)} />{FILLER_STYLE[k].label}</span>)}
+      <span>· uncoloured = manga canon · from animefillerlist.com</span>
+    </p>
+  );
+}
 
 /** Episode list with air dates, filler/recap flags, what's in the vault, and the drop dates still to come. */
 export async function Episodes({ a, progress }: { a: AnimeFull; progress: number }) {
@@ -24,6 +40,9 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
     fetchAnizipEpisodes(anilistId),
   ]);
   const have = new Map(vault.map((v) => [v.number, v.audio]));
+  // community filler list first (exact title + matching episode count); MAL's own flag only when it has none
+  const fillers = await getFillers([a.title, a.romaji, a.native, ...a.synonyms], a.episodes).catch(() => null);
+  const kindOf = (n: number, malFlag?: boolean): FillerKind | null => (fillers ? fillers[n] ?? null : malFlag ? "filler" : null);
   const known = list.items;
   const anizipNums = Object.keys(anizip).map(Number).filter((n) => n > 0);
   // upcoming drops, from the weekly broadcast slot. Jikan's own air dates win
@@ -52,6 +71,7 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
         <div>
           <div className="eyebrow">{film ? "The film" : `${total || "?"} episodes · ${have.size} in the vault`}</div>
           <h2 className="mt-1 text-xl font-extrabold tracking-[-.6px]">Episodes &amp; drop dates</h2>
+          {fillers && <FillerLegend />}
         </div>
         {list.hasNext && <span className="text-[12px] font-semibold text-plum-muted">showing the first {known.length}</span>}
       </div>
@@ -78,7 +98,7 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
           const watched = n <= progress;
           return (
             <li key={n}>
-              <Link href={`/watch/${a.id}/${n}`} className={cn("group grid items-center gap-3 rounded-2xl border-1.5 border-line-soft bg-paper p-2 pr-3 transition hover:border-frost-hot", art?.image ? "grid-cols-[72px_1fr_auto]" : "grid-cols-[44px_1fr_auto]", watched && "opacity-70")}>
+              <Link href={`/watch/${a.id}/${n}`} className={cn("group grid items-center gap-3 rounded-2xl border-1.5 border-line-soft bg-paper p-2 pr-3 transition hover:border-frost-hot", art?.image ? "grid-cols-[72px_1fr_auto]" : "grid-cols-[44px_1fr_auto]", watched && "opacity-70", FILLER_STYLE_BORDER(kindOf(n, info?.filler)))}>
                 {art?.image ? (
                   <span className="relative h-11 w-[72px] flex-none overflow-hidden rounded-lg bg-night">
                     <Poster src={art.image} className={cn("size-full transition group-hover:scale-105", watched && "saturate-[.6]")} />
@@ -96,7 +116,7 @@ export async function Episodes({ a, progress }: { a: AnimeFull; progress: number
                   <span className="flex flex-wrap gap-x-2 text-[11.5px] font-semibold text-plum-muted">
                     <span>EP {n}</span>
                     {info?.aired && <span>{new Date(info.aired).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" })}</span>}
-                    {info?.filler && <span className="text-sprinkle-butter">filler</span>}
+                    {(() => { const k = kindOf(n, info?.filler); return k ? <span className={FILLER_STYLE[k].text}>{FILLER_STYLE[k].label}</span> : null; })()}
                     {info?.recap && <span className="text-sprinkle-sky">recap</span>}
                     {watched && <span className="text-sprinkle-mint">watched</span>}
                   </span>

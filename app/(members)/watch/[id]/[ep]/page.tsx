@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { getAnime, getEpisodeList, getRecommendations, getSimilar, nextAiring, episodeAt } from "@/lib/jikan";
 import { anivexaEnabled, fetchAnivexaCatalog, malToAnilist } from "@/lib/anivexa";
 import { fetchAnizipEpisodes } from "@/lib/anizip";
+import { getFillers } from "@/lib/fillers";
 import { refOf } from "@/lib/anime-ref";
 import { cn } from "@/lib/utils";
 import { Shelf } from "@/components/shelf";
@@ -112,6 +113,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
   const vaultSet = new Map(inVault.map((e) => [e.number, e.audio]));
   const streamableSet = new Set<number>([...vaultSet.keys(), ...anivexaEps]);
   const numbers = Array.from({ length: Math.max(total, extMax, ...inVault.map((e) => e.number)) }, (_, i) => i + 1);
+  const fillers = await getFillers([a.title, a.romaji, a.native, ...a.synonyms], a.episodes).catch(() => null);
   const episodeEntries: EpisodeEntry[] = numbers.map((n) => {
     const meta = list.items.find((e) => e.number === n);
     const art = anizip[n];
@@ -123,7 +125,9 @@ export default async function WatchPage({ params, searchParams }: Props) {
       image: art?.image ?? null,
       audio,
       streamable: !!audio || anivexaEps.has(n),
-      filler: !!meta?.filler,
+      // the curated list when it has this show; MAL's flag only as a fallback
+      filler: fillers ? fillers[n] === "filler" : !!meta?.filler,
+      fillerKind: fillers ? fillers[n] ?? null : null,
     };
   });
   const next = nextAiring(a);

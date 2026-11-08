@@ -1,4 +1,6 @@
 import { Franchise } from "@/components/anime/franchise";
+import { BingeClock } from "@/components/box/binge-clock";
+import { durationMinutes } from "@/lib/utils";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
@@ -177,6 +179,9 @@ export default async function AnimePage({ params, searchParams }: Props) {
               ))}
             </dl>
           </section>
+          {a.group !== "film" && (a.episodes ?? 0) > 0 && (
+            <BingeClock solo items={[{ id: a.id, title: a.title, status: "watching", episodes: a.episodes, progress, minutes: durationMinutes(a.duration), movie: false }]} />
+          )}
           {a.relations.length > 0 && (
             <section className={card}>
               <div className="eyebrow mb-3">Related</div>

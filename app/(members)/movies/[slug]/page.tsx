@@ -50,7 +50,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
         <ChevronRight className="size-3.5" /><span className="truncate text-frost-text">{d.title}</span>
       </nav>
 
-      {streamSrc || embeds.length ? <MoviePlayer streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} /> : (
+      {streamSrc || embeds.length ? <MoviePlayer streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${d.isSeries ? `-s${se}e${ep}` : ""}`} /> : (
         <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center text-night-muted">
           <div>
             <p className="text-[17px] font-extrabold text-night-text">Not streamable right now</p>

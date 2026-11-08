@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 const BEAT_MS = 2000;
 const code6 = () => Math.random().toString(36).slice(2, 8);
 
-export function WatchParty({ video, malId, ep }: { video: React.RefObject<HTMLVideoElement | null>; malId: number; ep: number }) {
+export function WatchParty({ video, malId, ep, title, image }: { video: React.RefObject<HTMLVideoElement | null>; malId: number; ep: number; title?: string; image?: string | null }) {
   const router = useRouter();
   const [code, setCode] = useState<string | null>(null);
   const [isHost, setIsHost] = useState(false);
@@ -19,6 +19,10 @@ export function WatchParty({ video, malId, ep }: { video: React.RefObject<HTMLVi
   const [alive, setAlive] = useState(false);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  // a public room is listed in the lobby (/rooms); the host decides
+  const [isPublic, setPublic] = useState(false);
+  const publicRef = useRef(false);
+  publicRef.current = isPublic;
   const lastEp = useRef(ep);
   lastEp.current = ep;
 
@@ -57,13 +61,13 @@ export function WatchParty({ video, malId, ep }: { video: React.RefObject<HTMLVi
       if (!v) return;
       fetch("/api/party", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, malId, ep, position: v.currentTime, paused: v.paused }),
+        body: JSON.stringify({ code, malId, ep, position: v.currentTime, paused: v.paused, public: publicRef.current, title, image }),
       }).catch(() => {});
     };
     beat();
     const id = setInterval(beat, BEAT_MS);
     return () => clearInterval(id);
-  }, [code, isHost, malId, ep, video]);
+  }, [code, isHost, malId, ep, video, title, image]);
 
   // member: follow the host
   useEffect(() => {
@@ -121,6 +125,12 @@ export function WatchParty({ video, malId, ep }: { video: React.RefObject<HTMLVi
           <p className="mt-1 text-[12.5px] font-semibold text-white/85">
             {isHost ? "Share this link. Everyone who opens it follows your playback." : "Your player follows the host’s play, pause and seeks."}
           </p>
+          {isHost && (
+            <button type="button" role="switch" aria-checked={isPublic} onClick={() => setPublic((p) => !p)} className="mt-2 flex w-full items-center gap-2 text-left text-[12.5px] font-bold">
+              <span className="flex-1">List in public rooms</span>
+              <span className={cn("relative h-5 w-9 rounded-full transition", isPublic ? "bg-frost-hot" : "bg-white/25")}><span className={cn("absolute top-0.5 size-4 rounded-full bg-white shadow transition-all", isPublic ? "left-[18px]" : "left-0.5")} /></span>
+            </button>
+          )}
           <div className="mt-2.5 flex gap-1.5">
             {isHost && (
               <button type="button" onClick={copy} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-frost text-[12.5px] font-extrabold text-frost-ink">

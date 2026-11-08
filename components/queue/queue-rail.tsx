@@ -14,7 +14,7 @@ export function QueueRail() {
         <div><div className="eyebrow">Up next</div><h2 id="queue" className="mt-1 text-xl font-extrabold tracking-[-.6px]">Your queue</h2></div>
         <span className="font-mono text-[13px] text-plum-muted">{q.length}</span>
       </div>
-      <div className="scrollbar-none flex gap-3 overflow-x-auto pb-1">
+      <div className="scrollbar-none -mt-2 flex gap-3 overflow-x-auto pb-1 pt-2">
         {q.map((it) => (
           <div key={it.id} className="group relative w-[146px] flex-none">
             <Link href={`/anime/${it.id}`}>

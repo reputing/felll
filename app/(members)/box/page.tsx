@@ -4,6 +4,8 @@ import { requireMember } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { memberStats } from "@/lib/stats";
 import { BoxGrid, type BoxRow } from "@/components/box/box-grid";
+import { BingeClock, type BingeItem } from "@/components/box/binge-clock";
+import { durationMinutes } from "@/lib/utils";
 import { PageHead } from "@/components/page-head";
 import { Button } from "@/components/ui/button";
 
@@ -11,10 +13,14 @@ export const metadata = { title: "My box" };
 
 export default async function Box() {
   const me = await requireMember("/box");
-  const [rows, stats] = await Promise.all([
+  const [rows, stats, runtimes] = await Promise.all([
     all<BoxRow>("select mal_id, title, image, episodes, kind, updated_at, status, score, favorite, progress, rewatching from library where user_id = ? order by updated_at desc", me.id),
     memberStats(me.id),
+    // per-episode runtime from the catalog, where it has one
+    all<{ mal_id: number; d: string | null }>("select l.mal_id, json_extract(c.body, '$.duration') as d from library l join catalog c on c.mal_id = l.mal_id where l.user_id = ?", me.id).catch(() => []),
   ]);
+  const runtime = new Map(runtimes.map((r) => [r.mal_id, r.d ? durationMinutes(String(r.d)) : 24]));
+  const binge: BingeItem[] = rows.map((r) => ({ id: r.mal_id, title: r.title, status: r.status, episodes: r.episodes, progress: r.progress, minutes: runtime.get(r.mal_id) ?? (r.kind === "Movie" ? 100 : 24), movie: r.kind === "Movie" }));
   const tiles = [
     { k: "In your box", v: stats.entries },
     { k: "Completed", v: stats.completed },
@@ -40,6 +46,7 @@ export default async function Box() {
           </div>
         ))}
       </dl>
+      <BingeClock items={binge} />
       <BoxGrid rows={rows} initialTab={rows.some((r) => r.status === "watching") ? "watching" : "all"} />
     </div>
   );
