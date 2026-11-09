@@ -32,6 +32,7 @@ async function probe() {
     ["anilist: browser UA", () => fetch("https://graphql.anilist.co", { method: "POST", headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", origin: "https://anilist.co", referer: "https://anilist.co/" }, body: q })],
     ["kitsu mappings", () => fetch("https://kitsu.io/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]=5081&include=item", { headers: { accept: "application/vnd.api+json" } })],
     ["jikan relations", () => fetch("https://api.jikan.moe/v4/anime/5081/relations")],
+    ["ovh vision (keyless)", () => fetch("https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "Qwen2.5-VL-72B-Instruct", max_tokens: 12, messages: [{ role: "user", content: [{ type: "text", text: "What colour is this image? One word." }, { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==" } }] }] }) })],
     ["arm ids", () => fetch("https://arm.haglund.dev/api/v2/ids?source=myanimelist&id=5081")],
   ];
   for (const [name, f] of tries) {

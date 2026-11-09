@@ -1,5 +1,5 @@
-// The AI backend for /shh: Inception Labs (https://inceptionlabs.ai), an OpenAI-compatible
-// API. Its key is hardcoded as the default, a TEST key on a test account chosen by the
+// The AI backend for /shh: Inception Labs (https://inceptionlabs.ai) for text, and keyless OVHcloud
+// AI Endpoints for reading images; both OpenAI-compatible. Its key is hardcoded as the default, a TEST key on a test account chosen by the
 // owner; INCEPTION_API_KEY in the environment overrides it.
 //
 // Because upstreams flake, the model list is never taken on trust: every model is
@@ -16,15 +16,30 @@ type F = typeof fetch;
 
 // ---- providers ------------------------------------------------------------------
 // `concurrency` is how many probes may run at once against this provider.
-export interface Provider { id: string; label: string; base: string; key: string; concurrency: number }
+// `fixed` (keyless providers): the models offered, with what each can do, as verified by hand. A keyless
+// service rate-limits per model (OVHcloud: 2 requests a minute per IP), so these are not probed for
+// capabilities (that would spend the allowance) and a 429 is "busy, try the next one", never "down".
+export interface Provider { id: string; label: string; base: string; key: string; concurrency: number; keyless?: boolean; fixed?: Record<string, { vision: boolean; tools: boolean }> }
 
-const PROVIDERS: { id: string; label: string; base: string; keyVar: string; defaultKey: string; concurrency: number }[] = [
+const PROVIDERS: { id: string; label: string; base: string; keyVar: string; defaultKey: string; concurrency: number; keyless?: boolean; fixed?: Provider["fixed"] }[] = [
   { id: "inception", label: "Inception", base: "https://api.inceptionlabs.ai/v1", keyVar: "INCEPTION_API_KEY", defaultKey: "sk_828e53bbd4422201bd577e47c7f9c5282ec26c5c0217057758874c910c4f2650", concurrency: 4 },
+  // Image readers with no key at all (OVHcloud AI Endpoints, anonymous access). Checked live with a
+  // picture of text and shapes: all three read it correctly. Inception cannot see images, so these
+  // are what an image in /shh is sent to.
+  {
+    id: "ovh", label: "OVHcloud", base: "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", keyVar: "", defaultKey: "", concurrency: 1, keyless: true,
+    fixed: {
+      "Qwen2.5-VL-72B-Instruct": { vision: true, tools: false },
+      "Mistral-Small-3.2-24B-Instruct-2506": { vision: true, tools: false },
+      "Qwen3.8-27B": { vision: true, tools: false },
+    },
+  },
 ];
 
 /** The providers this deployment has keys for. */
 export function providersFor(env: Env): Provider[] {
   return PROVIDERS.flatMap((p) => {
+    if (p.keyless) return [{ id: p.id, label: p.label, base: p.base, key: "", concurrency: p.concurrency, keyless: true, fixed: p.fixed }];
     const key = (env[p.keyVar] ?? "").trim() || p.defaultKey;
     return key ? [{ id: p.id, label: p.label, base: p.base, key, concurrency: p.concurrency }] : [];
   });
@@ -142,7 +157,7 @@ export interface Reply {
   err: string;                // why it failed, when it did
 }
 
-const headers = (p: Provider) => ({ "content-type": "application/json", accept: "text/event-stream, application/json", authorization: `Bearer ${p.key}` });
+const headers = (p: Provider) => ({ "content-type": "application/json", accept: "text/event-stream, application/json", ...(p.key ? { authorization: `Bearer ${p.key}` } : {}) });
 /** Plain text for an error body. Gateways return HTML pages, often cut off mid-tag:
  *  keep the <title> ("Offline"), drop styles/scripts and any dangling tag. */
 export const cleanErr = (s: string) => s
@@ -248,7 +263,7 @@ export async function probeTools(f: F, p: Provider, id: string, timeoutMs = 25_0
 export interface ModelRow { id: string; ok: number; vision: number; tools: number; ms: number | null; err: string | null; checked_at: number }
 
 // Provider order (only one for now), then speed.
-const PROVIDER_ORDER = ["inception"];
+const PROVIDER_ORDER = ["inception", "ovh"];
 const rankId = (ns: string) => {
   const pi = PROVIDER_ORDER.indexOf(splitId(ns)?.provider ?? "");
   return pi < 0 ? PROVIDER_ORDER.length : pi;
@@ -321,7 +336,8 @@ export interface RefreshOpts {
 export interface RefreshResult { probed: number; ok: number; skipped: boolean; requests: number; listErrors: string[] }
 
 async function listModels(f: F, p: Provider): Promise<string[]> {
-  const r = await f(`${p.base}/models`, { headers: { accept: "application/json", authorization: `Bearer ${p.key}` }, signal: AbortSignal.timeout(20_000) });
+  if (p.fixed) return Object.keys(p.fixed); // a hand-checked list: no request spent asking
+  const r = await f(`${p.base}/models`, { headers: { accept: "application/json", ...(p.key ? { authorization: `Bearer ${p.key}` } : {}) }, signal: AbortSignal.timeout(20_000) });
   const j: any = await r.json();
   return (j?.data ?? []).map((m: { id: string }) => m.id).filter((id: unknown): id is string => typeof id === "string" && isChatId(id));
 }
@@ -365,7 +381,9 @@ export async function refreshModels(f: F, providers: Provider[], store: Store, o
       const t = await probeText(f, p, s.id, to);
       const prev = known.get(ns);
       const row: ModelRow = { id: ns, ok: t.ok ? 1 : 0, vision: t.ok ? (prev?.vision ?? 0) : 0, tools: t.ok ? (prev?.tools ?? 0) : 0, ms: t.ok ? t.ms : null, err: t.ok ? null : t.err, checked_at: Math.floor(clock() / 1000) };
-      if (t.ok && (!prev || !prev.checked_at || o.force) && requests + 2 <= cap && clock() - start < deadline) {
+      const fixed = p.fixed?.[s.id];
+      if (t.ok && fixed) { row.vision = fixed.vision ? 1 : 0; row.tools = fixed.tools ? 1 : 0; }
+      else if (t.ok && (!prev || !prev.checked_at || o.force) && requests + 2 <= cap && clock() - start < deadline) {
         requests += 2;
         const [v, tl] = await Promise.all([probeVision(f, p, s.id, to), probeTools(f, p, s.id, to)]);
         row.vision = v ? 1 : 0; row.tools = tl ? 1 : 0;
@@ -408,7 +426,8 @@ export async function chatWithFailover(
     const usable = reply.status === 200 && (reply.content || reply.toolCalls.length || reply.raw);
     if (usable) return { reply, model: ns, tried };
     last = reply;
-    if (reply.status === 200 || modelFault(reply.status)) o.onDown?.(ns, reply.err || "empty reply");
+    // a keyless service's 429 only means "slow down" (it limits per model): try the next, do not drop this one
+    if (reply.status === 200 || (modelFault(reply.status) && !(p.keyless && reply.status === 429))) o.onDown?.(ns, reply.err || "empty reply");
   }
   return { reply: last, model: null, tried };
 }
