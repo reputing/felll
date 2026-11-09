@@ -2,6 +2,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { memberOr401 } from "@/lib/auth";
 import { all, background, first, run } from "@/lib/db";
 import { STRENGTHS, TONES, buildStyleGuide, humanizeText, type Strength, type Tone } from "@/lib/humanize";
+import { ocrNoteFor, readImagesWithOcr } from "@/lib/ocr";
 import { ThinkFilter, candidatesFor, chatWithFailover, cleanErr, markDown, modelFault, providersFor, readSSE, refreshModels, splitId, workingModels, type ModelRow, type Provider } from "@/lib/ai";
 import { d1Store } from "@/lib/ai-store";
 import { formatHits, htmlToText, isPublicHttpUrl, parseDuckLite } from "@/lib/web";
@@ -62,8 +63,14 @@ function withoutImages(msgs: any[]): any[] {
   return msgs.map((m) => {
     if (!Array.isArray(m?.content)) return m;
     const text = m.content.filter((p: any) => p?.type === "text").map((p: any) => p?.text ?? "").join("\n");
-    const dropped = m.content.some((p: any) => p?.type === "image_url");
-    return { ...m, content: text + (dropped ? "\n[an image was attached, but this model can't read images]" : "") };
+    const imgs = m.content.filter((p: any) => p?.type === "image_url");
+    if (!imgs.length) return { ...m, content: text };
+    // a model that can't see still gets the words OCR read from the picture, when there were any
+    const read = imgs.map((p: any, i: number) => { const t = ocrNoteFor(p); return t ? `[text read from attached image ${i + 1} by OCR:\n${t}\n]` : ""; }).filter(Boolean);
+    const note = read.length
+      ? read.join("\n") + "\n[the image itself can't be seen by this model, only its text was read; say so if the question needs the picture]"
+      : "\n[an image was attached, but this model can't read images]";
+    return { ...m, content: text + (read.length ? "\n" : "") + note };
   });
 }
 function lastUserText(messages: any[]): string {
@@ -457,6 +464,7 @@ export async function POST(req: Request) {
     }
     const messages = budgetHistory([...preamble, ...convo]);
     const webMsg = b.web && candidates.some((c) => byId.get(c)?.tools !== 1) ? await webContext(lastUserText(messages)).catch(() => null) : null;
+    if (hasImages(messages) && candidates.some((c) => byId.get(c)?.vision !== 1)) await readImagesWithOcr(fetch, messages);
     const { content, steps } = await runLoop(providers, byId, candidates, messages, tools, downReporter(), webMsg);
     await run("insert into shh_room_msgs (room_id, role, content, steps) values (?, 'assistant', ?, ?)", id, content, steps.length ? JSON.stringify(steps) : null);
     return Response.json({ ok: true });
@@ -519,6 +527,8 @@ export async function POST(req: Request) {
     messages = budgetHistory([...preamble, ...messages]);
     // Web for models that can't call tools: fetch it ourselves, once, up front.
     const webMsg = b.web && candidates.some((c) => byId.get(c)?.tools !== 1) ? await webContext(lastUserText(messages)).catch(() => null) : null;
+    // some candidate can't see images (or none can): read the picture's text for it with OCR
+    if (hasImages(messages) && candidates.some((c) => byId.get(c)?.vision !== 1)) await readImagesWithOcr(fetch, messages);
 
     const enc = new TextEncoder();
     let abort: AbortController | null = null;

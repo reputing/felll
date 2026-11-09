@@ -34,6 +34,20 @@ const PROVIDERS: { id: string; label: string; base: string; keyVar: string; defa
       "Qwen3.8-27B": { vision: true, tools: false },
     },
   },
+  // Kilo's anonymous gateway (about 200 requests an hour per IP). These six read the test picture
+  // correctly with no key; they are previews and free tiers, so they come and go, which the regular
+  // text probe notices (a model that stops answering drops out of the list by itself).
+  {
+    id: "kilo", label: "Kilo", base: "https://api.kilo.ai/api/gateway", keyVar: "", defaultKey: "", concurrency: 2, keyless: true,
+    fixed: {
+      "kilo-auto/small": { vision: true, tools: false },
+      "nvidia/nemotron-3.5-super-vl:free": { vision: true, tools: false },
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": { vision: true, tools: false },
+      "openrouter/free": { vision: true, tools: false },
+      "stealth/crouton-alpha": { vision: true, tools: false },
+      "dots-studio/dots-3-note-preview:free": { vision: true, tools: false },
+    },
+  },
 ];
 
 /** The providers this deployment has keys for. */
@@ -263,10 +277,19 @@ export async function probeTools(f: F, p: Provider, id: string, timeoutMs = 25_0
 export interface ModelRow { id: string; ok: number; vision: number; tools: number; ms: number | null; err: string | null; checked_at: number }
 
 // Provider order (only one for now), then speed.
-const PROVIDER_ORDER = ["inception", "ovh"];
+const PROVIDER_ORDER = ["inception", "ovh", "kilo"];
 const rankId = (ns: string) => {
   const pi = PROVIDER_ORDER.indexOf(splitId(ns)?.provider ?? "");
   return pi < 0 ? PROVIDER_ORDER.length : pi;
+};
+
+// A hand-checked provider lists its models best first (the order in PROVIDERS), and that order wins
+// over raw speed: the fastest image reader is not always the one that reads best.
+const fixedRank = (ns: string) => {
+  const s = splitId(ns);
+  const keys = s ? Object.keys(PROVIDERS.find((p) => p.id === s.provider)?.fixed ?? {}) : [];
+  const i = s ? keys.indexOf(s.id) : -1;
+  return i < 0 ? 1e6 : i;
 };
 
 export const MAX_AGE_SEC = 45 * 60; // a pass older than this no longer counts
@@ -275,7 +298,7 @@ export const MAX_AGE_SEC = 45 * 60; // a pass older than this no longer counts
 export function workingModels(rows: ModelRow[], nowSec: number, maxAgeSec = MAX_AGE_SEC): ModelRow[] {
   return rows
     .filter((r) => r.id !== "__lock" && r.ok === 1 && r.checked_at >= nowSec - maxAgeSec)
-    .sort((a, b) => rankId(a.id) - rankId(b.id) || (a.ms ?? 1e9) - (b.ms ?? 1e9) || a.id.localeCompare(b.id));
+    .sort((a, b) => rankId(a.id) - rankId(b.id) || fixedRank(a.id) - fixedRank(b.id) || (a.ms ?? 1e9) - (b.ms ?? 1e9) || a.id.localeCompare(b.id));
 }
 
 /** Models to try for one request, in order: the one asked for (if it's working), then
