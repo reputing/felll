@@ -1,4 +1,5 @@
 import { getFranchise, lastError } from "@/lib/franchise";
+import { eviCall } from "@/lib/music-server";
 
 // A show's franchise map (seasons, movies, alternates, side stories) by MAL id. Public metadata only,
 // and cached per show for two weeks, so it is safe to leave open; the throttle just keeps it from
@@ -15,7 +16,7 @@ export async function GET(req: Request) {
   const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "unknown";
   if (throttled(ip)) return Response.json({ error: "slow down" }, { status: 429 });
   const sp = new URL(req.url).searchParams;
-  if (sp.get("probe")) return Response.json(await probe(), { headers: { "cache-control": "no-store" } });
+  if (sp.get("probe")) return Response.json({ ...(await probe()), ...(await musicProbe(req)) }, { headers: { "cache-control": "no-store" } });
   const mal = Number(sp.get("mal"));
   if (!Number.isInteger(mal) || mal <= 0) return Response.json({ error: "mal id?" }, { status: 400 });
   const f = await getFranchise(mal).catch((e) => { return { error: String(e) } as never; });
@@ -40,5 +41,17 @@ async function probe() {
   for (const [name, f] of tries) {
     try { const r = await f(); out[name] = `${r.status} ${(await r.text()).slice(0, 80).replace(/\s+/g, " ")}`; } catch (e) { out[name] = `error ${(e as Error).message}`; }
   }
+  return out;
+}
+
+// The music player asks kuro's catalog route (see lib/music-server): can this server reach it?
+async function musicProbe(req: Request) {
+  const out: Record<string, string> = {};
+  try {
+    const r = await eviCall(req, new URLSearchParams({ op: "search", q: "lofi", limit: "1" }));
+    out["music via kuro (search)"] = r ? `${r.status} ${(await r.text()).slice(0, 90).replace(/\s+/g, " ")}` : "no answer";
+    const s = await eviCall(req, new URLSearchParams({ op: "stream", id: "LE8LILQggvO" }), true);
+    out["music via kuro (stream link)"] = s ? `${s.status} ${(s.headers.get("location") || "").slice(0, 60)}` : "no answer";
+  } catch (e) { out["music via kuro"] = `error ${(e as Error).message}`; }
   return out;
 }
