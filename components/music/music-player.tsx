@@ -131,15 +131,26 @@ export function MusicPlayer() {
     </span>
   );
 
+  // a one-time nudge so the player is easy to find
+  const [hint, setHint] = useState(false);
+  useEffect(() => { try { if (!localStorage.getItem("cupcake:music-hint")) setHint(true); } catch { /* */ } }, []);
+  const dismissHint = () => { setHint(false); try { localStorage.setItem("cupcake:music-hint", "1"); } catch { /* */ } };
+
   // collapsed: a small pill. Nothing queued: just the note.
   if (!open) {
     return (
       <div className="fixed bottom-4 left-4 z-40 sm:bottom-6 sm:left-6">
-        <div className="flex items-center gap-1 rounded-full border-1.5 border-line bg-cream-card p-1 shadow-halo">
-          <button type="button" onClick={() => setOpen(true)} aria-label="Open music player" className="flex h-10 min-w-10 items-center gap-2 rounded-full pl-1 pr-3 text-left hover:bg-cream-tint">
+        {hint && !track && (
+          <button type="button" onClick={() => { dismissHint(); setOpen(true); }} className="mb-2 block max-w-[220px] rounded-2xl border-1.5 border-frost-hot bg-cream-card px-3.5 py-2 text-left text-[12.5px] font-bold shadow-halo animate-in fade-in slide-in-from-bottom-2">
+            ♪ Listen to music while you watch. <span className="text-frost-text">Open the player</span>
+          </button>
+        )}
+        <div className={cn("flex items-center gap-1 rounded-full border-1.5 bg-cream-card p-1 shadow-halo", playing ? "border-frost-hot" : "border-line")}>
+          <button type="button" onClick={() => { dismissHint(); setOpen(true); }} aria-label="Open music player" className="flex h-10 min-w-10 items-center gap-2 rounded-full pl-1 pr-3 text-left hover:bg-cream-tint">
             {track ? cover(track, "size-8") : <span className="grid size-8 place-items-center text-frost-text"><Music2 className="size-[18px]" /></span>}
+            {playing && <span aria-hidden className="flex h-4 items-end gap-[2px]">{[0, 1, 2].map((i) => <span key={i} className="w-[3px] rounded-full bg-frost-hot animate-pulse" style={{ height: `${40 + ((i * 37) % 60)}%`, animationDelay: `${i * 160}ms` }} />)}</span>}
             {track && <span className="hidden max-w-[150px] min-w-0 sm:block"><span className="block truncate text-[12.5px] font-extrabold leading-tight">{track.title}</span><span className="block truncate text-[11px] font-semibold text-plum-muted">{track.artist}</span></span>}
-            {!track && <span className="hidden text-[12.5px] font-extrabold text-frost-text sm:inline">music</span>}
+            {!track && <span className="text-[12.5px] font-extrabold text-frost-text">Music</span>}
           </button>
           {track && (
             <button type="button" onClick={toggle} aria-label={playing ? "Pause music" : "Play music"} className="grid size-10 place-items-center rounded-full bg-frost text-frost-ink">
