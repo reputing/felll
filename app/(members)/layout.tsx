@@ -6,6 +6,7 @@ import { SiteFooter } from "@/components/shell/site-footer";
 import { PresenceBeacon } from "@/components/shell/presence";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { GlobalChat } from "@/components/shell/global-chat";
+import { MusicPlayer } from "@/components/music/music-player";
 import { StoreSeed } from "@/components/store-seed";
 import { SpotlightTracker } from "@/components/spotlight";
 import { Toaster } from "@/components/toaster";
@@ -39,6 +40,7 @@ export default async function MembersLayout({ children }: { children: React.Reac
       <PresenceBeacon />
       <CommandPalette />
       <GlobalChat me={user.handle} />
+      <MusicPlayer />
       <SpotlightTracker />
       <MobileDock />
       <Toaster />
