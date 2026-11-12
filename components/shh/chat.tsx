@@ -12,6 +12,7 @@ import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
 import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/model-picker";
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
+import { FillDocButton } from "@/components/shh/fill";
 import { toast } from "@/lib/store";
 import { DISGUISES, maskTo, setFavicon } from "@/lib/tab-mask";
 import { cn } from "@/lib/utils";
@@ -931,6 +932,7 @@ export function ShhChat({ me }: { me?: string }) {
         <div className="flex flex-none gap-1">
           <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" title="attach image" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
           <button type="button" onClick={() => docRef.current?.click()} aria-label="Attach file" title="attach a text / doc file" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><Paperclip className="size-[18px]" /></button>
+          {code && <FillDocButton code={code} model={model} others={models.filter((m) => m.id !== model).map((m) => m.id)} />}
           <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="search the web (it decides when to search and read links)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
           <button type="button" onClick={() => { if (!exec && !selTools) toast("this model can’t run code. pick one marked ⚙"); setExec((x) => !x); }} aria-pressed={exec} title="let it run code in a sandbox (needs a ⚙ model)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", exec ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Terminal className="size-5" /></button>
           <button type="button" onClick={toggleNatural} aria-pressed={natural} title="natural voice: replies are written like a person from the start" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", natural ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Feather className="size-5" /></button>
