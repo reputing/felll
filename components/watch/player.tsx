@@ -7,7 +7,8 @@ import {
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useBox } from "@/lib/store";
+import { toast, useBox } from "@/lib/store";
+import { introIsSane, outroIsSane, useSkipPrefs } from "@/lib/use-skip-prefs";
 import { REACTIONS } from "@/lib/reactions";
 import { fetchAniSkip } from "@/lib/aniskip";
 import { clock, cn } from "@/lib/utils";
@@ -81,7 +82,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   // and the ended handler fires again, so without this the countdown restarted the moment
   // it was dismissed ("loops back into that interaction again").
   const nextDismissed = useRef(false);
-  useEffect(() => { nextDismissed.current = false; }, [meta.malId, meta.ep]);
+  // auto-skip jumps once per episode: if the viewer scrubs back into the opening, we leave them there
+  const skipped = useRef({ intro: false, outro: false });
+  const skip = useSkipPrefs();
+  useEffect(() => { nextDismissed.current = false; skipped.current = { intro: false, outro: false }; }, [meta.malId, meta.ep]);
   const [flash, setFlash] = useState<string | null>(null);
   const [stopAfterEp, setStopAfterEp] = useState(false);
   const [sleepMin, setSleepMin] = useState<number | null>(null);
@@ -541,6 +545,20 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setT(v.currentTime);
     if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
     report();
+    // Auto-skip (off until the viewer turns it on). Markers come from the stream, AniSkip, the vault or the crowd; a jump nobody
+    // tapped for must pass a sanity check first (see lib/use-skip-prefs.ts).
+    if (skip.intro && !skipped.current.intro && introStart != null && introEnd != null && v.currentTime >= introStart && v.currentTime < introEnd && introIsSane(introStart, introEnd, v.duration || dur)) {
+      skipped.current.intro = true;
+      v.currentTime = introEnd;
+      toast("Skipped intro");
+      return;
+    }
+    if (skip.outro && !skipped.current.outro && nextHref && !stopAfterEp && !nextDismissed.current && outroStartEff != null && v.currentTime >= outroStartEff && outroIsSane(outroStartEff, v.duration || dur)) {
+      skipped.current.outro = true;
+      toast("Skipped outro");
+      router.push(nextHref);
+      return;
+    }
     if (autoNext && !stopAfterEp && nextHref && !nextDismissed.current && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
   };
 
@@ -641,6 +659,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
             offset={offset} onOffset={setOffset} onAutoSync={autoSync} sync={sync} hasCues={cues.length > 0} onDownload={downloadSubs}
             style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
             autoNext={autoNext} onAutoNext={setAutoNext} stopAfter={stopAfterEp} onStopAfter={setStopAfterEp}
+            autoSkipIntro={skip.intro} onAutoSkipIntro={skip.setIntro} autoSkipOutro={skip.outro} onAutoSkipOutro={skip.setOutro}
             sleepMin={sleepMin} onSleep={setSleepMin}
             page={page} onPage={setPage} onClose={() => { setMenuOpen(false); setPage("main"); }}
           />

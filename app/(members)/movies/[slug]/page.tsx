@@ -123,7 +123,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
           key={`${slug}-${se ?? 0}-${ep ?? 0}`} streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${tv ? `-s${se}e${ep}` : ""}`}
           prev={prevEp ? { href: `/movies/${slug}?se=${prevEp.se}&ep=${prevEp.ep}`, label: `${prevEp.se !== se ? `S${prevEp.se} ` : ""}Episode ${prevEp.ep}` } : undefined}
           next={nextEp ? { href: `/movies/${slug}?se=${nextEp.se}&ep=${nextEp.ep}`, label: `${nextEp.se !== se ? `S${nextEp.se} ` : ""}Episode ${nextEp.ep}` } : undefined}
-          track={imdb && ready ? { imdb, media: d.media, season: se, episode: ep, title: d.title, poster: d.poster, year: d.year, epTitle: curEp?.title ?? null, episodes: totalAired, resume } : undefined}
+          track={imdb && ready ? { tmdb: d.tmdbId || undefined, imdb, media: d.media, season: se, episode: ep, title: d.title, poster: d.poster, year: d.year, epTitle: curEp?.title ?? null, episodes: totalAired, resume } : undefined}
         />
       ) : (
         <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center text-night-muted">

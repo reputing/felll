@@ -21,7 +21,7 @@ import { useNativeCues, useSubs } from "@/components/watch/use-subs";
 const NO_TRACKS: never[] = [];
 
 /** What the player reports back so "continue watching" and the history know where you are. */
-export interface PlayTrack { imdb: string; media: "movie" | "tv"; season?: number; episode?: number; title: string; poster: string | null; year: number | null; epTitle?: string | null; episodes?: number | null; resume?: number }
+export interface PlayTrack { tmdb?: number; imdb: string; media: "movie" | "tv"; season?: number; episode?: number; title: string; poster: string | null; year: number | null; epTitle?: string | null; episodes?: number | null; resume?: number }
 
 const mmss = (s: number) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
 
@@ -214,7 +214,11 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
         if (!track && d.type !== "cinesrc:ready" && d.type !== "cinesrc:loadedmetadata" && d.type !== "cinesrc:play" && d.type !== "cinesrc:ended") return;
         // Zeus: only believed from its own origin. timeupdate carries currentTime and duration; pause and ended save at once.
         if (e.origin !== "https://cinesrc.st") return;
-        if (d.type === "cinesrc:ready" || d.type === "cinesrc:loadedmetadata" || d.type === "cinesrc:play") { setReady(true); setAlive(true); setStuck(false); }
+        // "ready" only drops the spinner. A server is alive when it has told us how long the film is: one that says play and
+        // ready over a black picture (a later server that does not really have the title) never does, and used to fool the
+        // stuck check and the controls into "playing" at 0:00 / 0:00.
+        if (d.type === "cinesrc:ready" || d.type === "cinesrc:loadedmetadata" || d.type === "cinesrc:play") setReady(true);
+        if ((d.type === "cinesrc:loadedmetadata" || d.type === "cinesrc:timeupdate") && Number(d.duration) > 0) { setAlive(true); setStuck(false); }
         if (d.type === "cinesrc:error") setStuck(true);
         if (d.type === "cinesrc:ended" && next && !nextDismissed.current && prefs.current.autoNext && !prefs.current.stopAfter) setNextIn(10);
         if (d.type === "cinesrc:timeupdate") { pos = Number(d.currentTime); dur = Number(d.duration); }
@@ -300,8 +304,8 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
             className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />
           {/* our own controls and the cupcake bug over a frame whose own controls are off (see zeus-controls.tsx) */}
           {curEmbed.sandbox && curEmbed.origin && (
-            <ZeusControls frame={frame} box={box} origin={curEmbed.origin} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull}
-              subsFor={track ? { imdb: track.imdb, media: track.media, season: track.season, episode: track.episode, subKey: subKey ?? `m:${track.imdb}`, title: track.title } : undefined}
+            <ZeusControls session={`${frameUrl}#${reloads}`} frame={frame} box={box} origin={curEmbed.origin} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull}
+              subsFor={track ? { tmdb: track.tmdb, imdb: track.imdb, media: track.media, season: track.season, episode: track.episode, subKey: subKey ?? `m:${track.imdb}`, title: track.title } : undefined}
               onServer={(id, at) => setPick({ server: id, at })} onPrefs={(p) => { prefs.current = p; }} />
           )}
           {stuck && curEmbed.sandbox && (

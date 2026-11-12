@@ -45,6 +45,8 @@ export interface PanelProps {
   offset: number; onOffset: (v: number) => void; onAutoSync: () => void; sync: SyncState; hasCues: boolean; onDownload: (fmt: "srt" | "vtt") => void;
   style: SubStyle; onStyle: (p: Partial<SubStyle>) => void; onResetStyle: () => void;
   autoNext: boolean; onAutoNext: (v: boolean) => void; stopAfter: boolean; onStopAfter: (v: boolean) => void;
+  /** jump the opening / credits on their own (shown only when the player passes them) */
+  autoSkipIntro?: boolean; onAutoSkipIntro?: (v: boolean) => void; autoSkipOutro?: boolean; onAutoSkipOutro?: (v: boolean) => void;
   sleepMin: number | null; onSleep: (m: number | null) => void;
   page: "main" | "subs"; onPage: (p: "main" | "subs") => void; onClose: () => void;
   /** movies: only the subtitles page, opening at the top of the picture (the native controls sit at the bottom) */
@@ -182,6 +184,8 @@ export function SettingsPanel(p: PanelProps) {
       <Label>Playback</Label>
       <Toggle checked={p.autoNext} onChange={p.onAutoNext} label="Auto-play next episode" />
       <Toggle checked={p.stopAfter} onChange={p.onStopAfter} label="Stop after this episode" />
+      {p.onAutoSkipIntro && <Toggle checked={!!p.autoSkipIntro} onChange={p.onAutoSkipIntro} label="Auto-skip intro" />}
+      {p.onAutoSkipOutro && <Toggle checked={!!p.autoSkipOutro} onChange={p.onAutoSkipOutro} label="Auto-skip outro" />}
       <div className="flex items-center gap-1 pt-1.5">
         <span className="flex-1 px-1 text-[13px] font-bold">Sleep timer</span>
         {[15, 30, 60].map((m) => <button key={m} type="button" onClick={() => p.onSleep(p.sleepMin === m ? null : m)} className={cn(chip, p.sleepMin === m ? on : off)}>{m}m</button>)}

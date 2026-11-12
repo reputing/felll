@@ -1,5 +1,5 @@
 "use client";
-import { Captions, ChevronRight, Maximize, Minimize, Pause, Play, RectangleHorizontal, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
+import { Captions, ChevronRight, FastForward, Loader2, Maximize, Minimize, Pause, Play, RectangleHorizontal, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { SettingsPanel } from "@/components/watch/settings-panel";
@@ -7,6 +7,7 @@ import { SubtitleLayer, useSubStyle } from "@/components/watch/subtitles";
 import { useSubs } from "@/components/watch/use-subs";
 import type { Source, Track } from "@/components/watch/player";
 import { toast } from "@/lib/store";
+import { introIsSane, outroIsSane, useSkipPrefs } from "@/lib/use-skip-prefs";
 import { cn, clock } from "@/lib/utils";
 
 // Our own control bar for Zeus: the same bar, seek line, buttons and cupcake bug as the anime player, drawn over a frame whose
@@ -26,20 +27,24 @@ export const ZEUS_SERVERS: { id: string; name: string }[] = [
 const serverName = (id: string | null) => ZEUS_SERVERS.find((x) => x.id === id)?.name ?? id ?? "";
 const LS = { autoNext: "kuro:movieAutoNext", lang: "kuro:movieSubLang" };
 
-export interface SubsFor { imdb: string; media: "movie" | "tv"; season?: number; episode?: number; subKey: string; title: string }
+export interface SubsFor { tmdb?: number; imdb: string; media: "movie" | "tv"; season?: number; episode?: number; subKey: string; title: string }
 export interface Prefs { autoNext: boolean; stopAfter: boolean }
 
 export interface Hop { href: string; label: string }
 
-export function ZeusControls({ frame, box, origin, ready, prev, next, theater, onTheater, full, onFull, subsFor, onServer, onPrefs }: {
+export function ZeusControls({ session, frame, box, origin, ready, prev, next, theater, onTheater, full, onFull, subsFor, onServer, onPrefs }: {
+  /** changes whenever the frame is reloaded or moved to another server: everything we believed about the old one is dropped */
+  session: string;
   frame: RefObject<HTMLIFrameElement | null>; box: RefObject<HTMLDivElement | null>; origin: string; ready: boolean;
   prev?: Hop; next?: Hop; theater: boolean; onTheater: () => void; full: boolean; onFull: () => void;
   subsFor?: SubsFor; onServer: (id: string, at: number) => void; onPrefs: (p: Prefs) => void;
 }) {
   const router = useRouter();
   const [playing, setPlaying] = useState(false);
+  const durRef = useRef(0);
   const [t, setT] = useState(0);
   const [dur, setDur] = useState(0);
+  durRef.current = dur;
   const [vol, setVol] = useState(1);
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
@@ -51,6 +56,10 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
   const [autoNext, setAutoNext] = useState(true);
   const [stopAfter, setStopAfter] = useState(false);
   const [sleepMin, setSleepMin] = useState<number | null>(null);
+  // where the intro ends and the credits start, from the community databases (/api/movie/skip), and the two auto-skip switches
+  const [marks, setMarks] = useState<{ intro: { start: number; end: number } | null; outro: { start: number; end: number | null } | null }>({ intro: null, outro: null });
+  const skip = useSkipPrefs();
+  const skipped = useRef({ intro: false, outro: false });
   const [tracks, setTracks] = useState<Track[]>([]);
   const [caption, setCaption] = useState<string | number | null>(null);
   const [subStyle, patchSubStyle, resetSubStyle] = useSubStyle();
@@ -69,6 +78,13 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
   const send = useCallback((command: string, args: unknown[] = []) => {
     frame.current?.contentWindow?.postMessage({ type: "cinesrc:command", command, args }, origin);
   }, [frame, origin]);
+
+  // A new frame (another server, a reload) knows nothing yet: no length, no position, not playing. Without this the bar kept the
+  // old server's "playing" and a running clock over a black picture (and the subtitles ticked along with it).
+  useEffect(() => {
+    setPlaying(false); setT(0); setDur(0); durRef.current = 0; setUsed(null);
+    base.current = { t: 0, at: performance.now(), playing: false, rate: base.current.rate };
+  }, [session]);
 
   // --- what the player says ---------------------------------------------------------------------------------------
   useEffect(() => {
@@ -106,7 +122,7 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
 
   useEffect(() => {
     let raf = 0;
-    const tick = () => { const b = base.current; clockRef.current.currentTime = b.t + (b.playing ? ((performance.now() - b.at) / 1000) * b.rate : 0); raf = requestAnimationFrame(tick); };
+    const tick = () => { const b = base.current; clockRef.current.currentTime = b.t + (b.playing && durRef.current > 0 ? ((performance.now() - b.at) / 1000) * b.rate : 0); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
@@ -138,6 +154,15 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
     }).catch(() => {});
     return () => { on = false; };
   }, [sk]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    skipped.current = { intro: false, outro: false };
+    setMarks({ intro: null, outro: null });
+    if (!subsFor) return;
+    let on = true;
+    const qs = new URLSearchParams({ imdb: subsFor.imdb, ...(subsFor.tmdb ? { tmdb: String(subsFor.tmdb) } : {}), ...(subsFor.season ? { se: String(subsFor.season), ep: String(subsFor.episode ?? 1) } : {}) });
+    fetch(`/api/movie/skip?${qs}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (on && d) setMarks({ intro: d.intro ?? null, outro: d.outro ?? null }); }).catch(() => {});
+    return () => { on = false; };
+  }, [sk]); // eslint-disable-line react-hooks/exhaustive-deps
   const subs = useSubs({ video: clockRef as unknown as RefObject<HTMLVideoElement | null>, subKey: subsFor?.subKey ?? "m:none", title: subsFor?.title ?? "movie", ep: subsFor?.season ? subsFor.episode ?? null : null, tracks, caption, setCaption });
   const pickCaption = (id: string | number | null) => {
     setCaption(id);
@@ -153,14 +178,30 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
     el.addEventListener("mousemove", wake); el.addEventListener("touchstart", wake, { passive: true });
     return () => { el.removeEventListener("mousemove", wake); el.removeEventListener("touchstart", wake); clearTimeout(poke.current); };
   }, [box, wake]);
-  const hidden = playing && idle && !menu && !hover;
+  // what the viewer sees: a picture counts as playing only once it has a length, and as loading until then
+  const loaded = dur > 0;
+  const shown = playing && loaded;
+  const hidden = shown && idle && !menu && !hover;
   const closeMenu = () => { setMenu(false); setPage("main"); };
 
   // --- actions -----------------------------------------------------------------------------------------------------
   const say = (s: string) => { setFlash(s); setTimeout(() => setFlash((f) => (f === s ? null : f)), 700); };
-  const toggle = useCallback(() => { if (playing) { send("pause"); } else { send("play"); } setPlaying(!playing); }, [playing, send]);
+  const toggle = useCallback(() => { if (playing) { send("pause"); } else { send("play"); } if (durRef.current > 0) setPlaying(!playing); }, [playing, send]);
   const seekTo = useCallback((s: number) => { const v = Math.max(0, dur ? Math.min(dur - 0.5, s) : s); send("seek", [v]); setT(v); }, [dur, send]);
   const seekBy = useCallback((d: number) => { seekTo(t + d); say(d > 0 ? `+${d}s` : `${d}s`); }, [seekTo, t]);
+  // Auto-skip, once per title: if the viewer scrubs back into the opening they are left there. A jump nobody tapped for has to pass
+  // a sanity check first (lib/use-skip-prefs.ts), so a wrong marker cannot throw someone out of the middle of an episode.
+  useEffect(() => {
+    if (!dur || scrubbing.current) return;
+    const { intro, outro } = marks;
+    if (skip.intro && intro && !skipped.current.intro && t >= intro.start && t < intro.end && introIsSane(intro.start, intro.end, dur)) {
+      skipped.current.intro = true; seekTo(intro.end); toast("Skipped intro");
+    } else if (skip.outro && next && !stopAfter && outro && !skipped.current.outro && t >= outro.start && outroIsSane(outro.start, dur)) {
+      skipped.current.outro = true; toast("Skipped outro"); router.push(next.href);
+    }
+  }, [t, dur, marks, skip.intro, skip.outro, stopAfter]); // eslint-disable-line react-hooks/exhaustive-deps
+  const inIntro = shown && !!marks.intro && t >= marks.intro.start && t < marks.intro.end;
+  const inOutro = shown && !!next && !!marks.outro && t >= marks.outro.start;
   const setVolume = (v: number) => { send("setVolume", [v]); send("setMuted", [v === 0]); setVol(v); setMuted(v === 0); };
   const toggleMute = () => { send("setMuted", [!muted]); setMuted(!muted); };
   const pickRate = (r: number) => { send("setPlaybackRate", [r]); setRate(r); };
@@ -201,13 +242,31 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/cupcake.png" alt="" aria-hidden className={cn("pointer-events-none absolute left-3.5 top-3.5 z-[7] size-11 select-none drop-shadow-[0_2px_8px_rgba(0,0,0,.65)] transition-opacity duration-500", hidden ? "opacity-15" : "opacity-35")} />
 
-      {ready && !playing && (
+      {ready && !loaded && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-[8] grid -translate-x-1/2 -translate-y-1/2 place-items-center gap-2 text-center" role="status">
+          <Loader2 className="size-10 animate-spin text-frost" />
+          <span className="text-[11.5px] font-extrabold uppercase tracking-[.14em] text-white/70">Loading</span>
+        </div>
+      )}
+      {ready && loaded && !shown && (
         <button type="button" onClick={() => { toggle(); wake(); }} aria-label="Play"
           className="absolute left-1/2 top-1/2 z-[8] grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-frost text-frost-ink shadow-[0_0_0_10px_rgb(var(--glow)/.25),0_20px_50px_-12px_rgba(0,0,0,.7)] transition hover:scale-105">
           <Play className="ml-1 size-8" fill="currentColor" />
         </button>
       )}
       {flash && <div className="pointer-events-none absolute left-1/2 top-1/2 z-[8] -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/60 px-5 py-2.5 text-[15px] font-extrabold text-white backdrop-blur animate-in fade-in zoom-in-95">{flash}</div>}
+
+      {/* skip buttons: a tap here, or no tap at all with the auto-skip switches */}
+      {inIntro && (
+        <button type="button" onClick={() => seekTo(marks.intro!.end)} className="absolute bottom-24 right-4 z-[10] flex h-11 items-center gap-2 rounded-full border-1.5 border-white/30 bg-black/60 px-5 text-[14px] font-extrabold text-white backdrop-blur-md transition hover:bg-frost hover:text-frost-ink animate-in fade-in slide-in-from-right-4">
+          <FastForward className="size-4" /> Skip intro
+        </button>
+      )}
+      {inOutro && next && (
+        <button type="button" onClick={() => router.push(next.href)} className="absolute bottom-24 right-4 z-[10] flex h-11 items-center gap-2 rounded-full bg-frost px-5 text-[14px] font-extrabold text-frost-ink shadow-press animate-in fade-in slide-in-from-right-4">
+          {next.label} <ChevronRight className="size-4" />
+        </button>
+      )}
 
       {menu && sheet && <div className="fixed inset-0 z-[65] bg-black/40" onClick={closeMenu} aria-hidden />}
       {menu && (
@@ -219,6 +278,7 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
           offset={subs.offset} onOffset={subs.setOffset} onAutoSync={() => {}} noAutoSync sync={subs.sync} hasCues={subs.cues.length > 0} onDownload={subs.downloadSubs}
           style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
           autoNext={autoNext} onAutoNext={setAuto} stopAfter={stopAfter} onStopAfter={setStopAfter}
+          autoSkipIntro={skip.intro} onAutoSkipIntro={skip.setIntro} autoSkipOutro={skip.outro} onAutoSkipOutro={skip.setOutro}
           sleepMin={sleepMin} onSleep={setSleepMin}
           page={page} onPage={setPage} onClose={closeMenu} sheet={sheet}
         />
@@ -241,7 +301,7 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
           {hover && dur > 0 && <div className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-lg bg-black/80 px-2 py-1 font-mono text-[11.5px] text-white" style={{ left: `${hover.x}%` }}>{clock(hover.t)}</div>}
         </div>
         <div className="flex items-center gap-1">
-          <button type="button" className={bar} onClick={toggle} aria-label={playing ? "Pause" : "Play"}>{playing ? <Pause className="size-5" fill="currentColor" /> : <Play className="size-5" fill="currentColor" />}</button>
+          <button type="button" className={bar} onClick={toggle} aria-label={shown ? "Pause" : "Play"}>{shown ? <Pause className="size-5" fill="currentColor" /> : <Play className="size-5" fill="currentColor" />}</button>
           <button type="button" className={cn(bar, "relative")} onClick={() => seekBy(-10)} aria-label="Back 10 seconds" title="Back 10s (J)"><RotateCcw className="size-[19px]" /><span className="pointer-events-none absolute text-[7.5px] font-black leading-none">10</span></button>
           <button type="button" className={cn(bar, "relative")} onClick={() => seekBy(10)} aria-label="Forward 10 seconds" title="Forward 10s (L)"><RotateCw className="size-[19px]" /><span className="pointer-events-none absolute text-[7.5px] font-black leading-none">10</span></button>
           {prev && <button type="button" className={bar} onClick={() => router.push(prev.href)} aria-label="Previous episode" title={prev.label}><SkipBack className="size-[18px]" /></button>}
