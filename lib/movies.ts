@@ -44,6 +44,14 @@ async function base(): Promise<string | null> {
   return url ? url.replace(/\/+$/, "") : null;
 }
 
+/** Health probe for the Moviebox container: reachable and answering its catalog? (for /api/health) */
+export async function movieboxPing(): Promise<{ configured: boolean; ok: boolean; ms: number }> {
+  if (!(await base())) return { configured: false, ok: false, ms: 0 };
+  const t = Date.now();
+  const d = await getJson("/catalog?type=movie&per_page=1", 20_000);
+  return { configured: true, ok: Array.isArray(d?.items), ms: Date.now() - t };
+}
+
 export async function moviesEnabled(): Promise<boolean> {
   return (await base()) !== null;
 }
@@ -244,4 +252,43 @@ export async function movieStream(subjectId: string, slug: string, se?: number, 
     .map((s: Raw) => ({ lang: s.lang ?? s.language ?? "en", label: s.label ?? s.name ?? (s.lang ?? "Subtitles"), url: s.url ?? "" }))
     .filter((s: { url: string }) => s.url);
   return { sources, subtitles };
+}
+
+// --- find a title on Moviebox ----------------------------------------------------------------------------------
+// The watch pages are keyed by IMDb id (lib/cinema), Moviebox by its own subject id, so a title is matched by name and
+// year the first time it is played and the match is remembered. A series is matched on its base name ("Severance S2"
+// is the series "Severance"), a film must be a film, and the year breaks ties between remakes.
+const norm = (t: string) => t.toLowerCase().replace(/&/g, "and").replace(/\s+s\d+(\s*-\s*s?\d+)?$/i, "").replace(/[^a-z0-9]+/g, " ").trim();
+
+export interface MovieboxMatch { id: string; slug: string }
+
+export async function movieboxFind(title: string, year: number | null, media: "movie" | "tv"): Promise<MovieboxMatch | null> {
+  if (!(await moviesEnabled()) || !title.trim()) return null;
+  const want = norm(title);
+  const key = `mb:find:${media}:${want}:${year ?? ""}`;
+  return cached<MovieboxMatch>(key, async () => {
+    const d = await getJson(`/catalog?type=${media}&per_page=24&q=${encodeURIComponent(title)}`, 20_000);
+    const rows: Raw[] = Array.isArray(d?.items) ? d.items : [];
+    // Moviebox's own type field is empty in the catalog, so the kind is read off the name: a series is listed once per
+    // season ("Breaking Bad S2", "Silo S1-S3"), all under one subject id, and a film has no season on its name.
+    const isSeason = (r: Raw) => /\sS\d+(\s*-\s*S?\d+)?$/i.test(String(r.name ?? ""));
+    const named = rows.filter((r) => r?.subject_id && r?.slug && norm(String(r.name ?? "")) === want && (media === "tv" ? isSeason(r) : !isSeason(r)));
+    if (!named.length) return null;
+    // one candidate per subject, dated by its earliest row (a series' first season is when it began)
+    const bySubject = new Map<string, { slug: string; first: number }>();
+    for (const r of named) {
+      const id = String(r.subject_id);
+      const y = Number(r.year) || 0;
+      const cur = bySubject.get(id);
+      if (!cur) bySubject.set(id, { slug: String(r.slug), first: y });
+      else if (y && (!cur.first || y < cur.first)) cur.first = y;
+    }
+    const cands = [...bySubject].map(([id, v]) => ({ id, ...v }));
+    const dist = (c: { first: number }) => (year && c.first ? Math.abs(c.first - year) : 0);
+    cands.sort((a, b) => dist(a) - dist(b));
+    const best = cands[0];
+    // a remake shares its name with the original, so the year has to agree (a season row can be a year off)
+    if (year && best.first && dist(best) > (media === "tv" ? 1 : 1)) return null;
+    return { id: best.id, slug: best.slug };
+  }, 24 * 3600);
 }

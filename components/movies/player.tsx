@@ -14,6 +14,10 @@ import { useNativeCues, useSubs } from "@/components/watch/use-subs";
 //     proxy so no CORS/Referer check can block it.
 //   • VidSrc / VidLink / … — TMDB-keyed iframe embeds. Instant and resilient
 //     (the embed host handles the CDN), and the only option for TV episodes.
+// one array for the life of the page: a fresh `[]` each render made the subtitles hook re-run its effect on every render and
+// loop ("Maximum update depth exceeded") until the tab slowed to a crawl
+const NO_TRACKS: never[] = [];
+
 export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string }) {
   const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
   // The direct 8Stream sources resolve lazily (see effect below), so the page
@@ -36,7 +40,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
   const [subStyle, patchSubStyle, resetSubStyle] = useSubStyle();
   const [subsOpen, setSubsOpen] = useState(false);
   const [native, setNative] = useState(false);
-  const subs = useSubs({ video, subKey: subKey ?? "m:none", title: "movie", ep: null, tracks: [], caption, setCaption });
+  const subs = useSubs({ video, subKey: subKey ?? "m:none", title: "movie", ep: null, tracks: NO_TRACKS, caption, setCaption });
   useEffect(() => { if (subs.mine) setCaption((c) => c ?? "mine"); }, [subs.mine]);
   useEffect(() => {
     const v = video.current;
@@ -51,9 +55,10 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
   useEffect(() => {
     if (useEmbed || !streamSrc || sources !== null) return;
     let on = true;
-    fetch(streamSrc).then((r) => (r.ok ? r.json() : null)).then((d) => {
+    // 12 seconds is plenty for a warm backend; a cold one is not worth a viewer's wait when an embed server is one tap away
+    fetch(streamSrc, { signal: AbortSignal.timeout(12000) }).then((r) => (r.ok ? r.json() : null)).then((d) => {
       if (!on) return;
-      const got: MovieSource[] = (d?.sources ?? []).map((s: { label: string; url: string }) => ({ label: s.label, url: s.url, format: "hls" as const }));
+      const got: MovieSource[] = (d?.sources ?? []).map((s: { label: string; url: string; format?: string; proxy?: string }) => ({ label: s.label, url: s.url, format: s.format === "hls" ? ("hls" as const) : ("mp4" as const), proxy: s.proxy }));
       setSources(got);
       if (got.length) setCur(got[0]);
       else { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); }
@@ -71,7 +76,10 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
     // One candidate per source: 8Stream's HLS (proxied through our origin) or an
     // embed. A watchdog advances if a source neither starts nor errors within a
     // few seconds, so a dead URL never stalls the player on a long timeout.
-    const chain = [cur.url].filter(Boolean) as string[];
+    // The direct url first (played with no Referer: the watch page sets a no-referrer policy, which a video element cannot set for itself), then the same-origin proxy for a
+    // CDN that insists on being asked a certain way. If both fail, hand over to the first embed server rather than
+    // leaving a black box: that is what "find a fallback" means for a viewer who just pressed play.
+    const chain = [cur.url, cur.proxy].filter(Boolean) as string[];
     let idx = 0;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     const started = () => { clearTimeout(watchdog); };
@@ -79,13 +87,14 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
       if (cancelled) return;
       clearTimeout(watchdog);
       idx += 1;
-      if (idx < chain.length) play(idx);
+      if (idx < chain.length) { play(idx); return; }
+      if (embeds[0]) { setNativeDead(true); setServer(embeds[0].name); }
     };
     const play = (n: number) => {
       v.src = chain[n];
       v.load();
       clearTimeout(watchdog);
-      if (n < chain.length - 1) watchdog = setTimeout(advance, 7000);
+      watchdog = setTimeout(advance, n < chain.length - 1 ? 7000 : 15000);
     };
     (async () => {
       if (cur.format === "hls" && !v.canPlayType("application/vnd.apple.mpegurl")) {
@@ -121,8 +130,10 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
   return (
     <div className="flex flex-col gap-2.5">
       {useEmbed && curEmbed ? (
+        // No sandbox attribute, on purpose: tested in a browser, every one of these servers detects a sandboxed frame and
+        // refuses to play ("Please Disable Sandbox"). `allow` is what lets them use fullscreen, autoplay and DRM.
         <iframe key={curEmbed.url} src={curEmbed.url} title="Player" allowFullScreen referrerPolicy="origin"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
           className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black" />
       ) : (
         <div className="relative" data-settings>
@@ -162,7 +173,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
         )}
         {!useEmbed && (sources?.length ?? 0) > 1 && (
           <>
-            <span className="text-[11px] font-extrabold uppercase tracking-[.12em] text-plum-muted">Audio</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[.12em] text-plum-muted">Quality</span>
             {sources!.map((s) => (
               <button key={s.label + s.url} type="button" aria-pressed={cur?.url === s.url} onClick={() => setCur(s)}
                 className={cn("h-8 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot", cur?.url === s.url && "border-frost-hot bg-frost text-frost-ink")}>

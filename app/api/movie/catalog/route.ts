@@ -11,6 +11,7 @@ export async function GET(req: Request) {
     sort: u.get("sort") ?? undefined,
     page: Number(u.get("page")) || 1,
     q: u.get("q") ?? undefined,
+    genre: u.get("genre") ?? undefined,
   });
   return Response.json(page, { headers: { "cache-control": "no-store" } });
 }

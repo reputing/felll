@@ -69,6 +69,33 @@ visitor ──▶ │ /  portal ─ kuro SSO / password ─▶ session cookie   
 30. Every menu, select, dialog, tooltip, confirm and toast is built from one shared style (`components/ui/popup.ts`), so they all follow the skin. The site never uses the browser's own dialogs.
 31. Small 21st.dev-style touches: a spotlight glow that follows the cursor on cards, a shimmering primary button, a marquee poster wall, skeleton shimmer and rise-in animations. All of it is disabled when the visitor prefers reduced motion.
 
+## Movies and series
+
+`/movies` is on with no API key. It works in three layers, each with a fallback:
+
+1. **Catalog and details: Cinemeta** (`lib/cinema.ts`), the public catalog behind Stremio. Browse by popular, top rated or
+   new, filter by genre, search; a title's page gets its cast, genres, trailer, every episode, the IMDb id and the TMDB id
+   in one call. Search falls back to IMDb's suggestion box if Cinemeta is down; every answer is also cached in D1 and a
+   stale copy is served through an outage. If `TMDB_API_KEY` is set TMDB is used as a second source (and keeps old
+   numeric links like `/movies/movie-278` working). Titles are keyed by IMDb id: `/movies/movie-tt0111161`,
+   `/movies/tv-tt0903747?se=2&ep=3`.
+2. **The "Cupcake" player: Moviebox** (`lib/movies.ts`, `moviebox-server/`), the container deployed with
+   `npm run moviebox:container:deploy`, URL in the `MOVIEBOX_API_URL` secret. A title is matched on Moviebox by name and
+   year (a series is matched on its base name, since Moviebox lists one row per season) and played as direct MP4 at up to
+   1080p. Each source has a same-origin proxy URL beside the direct one. **Moviebox's CDN refuses datacenter addresses**
+   (it answered 429 to Cloudflare's network and to the container), so this path depends on the viewer's own connection
+   being accepted; when it is not, the player moves on by itself.
+3. **Embed servers** (`lib/movie-servers.ts`): VidSrc.to, VidLink, YTHD, 2Embed (x2), VidNest and Viduki, played in an
+   iframe in the viewer's own browser, so a datacenter block does not touch them. The picker leaves out any host that
+   does not answer (checked at render, cached ten minutes). Every host in the list was loaded in a real browser and
+   showed a player for the right title; ones that said "Not found" (vidsrc.pm, vidsrc.net, nontongo) or whose domain is
+   gone (vidsrc.xyz, embed.su, moviesapi.club and others) are not in it. **The iframe has no `sandbox` attribute on
+   purpose**: every one of these refuses to play in a sandboxed frame.
+
+`GET /api/health` shows each layer (catalog, container, every embed host). To re-test the embed list, load each URL in
+a browser (a page with one iframe and no sandbox is enough) and look for a player with the right runtime: a host that
+returns 200 can still say "Not found" inside its page, which only a browser sees.
+
 ## Speed
 
 The old site took around 60 s per page because every page was rendered on

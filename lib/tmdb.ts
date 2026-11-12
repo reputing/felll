@@ -1,12 +1,15 @@
-// The movies & series layer, built on TMDB (The Movie Database) for the catalog
-// — browse, search, detail, cast, seasons — and for the ids every player needs:
-//   • 8Stream (lib/stream8.ts) plays a movie's HLS stream, keyed by IMDB id.
-//   • The embed servers below play movies and TV, keyed by TMDB id.
+// The movies & series layer: what the /movies pages and the home rail call.
 //
-// Lights up only when TMDB_API_KEY (a v3 key) is set; otherwise every call
-// soft-fails to empty and the /movies section shows its "coming soon" state.
+// The catalog and every title's details come from Cinemeta with no key (lib/cinema.ts), so the section is always on.
+// TMDB is the second source: when TMDB_API_KEY (a v3 key) is set it covers a Cinemeta outage and still serves the old
+// numeric links (/movies/movie-278). Playing is a separate matter (lib/movie-servers.ts for the embed servers,
+// /api/movie/stream for the direct ones), keyed by the ids a title carries.
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { background, db, now } from "./db";
+import { cinemaCatalog, cinemaDetail, cinemaEpisodes, cinemaTrending, IMDB, GENRES } from "./cinema";
+import { liveEmbeds, type MovieEmbed as Embed, type TitleIds } from "./movie-servers";
+
+export { GENRES };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Raw = any;
@@ -19,7 +22,7 @@ const PROFILE = "https://image.tmdb.org/t/p/w185";
 export type MovieMedia = "movie" | "tv";
 
 export interface MovieCard {
-  id: number;            // TMDB id
+  id: number | string;   // IMDb id (tt...) from Cinemeta, or a TMDB id
   media: MovieMedia;
   slug: string;          // `${media}-${id}`, the /movies/[slug] route key
   title: string;
@@ -27,12 +30,12 @@ export interface MovieCard {
   year: number | null;
   rating: string | null;
 }
-export interface MovieSource { label: string; url: string; format: "hls" | "mp4" }
+export interface MovieSource { label: string; url: string; format: "hls" | "mp4"; /** same-origin fallback for a CDN that is fussy about who asks */ proxy?: string }
 export interface MovieStream { sources: MovieSource[]; subtitles: { lang: string; label: string; url: string }[] }
-export interface MovieEmbed { name: string; url: string }
-export interface MovieEpisode { se: number; ep: number; title: string }
+export type MovieEmbed = Embed;
+export interface MovieEpisode { se: number; ep: number; title: string; overview?: string; thumb?: string | null; aired?: string | null }
 export interface MovieDetail {
-  id: number;
+  id: number | string;
   media: MovieMedia;
   slug: string;
   title: string;
@@ -46,6 +49,9 @@ export interface MovieDetail {
   seasons: { season: number; episodeCount: number }[];
   isSeries: boolean;
   imdbId: string | null;
+  tmdbId: number | null;
+  runtime?: string | null;
+  trailer?: string | null;
 }
 export interface MoviePage { items: MovieCard[]; totalPages: number }
 
@@ -62,9 +68,9 @@ async function apiKey(): Promise<string | null> {
   return e.TMDB_API_KEY || process.env.TMDB_API_KEY || null;
 }
 
-/** Whether the movies section is usable (the catalog needs a TMDB key). */
+/** The movies section is always on: Cinemeta needs no key. */
 export async function moviesEnabled(): Promise<boolean> {
-  return (await apiKey()) !== null;
+  return true;
 }
 
 /** Health probe: is TMDB configured and answering? (for /api/health) */
@@ -137,6 +143,8 @@ const cards = (results: Raw): MovieCard[] => (Array.isArray(results) ? results.m
 
 /** A broad "popular now" set for the homepage, mixing movies and series. */
 export async function tmdbTrending(limit = 18): Promise<MovieCard[]> {
+  const fromCinema = await cinemaTrending(limit);
+  if (fromCinema.length) return fromCinema;
   const data = await cached("tmdb:trending", () => tmdbGet("/trending/all/week"));
   return cards(data?.results).slice(0, limit);
 }
@@ -149,7 +157,9 @@ const SORT: Record<string, { movie: string; tv: string }> = {
 
 /** Browse / search titles. Search spans movies + TV; browse uses /discover with
  *  the chosen sort, or /trending for the "all" tab. */
-export async function movieCatalog(opts: { type?: string; sort?: string; page?: number; q?: string } = {}): Promise<MoviePage> {
+export async function movieCatalog(opts: { type?: string; sort?: string; page?: number; q?: string; genre?: string } = {}): Promise<MoviePage> {
+  const fromCinema = await cinemaCatalog(opts);
+  if (fromCinema.items.length || !(await apiKey())) return fromCinema;
   const media: MovieMedia | null = opts.type === "movie" ? "movie" : opts.type === "tv" ? "tv" : null;
   const sort = SORT[opts.sort ?? ""] ? opts.sort! : "popular";
   const page = Math.min(500, Math.max(1, opts.page || 1));
@@ -173,7 +183,12 @@ export async function movieCatalog(opts: { type?: string; sort?: string; page?: 
 }
 
 /** Full detail for a title (cast, genres, seasons, and the IMDB id for 8Stream). */
-export async function movieDetail(media: MovieMedia, id: number): Promise<MovieDetail | null> {
+export async function movieDetail(media: MovieMedia, id: number | string): Promise<MovieDetail | null> {
+  if (typeof id === "string" && IMDB.test(id)) {
+    const d = await cinemaDetail(media, id);
+    return d ? { ...d, id: d.id } : null;
+  }
+  id = Number(id);
   if ((media !== "movie" && media !== "tv") || !Number.isInteger(id)) return null;
   const data = await cached(`tmdb:detail:${media}:${id}`, () => tmdbGet(`/${media}/${id}?append_to_response=credits,external_ids`), 7 * 86400);
   if (!data?.id) return null;
@@ -197,12 +212,14 @@ export async function movieDetail(media: MovieMedia, id: number): Promise<MovieD
     seasons,
     isSeries: media === "tv",
     imdbId: data.external_ids?.imdb_id ?? data.imdb_id ?? null,
+    tmdbId: Number(data.id),
   };
 }
 
 /** Episodes of one season of a series. */
-export async function movieSeasonEpisodes(id: number, season: number): Promise<MovieEpisode[]> {
-  if (!Number.isInteger(id) || !Number.isInteger(season)) return [];
+export async function movieSeasonEpisodes(id: number | string, season: number): Promise<MovieEpisode[]> {
+  if (typeof id === "string" && IMDB.test(id)) return cinemaEpisodes(id, season);
+  if (typeof id !== "number" || !Number.isInteger(id) || !Number.isInteger(season)) return [];
   const data = await cached(`tmdb:season:${id}:${season}`, () => tmdbGet(`/tv/${id}/season/${season}`), 2 * 86400);
   return (Array.isArray(data?.episodes) ? data.episodes : []).map((e: Raw) => ({
     se: season,
@@ -211,26 +228,11 @@ export async function movieSeasonEpisodes(id: number, season: number): Promise<M
   }));
 }
 
-// --- Embed players ---------------------------------------------------------
-// Each is keyed by TMDB id; patterns differ per host. VidCore's base is
-// overridable (VIDCORE_EMBED_BASE) since the exact host moves. Embed hosts come
-// and go, so each is offered as a separate "server" the viewer can switch to.
-async function providers(): Promise<{ name: string; movie: (id: number) => string; tv: (id: number, s: number, e: number) => string }[]> {
-  const e = await env();
-  const vidcore = (e.VIDCORE_EMBED_BASE || process.env.VIDCORE_EMBED_BASE || "https://vidcore.org").replace(/\/+$/, "");
-  return [
-    { name: "VidSrc", movie: (id) => `https://vidsrc.xyz/embed/movie/${id}`, tv: (id, s, ep) => `https://vidsrc.xyz/embed/tv/${id}/${s}/${ep}` },
-    { name: "VidLink", movie: (id) => `https://vidlink.pro/movie/${id}`, tv: (id, s, ep) => `https://vidlink.pro/tv/${id}/${s}/${ep}` },
-    { name: "2Embed", movie: (id) => `https://www.2embed.cc/embed/${id}`, tv: (id, s, ep) => `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${ep}` },
-    { name: "VidCore", movie: (id) => `${vidcore}/embed/movie/${id}`, tv: (id, s, ep) => `${vidcore}/embed/tv/${id}/${s}/${ep}` },
-  ];
-}
-
-/** Embed players for a title (one per provider), keyed by its TMDB id. */
-export async function movieEmbeds(media: MovieMedia, tmdbId: number, se?: number, ep?: number): Promise<MovieEmbed[]> {
-  if (!Number.isInteger(tmdbId)) return [];
-  const list = await providers();
-  return list.map((p) => ({ name: p.name, url: media === "tv" ? p.tv(tmdbId, se || 1, ep || 1) : p.movie(tmdbId) }));
+// --- Embed players ---------------------------------------------------------------------------------
+/** Embed players for a title, one per live server, keyed by whichever ids it has (lib/movie-servers). */
+export async function movieEmbeds(media: MovieMedia, ids: TitleIds, se?: number, ep?: number): Promise<MovieEmbed[]> {
+  if (!ids.imdb && !ids.tmdb) return [];
+  return liveEmbeds(media, ids, se || 1, ep || 1);
 }
 
 // --- story map ---------------------------------------------------------------------------------
@@ -243,7 +245,14 @@ export interface StoryMap {
   items: { id: number; slug: string | null; title: string; year: number | null; poster: string | null; note: string; season?: number }[];
 }
 
-export async function movieStoryMap(media: MovieMedia, id: number): Promise<StoryMap | null> {
+export async function movieStoryMap(media: MovieMedia, id: number | string): Promise<StoryMap | null> {
+  if (typeof id === "string") {
+    // keyless titles: a series shows its seasons (there is no collection data for a film)
+    if (media !== "tv" || !IMDB.test(id)) return null;
+    const d = await cinemaDetail("tv", id);
+    if (!d || d.seasons.length < 2) return null;
+    return { kind: "seasons", name: d.title, items: d.seasons.map((x) => ({ id: x.season, slug: null, title: `Season ${x.season}`, year: null, poster: null, note: `${x.episodeCount} episode${x.episodeCount === 1 ? "" : "s"}`, season: x.season })) };
+  }
   if ((media !== "movie" && media !== "tv") || !Number.isInteger(id)) return null;
   const data = await cached(`tmdb:detail:${media}:${id}`, () => tmdbGet(`/${media}/${id}?append_to_response=credits,external_ids`), 7 * 86400);
   if (!data?.id) return null;

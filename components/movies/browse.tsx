@@ -5,6 +5,7 @@ import { Search, Star } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { cn } from "@/lib/utils";
 import type { MovieCard } from "@/lib/tmdb";
+import { GENRES } from "@/lib/cinema";
 
 // Anime has its own section, so the movies page is films + series only.
 const TABS = [
@@ -13,29 +14,38 @@ const TABS = [
   { v: "tv", label: "TV series" },
 ] as const;
 
+const SORTS = [
+  { v: "popular", label: "Popular" },
+  { v: "rating", label: "Top rated" },
+  { v: "recent", label: "New" },
+] as const;
+
 export function MovieBrowse() {
   const [type, setType] = useState("all");
+  const [sort, setSort] = useState<string>("popular");
+  const [genre, setGenre] = useState("");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MovieCard[] | null>(null);
   const [totalPages, setTotalPages] = useState(1);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  useEffect(() => { setPage(1); }, [type, q]);
+  useEffect(() => { setPage(1); }, [type, q, sort, genre]);
 
   useEffect(() => {
     clearTimeout(debounce.current);
     debounce.current = setTimeout(() => {
       setItems(null);
-      const qs = new URLSearchParams({ type, sort: "rating", page: String(page) });
+      const qs = new URLSearchParams({ type, sort, page: String(page) });
       if (q.trim()) qs.set("q", q.trim());
+      if (genre && sort !== "recent") qs.set("genre", genre);
       fetch(`/api/movie/catalog?${qs}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { setItems(d?.items ?? []); setTotalPages(d?.totalPages ?? 1); })
         .catch(() => setItems([]));
     }, q ? 350 : 0);
     return () => clearTimeout(debounce.current);
-  }, [type, q, page]);
+  }, [type, q, page, sort, genre]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -46,6 +56,22 @@ export function MovieBrowse() {
             {t.label}
           </button>
         ))}
+        {!q.trim() && (
+          <>
+            <span aria-hidden className="mx-1 hidden h-6 w-px bg-line sm:block" />
+            {SORTS.map((t) => (
+              <button key={t.v} type="button" aria-pressed={sort === t.v} onClick={() => setSort(t.v)}
+                className={cn("h-[42px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold hover:border-frost-hot", sort === t.v && "border-frost-hot bg-frost text-frost-ink")}>
+                {t.label}
+              </button>
+            ))}
+            <select value={sort === "recent" ? "" : genre} disabled={sort === "recent"} onChange={(e) => setGenre(e.target.value)} aria-label="Genre"
+              className="h-[42px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold outline-none hover:border-frost-hot disabled:opacity-50">
+              <option value="">All genres</option>
+              {GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </>
+        )}
         <div className="relative ml-auto">
           <Search aria-hidden className="pointer-events-none absolute left-3.5 top-1/2 size-[17px] -translate-y-1/2 text-plum-muted" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search movies & series…" aria-label="Search"

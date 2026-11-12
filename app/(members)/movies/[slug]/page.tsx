@@ -9,16 +9,19 @@ import { cn } from "@/lib/utils";
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ se?: string; ep?: string }> };
 
-// Route key is `${media}-${tmdbId}`, e.g. movie-157336 or tv-1396.
-function parseSlug(slug: string): { media: MovieMedia; id: number } | null {
-  const m = /^(movie|tv)-(\d+)$/.exec(slug);
-  return m ? { media: m[1] as MovieMedia, id: Number(m[2]) } : null;
+// Route key is `${media}-${id}`: the IMDb id for titles from the keyless catalog (movie-tt0111161, tv-tt0903747), or a
+// TMDB id (movie-157336) for links made while a TMDB key was in use.
+function parseSlug(slug: string): { media: MovieMedia; id: number | string } | null {
+  const m = /^(movie|tv)-(tt\d{5,10}|\d+)$/.exec(slug);
+  return m ? { media: m[1] as MovieMedia, id: m[2].startsWith("tt") ? m[2] : Number(m[2]) } : null;
 }
 
 export async function generateMetadata({ params }: Props) {
   const ref = parseSlug((await params).slug);
   const d = ref ? await movieDetail(ref.media, ref.id).catch(() => null) : null;
-  return { title: d ? d.title : "Watch" };
+  // no-referrer: the direct stream's CDN is happiest with no Referer at all (a video element cannot set its own policy;
+  // the embed iframes set theirs).
+  return { title: d ? d.title : "Watch", referrer: "no-referrer" as const };
 }
 
 export default async function MovieWatchPage({ params, searchParams }: Props) {
@@ -35,14 +38,15 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const se = d.isSeries ? Number(sp.se) || d.seasons[0]?.season || 1 : undefined;
   const ep = d.isSeries ? Number(sp.ep) || 1 : undefined;
 
-  // Embed servers (TMDB-keyed) render with the page. The direct 8Stream HLS for
-  // a movie resolves lazily in the player via this endpoint, so the page is fast.
+  // The embed servers render with the page (dead ones already left out). The direct sources resolve lazily in the
+  // player through /api/movie/stream, so the page itself never waits on them.
   const [embeds, epList, story] = await Promise.all([
-    movieEmbeds(d.media, d.id, se, ep),
+    movieEmbeds(d.media, { imdb: d.imdbId, tmdb: d.tmdbId }, se, ep),
     d.isSeries && se ? movieSeasonEpisodes(d.id, se) : Promise.resolve([]),
     movieStoryMap(d.media, d.id).catch(() => null),
   ]);
-  const streamSrc = d.media === "movie" && d.imdbId ? `/api/movie/stream?imdb=${encodeURIComponent(d.imdbId)}` : null;
+  const streamQs = new URLSearchParams({ media: d.media, title: d.title, ...(d.year ? { year: String(d.year) } : {}), ...(d.imdbId ? { imdb: d.imdbId } : {}), ...(se ? { se: String(se), ep: String(ep ?? 1) } : {}) });
+  const streamSrc = `/api/movie/stream?${streamQs}`;
 
   return (
     <div className="mx-auto flex max-w-[1240px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
@@ -51,7 +55,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
         <ChevronRight className="size-3.5" /><span className="truncate text-frost-text">{d.title}</span>
       </nav>
 
-      {streamSrc || embeds.length ? <MoviePlayer streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${d.isSeries ? `-s${se}e${ep}` : ""}`} /> : (
+      {streamSrc || embeds.length ? <MoviePlayer key={`${slug}-${se ?? 0}-${ep ?? 0}`} streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${d.isSeries ? `-s${se}e${ep}` : ""}`} /> : (
         <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center text-night-muted">
           <div>
             <p className="text-[17px] font-extrabold text-night-text">Not streamable right now</p>
