@@ -49,11 +49,15 @@ const twoEmbed = (base: string): Pick<Host, "movie" | "tv"> => ({
 // document.domain, which no sandboxed frame allows), so they stay in AD_HOSTS for reference and the health page only.
 // MOVIE_ALLOW_AD_SERVERS=1 would show them; do not set it.
 const ZEUS_SANDBOX = "allow-scripts allow-same-origin";
+// CineSrc's documented embed options: controls=false removes its own control bar and logo (ours is drawn over the frame,
+// components/movies/zeus-controls.tsx, and drives it with its postMessage commands); autonext=false and continueprompt=false
+// leave "what next" and "resume" to our page; color is our pink; seek is the skip-button length.
+const ZEUS_OPTIONS = "controls=false&autonext=false&continueprompt=false&seek=10&color=%23f79cc2";
 const HOSTS: Host[] = [
   {
     name: "Zeus", sandbox: ZEUS_SANDBOX, origin: "https://cinesrc.st",
-    movie: (i) => (i.tmdb ? `https://cinesrc.st/embed/movie/${i.tmdb}` : null),
-    tv: (i, s, e) => (i.tmdb ? `https://cinesrc.st/embed/tv/${i.tmdb}?s=${s}&e=${e}` : null),
+    movie: (i) => (i.tmdb ? `https://cinesrc.st/embed/movie/${i.tmdb}?${ZEUS_OPTIONS}` : null),
+    tv: (i, s, e) => (i.tmdb ? `https://cinesrc.st/embed/tv/${i.tmdb}?s=${s}&e=${e}&${ZEUS_OPTIONS}` : null),
   },
 ];
 

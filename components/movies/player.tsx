@@ -1,6 +1,7 @@
 "use client";
 import type Hls from "hls.js";
 import { usePathname, useRouter } from "next/navigation";
+import { ZeusControls } from "@/components/movies/zeus-controls";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Captions, ChevronRight, Loader2, Maximize, Minimize, RectangleHorizontal, RotateCw } from "lucide-react";
@@ -24,7 +25,7 @@ export interface PlayTrack { imdb: string; media: "movie" | "tv"; season?: numbe
 
 const mmss = (s: number) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
 
-export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, next }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack; next?: { href: string; label: string } }) {
+export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, next, prev }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack; next?: { href: string; label: string }; prev?: { href: string; label: string } }) {
   const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
   // The direct 8Stream sources resolve lazily (see effect below), so the page
   // never blocks on them. "Cupcake" is offered optimistically until proven dead.
@@ -51,15 +52,6 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const [reloads, setReloads] = useState(0);
   const [nextIn, setNextIn] = useState<number | null>(null);
   const nextDismissed = useRef(false);
-  // the server's own logo is only drawn when its frame is at least 768px wide, so ours only needs to be then too
-  const [wide, setWide] = useState(true);
-  useEffect(() => {
-    const el = box.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setWide(el.clientWidth >= 768));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [useEmbed, curEmbed?.url]);
   useEffect(() => { setReady(false); setNextIn(null); nextDismissed.current = false; }, [curEmbed?.url, reloads]);
   useEffect(() => { const t = setTimeout(() => setReady(true), 7000); return () => clearTimeout(t); }, [curEmbed?.url, reloads]); // never hide a working player behind a spinner
   useEffect(() => { const on = () => setFull(!!document.fullscreenElement); document.addEventListener("fullscreenchange", on); return () => document.removeEventListener("fullscreenchange", on); }, []);
@@ -277,7 +269,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
       ) : useEmbed && curEmbed ? (
         // The frame, dressed like the anime player: night ground, 26px corners, a frost spinner over the poster until the
         // player is ready. What is inside the frame is the server's own player and cannot be restyled from here.
-        <div ref={box} className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-frost-hot/45 bg-night shadow-[0_0_0_1px_rgb(var(--glow)/.18),0_30px_80px_-28px_rgb(var(--glow)/.5)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", theater && !full && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
+        <div ref={box} className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", theater && !full && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
           {/* No sandbox attribute here only for a server that cannot take one (see lib/movie-servers.ts). For Zeus it is set before
               src, so the first request is already sandboxed: scripts and same-origin only, so popups, redirects, top navigation,
               forms, downloads and modals are blocked by the browser. `allow` grants only autoplay, fullscreen and picture-in-picture. */}
@@ -285,25 +277,9 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
             allow={curEmbed.sandbox ? "autoplay; fullscreen; picture-in-picture" : "autoplay; fullscreen; picture-in-picture; encrypted-media"}
             onLoad={() => setTimeout(() => setReady(true), 900)}
             className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />
-          {curEmbed.sandbox && (
-            <>
-              {/* Our mark in place of the server's own "Powered by" link, which sits at a fixed spot in its control bar
-                  (measured: 81x32, 259px from the right edge, 12px from the bottom, drawn only when the frame is 768px or wider).
-                  It covers that spot and swallows clicks on it. */}
-              {wide && (
-                <div className="absolute bottom-[9px] right-[255px] z-10 flex h-[38px] w-[89px] items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-frost to-frost-hot px-2 shadow-[0_0_20px_rgb(var(--glow)/.55),inset_0_1px_0_rgba(255,255,255,.45)] ring-1 ring-white/30">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/logo.png" alt="" className="size-[18px] drop-shadow-[0_1px_2px_rgba(0,0,0,.25)]" />
-                  <span className="text-[13px] font-extrabold lowercase tracking-[-.3px] text-frost-ink">cupcake</span>
-                </div>
-              )}
-              {/* and a quiet watermark in the corner, like the anime player's */}
-              <div className="pointer-events-none absolute left-3.5 top-3 z-10 flex items-center gap-1.5 rounded-full bg-black/35 py-1 pl-1.5 pr-2.5 backdrop-blur-sm">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/logo.png" alt="" className="size-[18px]" />
-                <span className="text-[12px] font-extrabold lowercase tracking-[-.2px] text-frost">cupcake<span className="text-white/60">.gg</span></span>
-              </div>
-            </>
+          {/* our own controls and the cupcake bug over a frame whose own controls are off (see zeus-controls.tsx) */}
+          {curEmbed.sandbox && curEmbed.origin && (
+            <ZeusControls frame={frame} box={box} origin={curEmbed.origin} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull} />
           )}
           {!ready && (
             <div className="pointer-events-none absolute inset-0 grid place-items-center bg-night">
@@ -365,10 +341,14 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
       <div className="flex flex-wrap items-center gap-2">
         {useEmbed && (
           <>
-            <button type="button" aria-pressed={theater} onClick={() => setTheater((t) => !t)} className={cn("hidden h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot lg:flex", theater && "border-frost-hot text-frost-text")}><RectangleHorizontal className="size-4" />Theater</button>
-            <button type="button" onClick={goFull} className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot">{full ? <Minimize className="size-4" /> : <Maximize className="size-4" />}{full ? "Exit" : "Fullscreen"}</button>
+            {!curEmbed?.sandbox && (
+              <>
+                <button type="button" aria-pressed={theater} onClick={() => setTheater((t) => !t)} className={cn("hidden h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot lg:flex", theater && "border-frost-hot text-frost-text")}><RectangleHorizontal className="size-4" />Theater</button>
+                <button type="button" onClick={goFull} className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot">{full ? <Minimize className="size-4" /> : <Maximize className="size-4" />}{full ? "Exit" : "Fullscreen"}</button>
+              </>
+            )}
             <button type="button" onClick={() => setReloads((n) => n + 1)} title="Reload the player at your last spot" className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot"><RotateCw className="size-4" />Reload</button>
-            {next && <button type="button" onClick={() => router.push(next.href)} className="ml-auto flex h-9 items-center gap-1.5 rounded-full border-1.5 border-frost-hot bg-frost px-3.5 text-[12px] font-extrabold text-frost-ink">{next.label}<ChevronRight className="size-4" /></button>}
+            {!curEmbed?.sandbox && next && <button type="button" onClick={() => router.push(next.href)} className="ml-auto flex h-9 items-center gap-1.5 rounded-full border-1.5 border-frost-hot bg-frost px-3.5 text-[12px] font-extrabold text-frost-ink">{next.label}<ChevronRight className="size-4" /></button>}
           </>
         )}
         {servers.length > 1 && (

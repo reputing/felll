@@ -77,6 +77,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const idx = tv ? allEps.findIndex((e) => e.se === se && e.ep === ep) : -1;
   const nextEp = idx >= 0 ? allEps.slice(idx + 1).find((e) => !e.aired || Date.parse(e.aired) <= Date.now()) : null;
   const curEp = idx >= 0 ? allEps[idx] : null;
+  const prevEp = idx > 0 ? allEps[idx - 1] : null;
   const totalAired = allEps.filter((e) => !e.aired || Date.parse(e.aired) <= Date.now()).length || null;
 
   // Zeus is CineSrc in a sandboxed iframe (lib/movie-servers.ts says why it, and nothing else, is offered). It resumes at ?t=.
@@ -101,6 +102,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
       {streamSrc || embeds.length ? (
         <MoviePlayer
           key={`${slug}-${se ?? 0}-${ep ?? 0}`} streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${tv ? `-s${se}e${ep}` : ""}`}
+          prev={prevEp ? { href: `/movies/${slug}?se=${prevEp.se}&ep=${prevEp.ep}`, label: `${prevEp.se !== se ? `S${prevEp.se} ` : ""}Episode ${prevEp.ep}` } : undefined}
           next={nextEp ? { href: `/movies/${slug}?se=${nextEp.se}&ep=${nextEp.ep}`, label: `${nextEp.se !== se ? `S${nextEp.se} ` : ""}Episode ${nextEp.ep}` } : undefined}
           track={imdb && ready ? { imdb, media: d.media, season: se, episode: ep, title: d.title, poster: d.poster, year: d.year, epTitle: curEp?.title ?? null, episodes: totalAired, resume } : undefined}
         />

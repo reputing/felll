@@ -1,0 +1,169 @@
+"use client";
+import { ChevronRight, Maximize, Minimize, Pause, Play, RectangleHorizontal, RotateCcw, RotateCw, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { cn, clock } from "@/lib/utils";
+
+// Our own control bar for Zeus: the same bar, seek line, buttons and cupcake bug as the anime player, drawn over a frame whose
+// own controls are switched off (CineSrc's documented `controls=false`). It drives the video with CineSrc's documented
+// postMessage commands (play, pause, seek, setVolume, setMuted, setPlaybackRate) and follows its events (play, pause,
+// timeupdate, volumechange, ratechange, ended), which are only believed from its own origin and its own frame.
+const bar = "grid size-10 place-items-center rounded-full text-white/90 transition hover:bg-white/15 hover:text-white";
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+export interface Hop { href: string; label: string }
+
+export function ZeusControls({ frame, box, origin, ready, prev, next, theater, onTheater, full, onFull }: {
+  frame: RefObject<HTMLIFrameElement | null>; box: RefObject<HTMLDivElement | null>; origin: string; ready: boolean;
+  prev?: Hop; next?: Hop; theater: boolean; onTheater: () => void; full: boolean; onFull: () => void;
+}) {
+  const router = useRouter();
+  const [playing, setPlaying] = useState(false);
+  const [t, setT] = useState(0);
+  const [dur, setDur] = useState(0);
+  const [vol, setVol] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [rate, setRate] = useState(1);
+  const [idle, setIdle] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const poke = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scrubbing = useRef(false);
+
+  const send = useCallback((command: string, args: unknown[] = []) => {
+    frame.current?.contentWindow?.postMessage({ type: "cinesrc:command", command, args }, origin);
+  }, [frame, origin]);
+
+  // --- what the player says ---------------------------------------------------------------------------------------
+  useEffect(() => {
+    const on = (e: MessageEvent) => {
+      if (e.origin !== origin || e.source !== frame.current?.contentWindow) return;
+      const d = e.data;
+      if (!d || typeof d.type !== "string") return;
+      switch (d.type) {
+        case "cinesrc:play": setPlaying(true); break;
+        case "cinesrc:pause": case "cinesrc:ended": setPlaying(false); break;
+        case "cinesrc:loadedmetadata": if (d.duration > 0) setDur(d.duration); break;
+        case "cinesrc:timeupdate": if (!scrubbing.current) setT(Number(d.currentTime) || 0); if (d.duration > 0) setDur(d.duration); break;
+        case "cinesrc:seeked": setT(Number(d.currentTime) || 0); break;
+        case "cinesrc:volumechange": setVol(Number(d.volume)); setMuted(!!d.muted); break;
+        case "cinesrc:ratechange": setRate(Number(d.playbackRate) || 1); break;
+        case "cinesrc:response":
+          if (d.command === "getVolume") setVol(Number(d.result));
+          else if (d.command === "getMuted") setMuted(!!d.result);
+          else if (d.command === "getPaused") setPlaying(!d.result);
+          break;
+      }
+    };
+    window.addEventListener("message", on);
+    return () => window.removeEventListener("message", on);
+  }, [origin, frame]);
+  // once it is ready, ask where it stands (a volume the viewer set last time, whether it autoplayed)
+  useEffect(() => { if (ready) { send("getVolume"); send("getMuted"); send("getPaused"); } }, [ready, send]);
+
+  // --- fading the controls out while it plays ----------------------------------------------------------------------
+  const wake = useCallback(() => { setIdle(false); clearTimeout(poke.current); poke.current = setTimeout(() => setIdle(true), 2600); }, []);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.addEventListener("mousemove", wake); el.addEventListener("touchstart", wake, { passive: true });
+    return () => { el.removeEventListener("mousemove", wake); el.removeEventListener("touchstart", wake); clearTimeout(poke.current); };
+  }, [box, wake]);
+  const hidden = playing && idle && !menu && !hover;
+
+  // --- actions -----------------------------------------------------------------------------------------------------
+  const say = (s: string) => { setFlash(s); setTimeout(() => setFlash((f) => (f === s ? null : f)), 700); };
+  const toggle = useCallback(() => { if (playing) { send("pause"); } else { send("play"); } setPlaying(!playing); }, [playing, send]);
+  const seekTo = useCallback((s: number) => { const v = Math.max(0, dur ? Math.min(dur - 0.5, s) : s); send("seek", [v]); setT(v); }, [dur, send]);
+  const seekBy = useCallback((d: number) => { seekTo(t + d); say(d > 0 ? `+${d}s` : `${d}s`); }, [seekTo, t]);
+  const setVolume = (v: number) => { send("setVolume", [v]); send("setMuted", [v === 0]); setVol(v); setMuted(v === 0); };
+  const toggleMute = () => { send("setMuted", [!muted]); setMuted(!muted); };
+  const pickRate = (r: number) => { send("setPlaybackRate", [r]); setRate(r); setMenu(false); };
+
+  // keys, the way the anime player has them: space/k play, j/l back and forward 10s, arrows 5s, m mute, f fullscreen, t theater
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === " " || k === "k") { e.preventDefault(); toggle(); wake(); }
+      else if (k === "j") { seekBy(-10); wake(); }
+      else if (k === "l") { seekBy(10); wake(); }
+      else if (k === "arrowleft") { e.preventDefault(); seekBy(-5); wake(); }
+      else if (k === "arrowright") { e.preventDefault(); seekBy(5); wake(); }
+      else if (k === "m") { toggleMute(); wake(); }
+      else if (k === "f") onFull();
+      else if (k === "t") onTheater();
+    };
+    document.addEventListener("keydown", on);
+    return () => document.removeEventListener("keydown", on);
+  });
+
+  const pct = dur ? Math.min(100, (t / dur) * 100) : 0;
+  const VolIcon = muted || vol === 0 ? VolumeX : vol < 0.5 ? Volume1 : Volume2;
+  const scrub = (e: { clientX: number; currentTarget: HTMLElement }) => { const r = e.currentTarget.getBoundingClientRect(); const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); return x * dur; };
+
+  return (
+    <>
+      {/* the picture itself takes the clicks (the frame cannot: its own controls are off): click plays, double-click is fullscreen */}
+      <div className={cn("absolute inset-0 z-[6]", hidden && "cursor-none")} onClick={() => { toggle(); wake(); }} onDoubleClick={onFull} aria-hidden />
+
+      {/* Cupcake broadcaster bug: the same soft watermark the anime player wears on our own server */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/cupcake.png" alt="" aria-hidden className={cn("pointer-events-none absolute left-3.5 top-3.5 z-[7] size-11 select-none drop-shadow-[0_2px_8px_rgba(0,0,0,.65)] transition-opacity duration-500", hidden ? "opacity-15" : "opacity-35")} />
+
+      {ready && !playing && (
+        <button type="button" onClick={() => { toggle(); wake(); }} aria-label="Play"
+          className="absolute left-1/2 top-1/2 z-[8] grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-frost text-frost-ink shadow-[0_0_0_10px_rgb(var(--glow)/.25),0_20px_50px_-12px_rgba(0,0,0,.7)] transition hover:scale-105">
+          <Play className="ml-1 size-8" fill="currentColor" />
+        </button>
+      )}
+      {flash && <div className="pointer-events-none absolute left-1/2 top-1/2 z-[8] -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/60 px-5 py-2.5 text-[15px] font-extrabold text-white backdrop-blur animate-in fade-in zoom-in-95">{flash}</div>}
+
+      {/* controls */}
+      <div className={cn("absolute inset-x-0 bottom-0 z-[9] bg-gradient-to-t from-black/85 via-black/40 to-transparent px-2 pb-1.5 pt-14 transition-opacity duration-300 sm:px-4 sm:pb-3", hidden && "pointer-events-none opacity-0")} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="group/seek relative mb-2 h-5 cursor-pointer touch-none"
+          onPointerDown={(e) => { if (!dur) return; scrubbing.current = true; e.currentTarget.setPointerCapture(e.pointerId); const v = scrub(e); setT(v); }}
+          onPointerMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); setHover({ x: x * 100, t: x * dur }); if (scrubbing.current && dur) setT(scrub(e)); }}
+          onPointerUp={(e) => { if (scrubbing.current && dur) { seekTo(scrub(e)); } scrubbing.current = false; }}
+          onPointerLeave={() => setHover(null)}
+          role="slider" aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(dur)} aria-valuenow={Math.round(t)} tabIndex={-1}
+        >
+          <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/20 transition-all group-hover/seek:h-1.5">
+            <div className="absolute inset-y-0 left-0 bg-frost" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-frost shadow-[0_0_0_4px_rgb(var(--glow)/.35)] opacity-0 transition group-hover/seek:opacity-100" style={{ left: `${pct}%` }} />
+          {hover && dur > 0 && <div className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-lg bg-black/80 px-2 py-1 font-mono text-[11.5px] text-white" style={{ left: `${hover.x}%` }}>{clock(hover.t)}</div>}
+        </div>
+        <div className="flex items-center gap-1">
+          <button type="button" className={bar} onClick={toggle} aria-label={playing ? "Pause" : "Play"}>{playing ? <Pause className="size-5" fill="currentColor" /> : <Play className="size-5" fill="currentColor" />}</button>
+          <button type="button" className={cn(bar, "relative")} onClick={() => seekBy(-10)} aria-label="Back 10 seconds" title="Back 10s (J)"><RotateCcw className="size-[19px]" /><span className="pointer-events-none absolute text-[7.5px] font-black leading-none">10</span></button>
+          <button type="button" className={cn(bar, "relative")} onClick={() => seekBy(10)} aria-label="Forward 10 seconds" title="Forward 10s (L)"><RotateCw className="size-[19px]" /><span className="pointer-events-none absolute text-[7.5px] font-black leading-none">10</span></button>
+          {prev && <button type="button" className={bar} onClick={() => router.push(prev.href)} aria-label="Previous episode" title={prev.label}><SkipBack className="size-[18px]" /></button>}
+          {next && <button type="button" className={bar} onClick={() => router.push(next.href)} aria-label="Next episode" title={next.label}><SkipForward className="size-[18px]" /></button>}
+          <div className="group/vol flex items-center">
+            <button type="button" className={bar} onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"}><VolIcon className="size-5" /></button>
+            <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : vol} aria-label="Volume" onChange={(e) => setVolume(Number(e.target.value))}
+              className="w-0 accent-[var(--frost)] opacity-0 transition-all group-hover/vol:w-20 group-hover/vol:opacity-100 focus:w-20 focus:opacity-100" />
+          </div>
+          <span className="ml-2 font-mono text-[12.5px] tabular-nums text-white/85">{clock(t)} <span className="text-white/45">/ {clock(dur)}</span></span>
+          <span className="flex-1" />
+          <div className="relative">
+            <button type="button" className={cn(bar, "w-auto px-3 font-mono text-[12.5px] font-bold", rate !== 1 && "text-frost")} onClick={() => setMenu((m) => !m)} aria-label="Playback speed" aria-expanded={menu}>{rate}×</button>
+            {menu && (
+              <div className="absolute bottom-12 right-0 flex flex-col rounded-2xl border-1.5 border-night-line bg-night/95 p-1.5 shadow-[0_12px_28px_-12px_rgba(0,0,0,.8)] backdrop-blur animate-in fade-in slide-in-from-bottom-1">
+                {RATES.map((r) => <button key={r} type="button" onClick={() => pickRate(r)} className={cn("h-8 rounded-xl px-4 text-left font-mono text-[13px] text-white/85 hover:bg-white/10", r === rate && "bg-frost/20 text-frost")}>{r}×</button>)}
+              </div>
+            )}
+          </div>
+          <button type="button" className={cn(bar, "hidden md:grid", theater && "text-frost")} onClick={onTheater} aria-label="Theater mode" aria-pressed={theater} title="Theater (T)"><RectangleHorizontal className="size-5" /></button>
+          <button type="button" className={bar} onClick={onFull} aria-label="Fullscreen" title="Fullscreen (F)">{full ? <Minimize className="size-5" /> : <Maximize className="size-5" />}</button>
+          {next && <button type="button" onClick={() => router.push(next.href)} className="ml-1 hidden h-9 items-center gap-1 rounded-full bg-frost px-3.5 text-[12px] font-extrabold text-frost-ink sm:flex">{next.label}<ChevronRight className="size-4" /></button>}
+        </div>
+      </div>
+    </>
+  );
+}

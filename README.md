@@ -85,7 +85,9 @@ visitor ──▶ │ /  portal ─ kuro SSO / password ─▶ session cookie   
    1080p. Each source has a same-origin proxy URL beside the direct one. **Moviebox's CDN refuses datacenter addresses**
    (it answered 429 to Cloudflare's network and to the container), so this path depends on the viewer's own connection
    being accepted; when it is not, the player moves on by itself.
-3. **Zeus: CineSrc in a sandboxed iframe** (`lib/movie-servers.ts`). The only server. It plays with `sandbox="allow-scripts
+3. **Zeus: CineSrc in a sandboxed iframe, with our own controls** (`lib/movie-servers.ts`, `components/movies/zeus-controls.tsx`). The frame is
+   opened with CineSrc's documented `controls=false`, so it draws only the picture; the control bar, seek line, speed, theater,
+   fullscreen, keys and the cupcake bug are ours (the anime player's), driving it with its documented postMessage commands. The only server. It plays with `sandbox="allow-scripts
    allow-same-origin"` (no popups, redirects, top navigation, forms, downloads or modals) and `allow` limited to autoplay,
    fullscreen and picture-in-picture; resume is `?t=<seconds>` and progress comes from its `cinesrc:*` messages (origin and
    source checked). It needs a TMDB id (Cinemeta supplies it). It still asks one ad exchange for something, which the sandbox
