@@ -33,8 +33,12 @@ export function parseIndexed(text: string, count: number): Map<number, string> {
 // ---- PDF -------------------------------------------------------------------------------------------------------------
 /** The fillable fields of a PDF form, and its text (for context, or for a flat PDF with no fields). */
 export async function readPdf(buf: ArrayBuffer): Promise<{ fields: FormField[]; text: string; pages: number }> {
+  // pdf-lib reads a damaged file leniently and then fails somewhere inside (on the page count, say): one clear message for all of it
+  try { return await readPdfInner(buf); } catch { throw new Error("couldn’t read that PDF (it may be damaged or locked)"); }
+}
+async function readPdfInner(buf: ArrayBuffer): Promise<{ fields: FormField[]; text: string; pages: number }> {
   const { PDFDocument, PDFTextField, PDFCheckBox, PDFDropdown, PDFRadioGroup, PDFOptionList } = await import("pdf-lib");
-  const doc = await PDFDocument.load(buf, { ignoreEncryption: true, updateMetadata: false }).catch(() => { throw new Error("couldn’t read that PDF (it may be damaged or locked)"); });
+  const doc = await PDFDocument.load(buf, { ignoreEncryption: true, updateMetadata: false })
   const fields: FormField[] = [];
   try {
     for (const f of doc.getForm().getFields()) {
