@@ -60,6 +60,9 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
   const base = useRef({ t: 0, at: 0, playing: false, rate: 1 });
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  // under 640px the settings open as a sheet at the bottom of the screen (the picture is too small to hold them)
+  const [sheet, setSheet] = useState(false);
+  useEffect(() => { const q = window.matchMedia("(max-width: 639px)"); const on = () => setSheet(q.matches); on(); q.addEventListener("change", on); return () => q.removeEventListener("change", on); }, []);
   const poke = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrubbing = useRef(false);
 
@@ -206,6 +209,7 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
       )}
       {flash && <div className="pointer-events-none absolute left-1/2 top-1/2 z-[8] -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/60 px-5 py-2.5 text-[15px] font-extrabold text-white backdrop-blur animate-in fade-in zoom-in-95">{flash}</div>}
 
+      {menu && sheet && <div className="fixed inset-0 z-[65] bg-black/40" onClick={closeMenu} aria-hidden />}
       {menu && (
         <SettingsPanel
           sources={ZEUS_SERVERS.map((x): Source => ({ id: x.id, label: x.name, audio: "sub" }))} current={used ? { id: used, label: serverName(used), audio: "sub" } : undefined} dead={new Set()} failed={new Set()} onPick={(x) => pickServer(String(x.id))}
@@ -216,7 +220,7 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
           style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
           autoNext={autoNext} onAutoNext={setAuto} stopAfter={stopAfter} onStopAfter={setStopAfter}
           sleepMin={sleepMin} onSleep={setSleepMin}
-          page={page} onPage={setPage} onClose={closeMenu}
+          page={page} onPage={setPage} onClose={closeMenu} sheet={sheet}
         />
       )}
 
@@ -247,7 +251,7 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
             <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : vol} aria-label="Volume" onChange={(e) => setVolume(Number(e.target.value))}
               className="w-0 accent-[var(--frost)] opacity-0 transition-all group-hover/vol:w-20 group-hover/vol:opacity-100 focus:w-20 focus:opacity-100" />
           </div>
-          <span className="ml-2 font-mono text-[12.5px] tabular-nums text-white/85">{clock(t)} <span className="text-white/45">/ {clock(dur)}</span></span>
+          <span className="ml-1 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-white/85 sm:ml-2 sm:text-[12.5px]">{clock(t)} <span className="text-white/45">/ {clock(dur)}</span></span>
           <span className="flex-1" />
           <button type="button" className={cn(bar, caption != null && "text-frost")} onClick={() => { setPage("subs"); setMenu(true); }} aria-label="Subtitles" title="Subtitles"><Captions className="size-5" /></button>
           <button type="button" className={cn(bar, menu && "text-frost")} onClick={() => { if (menu) closeMenu(); else { setPage("main"); setMenu(true); } }} aria-label="Settings" aria-expanded={menu} title="Settings"><Settings className="size-5" /></button>

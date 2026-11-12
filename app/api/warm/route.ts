@@ -3,6 +3,16 @@ import { currentSeason, getGenres, getHome, getScheduleDay, getSeason, WEEKDAYS 
 import { run } from "@/lib/db";
 import { runAiringCheck } from "@/lib/airing";
 import { backfillAvatars } from "@/lib/kuro";
+import { movieCatalog } from "@/lib/tmdb";
+
+// The four shelves of the movies hub (page one of each), so the hub is never the one that pays for a cold catalog call. A
+// stale list is refreshed in the background by the call itself.
+async function warmMovies() {
+  await Promise.allSettled([
+    movieCatalog({ type: "movie", sort: "popular" }), movieCatalog({ type: "tv", sort: "popular" }),
+    movieCatalog({ type: "all", sort: "rating" }), movieCatalog({ type: "all", sort: "recent" }),
+  ]);
+}
 
 // Keep the weebcentral (comick-source-api) container warm so readers never pay a
 // ~40s cold start (it sleeps after 30m; this cron runs every 20m).
@@ -29,6 +39,7 @@ export async function GET(req: Request) {
   await runAiringCheck().catch(() => {});
   await backfillAvatars().catch(() => {});
   await warmWeeb();
+  await warmMovies();
   await Promise.allSettled([
     run("delete from presence where updated_at < unixepoch() - 86400"),
     run("delete from sessions where expires_at < unixepoch()"),

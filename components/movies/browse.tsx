@@ -29,6 +29,8 @@ export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialG
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MovieCard[] | null>(null);
   const [totalPages, setTotalPages] = useState(1);
+  const [down, setDown] = useState(false);
+  const [tries, setTries] = useState(0);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => { setPage(1); }, [type, q, sort, genre]);
@@ -42,11 +44,11 @@ export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialG
       if (genre && sort !== "recent") qs.set("genre", genre);
       fetch(`/api/movie/catalog?${qs}`)
         .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { setItems(d?.items ?? []); setTotalPages(d?.totalPages ?? 1); })
-        .catch(() => setItems([]));
+        .then((d) => { setItems(d?.items ?? []); setTotalPages(d?.totalPages ?? 1); setDown(!d || !!d.degraded); })
+        .catch(() => { setItems([]); setDown(true); });
     }, q ? 350 : 0);
     return () => clearTimeout(debounce.current);
-  }, [type, q, page, sort, genre]);
+  }, [type, q, page, sort, genre, tries]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -54,7 +56,7 @@ export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialG
         {TABS.map((t) => (
           <button key={t.v} type="button" aria-pressed={type === t.v} onClick={() => setType(t.v)}
             className={cn("h-[42px] rounded-full border-1.5 border-line bg-cream-card px-5 text-[13.5px] font-bold hover:border-frost-hot", type === t.v && "border-frost-hot bg-frost text-frost-ink")}>
-            {t.label}<span className="ml-1.5 font-mono text-[11.5px] opacity-60">{CATALOG[t.v]}</span>
+            {t.label}<span className="ml-1.5 font-mono text-[11.5px] opacity-75">{CATALOG[t.v]}</span>
           </button>
         ))}
         {!q.trim() && (
@@ -85,9 +87,16 @@ export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialG
           {Array.from({ length: 12 }).map((_, i) => <div key={i} className="aspect-[2/3] rounded-2xl skeleton" />)}
         </div>
       ) : items.length === 0 ? (
-        <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">
-          {q.trim() ? `Nothing matches “${q.trim()}”.` : "No titles here yet."}
-        </p>
+        down ? (
+          <div className="flex flex-col items-center gap-3 rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center">
+            <p className="font-semibold text-plum-muted">The catalog isn’t answering right now. It usually comes back within a minute.</p>
+            <button type="button" onClick={() => setTries((n) => n + 1)} className="h-10 rounded-full bg-frost px-6 text-[13px] font-extrabold text-frost-ink">Try again</button>
+          </div>
+        ) : (
+          <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">
+            {q.trim() ? `Nothing matches “${q.trim()}”.` : "No titles here yet."}
+          </p>
+        )
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3.5">
           {items.map((m) => (

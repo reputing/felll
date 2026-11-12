@@ -39,7 +39,7 @@ export function MovieList({ rows, initialTab }: { rows: ListItem[]; initialTab: 
           {shown.map((r) => (
             <Link key={r.imdb_id} href={`/movies/${r.media}-${r.imdb_id}`} className="group flex flex-col gap-2">
               <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot">
-                <Poster src={r.poster ?? `https://images.metahub.space/poster/small/${r.imdb_id}/img`} className="size-full" />
+                <Poster src={r.poster ?? `https://images.metahub.space/poster/small/${r.imdb_id}/img`} label={r.title} className="size-full" />
                 {r.score != null && <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-lg bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-white backdrop-blur"><Star className="size-3 text-sprinkle-star" fill="currentColor" />{r.score}</span>}
                 {!!r.favorite && <span className="absolute left-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-frost-hot text-white"><Heart className="size-3.5" fill="currentColor" /></span>}
                 {r.media === "tv" && r.episodes ? (

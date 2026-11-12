@@ -53,7 +53,8 @@
   --plum: #f7eef3;
   --plum-body: #ddc9d4;
   --plum-muted: #a88d9b;
-  --plum-faint: #6e5965;
+  /* was #6e5965: 2.9:1 on this skin's dark ground, below the 4.5:1 that small text needs (the search hint, captions, empty states) */
+  --plum-faint: #94808d;
   --night: #000000;
   --night-line: #231a21;
   --night-edge: #4a2a3d;

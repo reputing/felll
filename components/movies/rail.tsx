@@ -19,7 +19,7 @@ export function Rail({ eyebrow, title, items, href }: { eyebrow?: string; title:
         {items.map((m) => (
           <Link key={m.slug} href={`/movies/${m.slug}`} className="group w-[132px] flex-none sm:w-[148px]">
             <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line shadow-poster transition group-hover:-translate-y-1 group-hover:border-frost-hot">
-              <Poster src={m.poster} className="size-full" />
+              <Poster src={m.poster} label={m.title} className="size-full" />
               {m.rating && <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-lg bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-white backdrop-blur"><Star className="size-3 text-sprinkle-star" fill="currentColor" />{m.rating}</span>}
               <span className="absolute bottom-1.5 left-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase tracking-[.08em] text-white">{m.media === "tv" ? "series" : "film"}</span>
             </div>

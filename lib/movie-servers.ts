@@ -113,6 +113,9 @@ export async function liveEmbeds(media: "movie" | "tv", ids: TitleIds, se = 1, e
   let withAds = false;
   try { withAds = ((await getCloudflareContext({ async: true })).env as unknown as Record<string, string | undefined>).MOVIE_ALLOW_AD_SERVERS === "1"; } catch { withAds = process.env.MOVIE_ALLOW_AD_SERVERS === "1"; }
   const all = embedsFor(media, ids, se, ep, withAds, resume);
+  // with one server there is nothing to choose between (a dead one would be shown anyway), so skip the check: it cost a
+  // request, up to three seconds on a cold start, for no change in the answer
+  if (all.length <= 1) return all;
   const checks = await Promise.all(all.map((e) => Promise.race([alive(e.url), new Promise<boolean>((r) => setTimeout(() => r(true), 3200))])));
   const up = all.filter((_, i) => checks[i]);
   return up.length ? up : all;

@@ -56,7 +56,7 @@ export interface MovieDetail {
   episodes?: MovieEpisode[];
   trailer?: string | null;
 }
-export interface MoviePage { items: MovieCard[]; totalPages: number }
+export interface MoviePage { items: MovieCard[]; totalPages: number; degraded?: boolean }
 
 async function env(): Promise<Record<string, string | undefined>> {
   try {

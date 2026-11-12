@@ -48,7 +48,7 @@ export default async function PersonPage({ params }: Props) {
           <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3.5">
             {p.credits.map((c) => (
               <Link key={c.imdb} href={`/movies/t-${c.imdb}`} className="group flex flex-col gap-1.5">
-                <Poster src={`https://images.metahub.space/poster/small/${c.imdb}/img`} className="aspect-[2/3] rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot" />
+                <Poster src={`https://images.metahub.space/poster/small/${c.imdb}/img`} label={c.title} className="aspect-[2/3] rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot" />
                 <span className="line-clamp-2 text-[13px] font-extrabold leading-tight">{c.title}</span>
                 {c.year && <span className="-mt-1 text-[11.5px] font-semibold text-plum-muted">{c.year}</span>}
               </Link>

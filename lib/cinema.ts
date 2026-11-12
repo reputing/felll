@@ -14,7 +14,8 @@ import { cached } from "./movie-cache";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Raw = any;
 
-const BASE = "https://v3-cinemeta.strem.io";
+// CINEMETA_URL points this at another instance (or a dead address, to see how the pages behave when the catalog is down)
+const BASE = (process.env.CINEMETA_URL || "https://v3-cinemeta.strem.io").replace(/\/+$/, "");
 const POSTER_SMALL = "https://images.metahub.space/poster/small/";
 const POSTER_MED = "https://images.metahub.space/poster/medium/";
 const BACKDROP = "https://images.metahub.space/background/medium/";
@@ -93,10 +94,11 @@ const cards = (metas: Raw, media?: MovieMedia): CinemaCard[] => {
 export const GENRES = ["Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "History", "Horror", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western"];
 const PAGE = 50; // titles per Cinemeta page
 
-export interface CinemaPage { items: CinemaCard[]; totalPages: number }
+/** `degraded` means the catalog source did not answer (as opposed to answering with nothing), so the page can say so */
+export interface CinemaPage { items: CinemaCard[]; totalPages: number; degraded?: boolean }
 
 /** One Cinemeta list: `top` is popularity, `imdbRating` is rating, `year` is a release year. */
-async function list(media: MovieMedia, sort: "popular" | "rating" | "recent", page: number, genre?: string): Promise<{ items: CinemaCard[]; more: boolean }> {
+async function list(media: MovieMedia, sort: "popular" | "rating" | "recent", page: number, genre?: string): Promise<{ items: CinemaCard[]; more: boolean; failed: boolean }> {
   const skip = (page - 1) * PAGE;
   const g = genre && GENRES.includes(genre) ? genre : "";
   const kind = sort === "rating" ? "imdbRating" : sort === "recent" ? "year" : "top";
@@ -108,24 +110,27 @@ async function list(media: MovieMedia, sort: "popular" | "rating" | "recent", pa
     const d = await getJson(path);
     return d && Array.isArray(d.metas) && d.metas.length ? { metas: d.metas.slice(0, PAGE), hasMore: !!d.hasMore } : null;
   }, 3 * 3600);
-  return { items: cards(data?.metas, media), more: !!data?.hasMore };
+  return { items: cards(data?.metas, media), more: !!data?.hasMore, failed: !data };
 }
 
 /** Search both kinds at once. Cinemeta first; IMDb's own suggestion box if Cinemeta is down or finds nothing. */
-async function search(q: string, media: MovieMedia | null): Promise<CinemaCard[]> {
+async function search(q: string, media: MovieMedia | null): Promise<{ items: CinemaCard[]; failed: boolean }> {
   const kinds: MovieMedia[] = media ? [media] : ["movie", "tv"];
   const found = await Promise.all(kinds.map(async (k) => {
     const d = await cached(`cinema:search:${k}:${q.toLowerCase()}`, async () => {
       const r = await getJson(`/catalog/${typeOf(k)}/top/search=${encodeURIComponent(q)}.json`);
       return r && Array.isArray(r.metas) ? { metas: r.metas } : null;
     }, 6 * 3600);
-    return cards(d?.metas, k);
+    return { items: cards(d?.metas, k), failed: !d };
   }));
+  const down = found.every((f) => f.failed);
   // interleave so a "movies and series" search shows both kinds near the top
   const out: CinemaCard[] = [];
-  for (let i = 0; i < Math.max(...found.map((f) => f.length), 0); i++) for (const f of found) if (f[i]) out.push(f[i]);
-  if (out.length) return out;
-  return imdbSuggest(q, media);
+  for (let i = 0; i < Math.max(...found.map((f) => f.items.length), 0); i++) for (const f of found) if (f.items[i]) out.push(f.items[i]);
+  if (out.length) return { items: out, failed: false };
+  const fallback = await imdbSuggest(q, media);
+  // nothing from either source, and the main one did not answer: that is an outage, not "no results"
+  return { items: fallback, failed: down && fallback.length === 0 };
 }
 
 /** Fallback search: IMDb's suggestion endpoint (keyless, answers in a blink). */
@@ -152,7 +157,7 @@ export async function cinemaCatalog(opts: { type?: string; sort?: string; page?:
   const media: MovieMedia | null = opts.type === "movie" ? "movie" : opts.type === "tv" ? "tv" : null;
   const page = Math.min(20, Math.max(1, opts.page || 1));
   const q = (opts.q || "").trim().slice(0, 80);
-  if (q) return { items: (await search(q, media)).slice(0, 48), totalPages: 1 };
+  if (q) { const r = await search(q, media); return { items: r.items.slice(0, 48), totalPages: 1, ...(r.failed ? { degraded: true } : {}) }; }
 
   const sort = opts.sort === "rating" || opts.sort === "recent" ? opts.sort : "popular";
   const kinds: MovieMedia[] = media ? [media] : ["movie", "tv"];
@@ -160,7 +165,7 @@ export async function cinemaCatalog(opts: { type?: string; sort?: string; page?:
   const items: CinemaCard[] = [];
   for (let i = 0; i < Math.max(...lists.map((l) => l.items.length), 0); i++) for (const l of lists) if (l.items[i]) items.push(l.items[i]);
   const more = lists.some((l) => l.more);
-  return { items, totalPages: more ? Math.min(20, page + 1) : page };
+  return { items, totalPages: more ? Math.min(20, page + 1) : page, ...(lists.every((l) => l.failed) ? { degraded: true } : {}) };
 }
 
 /** A broad "popular now" set for the home page, movies and series mixed. */

@@ -24,16 +24,19 @@ async function json(url: string, timeout = 8000, init: RequestInit = {}): Promis
   }
 }
 
-/** Find a person by name: IMDb id, photo, and what they are known for. */
+/** Find a person by name: IMDb id, photo, and what they are known for. A name that finds nobody is remembered too (as long
+ *  as a hit is), so a made-up name cannot make us ask IMDb again on every request. */
 export async function personByName(name: string): Promise<Person | null> {
   const key = slugKey(name);
   if (!key || key.length > 60) return null;
-  return cached<Person>(`person:find:${key}`, async () => {
+  const hit = await cached<Person>(`person:find:${key}`, async () => {
     const d = await json(`https://v3.sg.media-imdb.com/suggestion/${key[0]}/${encodeURIComponent(key)}.json`, 6000);
+    if (!d) return null; // the lookup itself failed: do not remember that as "nobody"
     const hits: Raw[] = (d?.d ?? []).filter((x: Raw) => String(x.id).startsWith("nm"));
-    const hit = hits.find((x) => slugKey(String(x.l)) === key) ?? null;
-    return hit ? { id: hit.id, name: String(hit.l), photo: hit.i?.imageUrl ?? null, known: hit.s ? String(hit.s) : null } : null;
+    const found = hits.find((x) => slugKey(String(x.l)) === key) ?? null;
+    return found ? { id: found.id, name: String(found.l), photo: found.i?.imageUrl ?? null, known: found.s ? String(found.s) : null } : { id: "", name, photo: null, known: null };
   }, 60 * DAY);
+  return hit && hit.id ? hit : null;
 }
 
 /** Photos for a title's cast, in order. Anyone not found is returned without a photo. */

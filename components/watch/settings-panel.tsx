@@ -51,6 +51,8 @@ export interface PanelProps {
   subsOnly?: boolean;
   /** the picture is in a frame we cannot listen to, so there is no audio to sync against */
   noAutoSync?: boolean;
+  /** a phone: the panel sits at the bottom of the screen as a sheet instead of inside the (small) picture */
+  sheet?: boolean;
 }
 
 export function SettingsPanel(p: PanelProps) {
@@ -69,7 +71,9 @@ export function SettingsPanel(p: PanelProps) {
     setBusy(false);
   };
 
-  const box = cn(p.subsOnly ? "top-2" : "bottom-[58px]", "absolute right-2 z-30 max-h-[min(70%,460px)] w-[min(320px,calc(100%-1rem))] overflow-y-auto rounded-2xl border border-white/15 bg-black/90 p-3 text-white shadow-[0_18px_40px_-12px_rgba(0,0,0,.9)] backdrop-blur-xl animate-in fade-in");
+  const box = p.sheet
+    ? "fixed inset-x-2 bottom-[88px] z-[70] max-h-[calc(100dvh-210px)] overflow-y-auto rounded-3xl border border-white/15 bg-black/95 p-4 pb-5 text-white shadow-[0_-12px_50px_-10px_rgba(0,0,0,.9)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4"
+    : cn(p.subsOnly ? "top-2" : "bottom-[58px]", "absolute right-2 z-30 max-h-[min(70%,460px)] w-[min(320px,calc(100%-1rem))] overflow-y-auto rounded-2xl border border-white/15 bg-black/90 p-3 text-white shadow-[0_18px_40px_-12px_rgba(0,0,0,.9)] backdrop-blur-xl animate-in fade-in");
 
   if (p.page === "subs" || p.subsOnly) {
     return (

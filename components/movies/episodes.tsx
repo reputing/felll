@@ -43,7 +43,7 @@ export function Episodes({ slug, base, rows, watched: initial, current, season, 
               <Link href={`/movies/${slug}?se=${r.se}&ep=${r.ep}`} scroll={false} aria-disabled={unaired} tabIndex={unaired ? -1 : undefined}
                 className={cn("grid min-w-0 flex-1 grid-cols-[72px_1fr] items-center gap-3 rounded-2xl border-1.5 p-1.5 pr-3 transition hover:border-frost-hot", on ? "border-frost-hot bg-cream-blush" : "border-line-soft bg-paper", unaired && "pointer-events-none opacity-55")}>
                 <span className="relative block">
-                  <Poster src={r.thumb} className="aspect-video w-full rounded-lg" />
+                  <Poster src={r.thumb} fallbackSrc={base.poster} className="aspect-video w-full rounded-lg" />
                   <span className="absolute left-1 top-1 rounded bg-black/70 px-1 font-mono text-[10.5px] font-bold text-white">{r.ep}</span>
                 </span>
                 <span className="min-w-0">

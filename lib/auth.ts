@@ -124,5 +124,8 @@ export async function endSession() {
 /** Only same-site relative paths, so ?next= can't send anyone off-site. */
 export function safeNext(to: string | null | undefined): string {
   if (!to || !/^\/(?![/\\])/.test(to)) return "/home";
+  // Browsers drop tabs and newlines when they parse a url, so "/<tab>/evil.com" would become "//evil.com". Nothing in a path
+  // we send people to has a control character in it.
+  if (/[\u0000-\u001f\u007f]/.test(to)) return "/home";
   return to;
 }

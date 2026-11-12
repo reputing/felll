@@ -10,6 +10,7 @@ import { TitleActions } from "@/components/movies/title-actions";
 import { Episodes } from "@/components/movies/episodes";
 import { Cast } from "@/components/movies/cast";
 import { Comments } from "@/components/comments/comments";
+import { cinemaPing } from "@/lib/cinema";
 import { cn } from "@/lib/utils";
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ se?: string; ep?: string }> };
@@ -46,7 +47,19 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const ref = parseSlug(slug);
   if (!ref) notFound();
   const d = await movieDetail(ref.media, ref.id);
-  if (!d) notFound();
+  if (!d) {
+    // a title that is not there is a 404; a catalog that is not answering is not the title's fault
+    if (typeof ref.id === "string" && !(await cinemaPing().catch(() => ({ ok: false }))).ok) {
+      return (
+        <div className="mx-auto flex max-w-[560px] flex-col items-center gap-4 px-4 py-24 text-center">
+          <h1 className="text-[26px] font-extrabold tracking-[-.8px]">The catalog isn’t answering</h1>
+          <p className="text-plum-muted">This title’s details come from a service that is having a moment. It usually comes back within a minute.</p>
+          <div className="flex gap-2"><Link href={`/movies/${slug}`} className="flex h-11 items-center rounded-full bg-frost px-6 text-[14px] font-extrabold text-frost-ink">Try again</Link><Link href="/movies" className="flex h-11 items-center rounded-full border-1.5 border-line px-6 text-[14px] font-extrabold">Back to movies</Link></div>
+        </div>
+      );
+    }
+    notFound();
+  }
   const imdb = d.imdbId ?? "";
   // The list, ticks, history and comments need migration 0021 (movie_library, movie_progress, movie_comments). Until it has
   // been applied to this database the page shows the player and the details without them, instead of controls that fail.
@@ -68,6 +81,12 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
       const next = latest.watched && i >= 0 ? eps[i + 1] : null;
       se = next?.se ?? latest.season; ep = next?.ep ?? latest.episode;
     } else { se = seasons[0] ?? 1; ep = 1; }
+  }
+  // an episode that does not exist (season 999, episode -1, a typo in the address) lands on a real one: the first of that season if
+  // the season exists, else the first episode there is
+  if (tv && d.episodes && d.episodes.length && !d.episodes.some((e) => e.se === se && e.ep === ep)) {
+    const f = d.episodes.find((e) => e.se === se) ?? d.episodes[0];
+    se = f.se; ep = f.ep;
   }
   const row = mine.find((m) => m.season === (se ?? 0) && m.episode === (ep ?? 0));
   const resume = row && !row.watched && row.position > 30 ? Math.floor(row.position) : undefined;
