@@ -13,6 +13,7 @@ import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
 import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/model-picker";
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
 import { FillDocButton } from "@/components/shh/fill";
+import { normalizeMath } from "@/lib/math-text";
 import { toast } from "@/lib/store";
 import { DISGUISES, maskTo, setFavicon } from "@/lib/tab-mask";
 import { cn } from "@/lib/utils";
@@ -142,9 +143,10 @@ const MD_COMPONENTS = {
   a: (props: React.ComponentProps<"a">) => <a {...props} target="_blank" rel="noopener noreferrer" />,
 };
 function Markdown({ text }: { text: string }) {
+  const md = useMemo(() => normalizeMath(text), [text]);
   return (
     <div className="shh-md">
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={MD_COMPONENTS}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={MD_COMPONENTS}>{md}</ReactMarkdown>
     </div>
   );
 }
