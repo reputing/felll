@@ -13,6 +13,7 @@ import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
 import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/model-picker";
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
 import { toast } from "@/lib/store";
+import { DISGUISES, maskTo, setFavicon } from "@/lib/tab-mask";
 import { cn } from "@/lib/utils";
 
 interface Doc { name: string; content: string }
@@ -32,14 +33,6 @@ const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely
 
 const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {}, antiFlip: false, antiFlipTarget: "docs", antiFlipCustom: "" };
 const keyLabel = (k: string) => (k === " " ? "Space" : k.length === 1 ? k.toUpperCase() : k);
-const DISGUISES: Record<string, { title: string; emoji: string }> = {
-  docs: { title: "Untitled document - Google Docs", emoji: "📝" },
-  sheets: { title: "Untitled spreadsheet - Google Sheets", emoji: "📊" },
-  slides: { title: "Untitled presentation - Google Slides", emoji: "📽️" },
-  classroom: { title: "Classes", emoji: "🎓" },
-  drive: { title: "My Drive - Google Drive", emoji: "📁" },
-  mail: { title: "Inbox - Gmail", emoji: "✉️" },
-};
 
 // OpenAI-style payload (string content, or an array with image_url parts).
 // Attached files are folded into the user turn's text.
@@ -369,7 +362,7 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
           </div>
           <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
             <div className="flex items-center justify-between gap-3">
-              <div><div className="text-[13.5px] font-extrabold">Anti-flip</div><div className="text-[12px] font-semibold text-plum-muted">the instant you click away, swap the tab title + icon to a disguise so it never flashes what it really is; switches back when you return. (browsers can’t read your other tabs, so you pick the mask.)</div></div>
+              <div><div className="text-[13.5px] font-extrabold">Anti-flip (whole site)</div><div className="text-[12px] font-semibold text-plum-muted">the instant you click away, on any page of the site, the tab title + icon swap to the disguise you pick here so it never flashes what it really is; it switches back when you return. this is the only place it is set. (browsers can’t read your other tabs, so you pick the mask.)</div></div>
               <Toggle on={prefs.antiFlip} onClick={() => set({ antiFlip: !prefs.antiFlip })} />
             </div>
             {prefs.antiFlip && (
@@ -390,14 +383,6 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
       </D.Portal>
     </D.Root>
   );
-}
-
-// Swap the tab title + favicon when a disguise is on; restore on change/unmount.
-function setFavicon(emoji: string | null) {
-  let link = document.querySelector<HTMLLinkElement>("link[data-shh-fav]");
-  if (!emoji) { link?.remove(); return; }
-  if (!link) { link = document.createElement("link"); link.rel = "icon"; link.setAttribute("data-shh-fav", "1"); document.head.appendChild(link); }
-  link.href = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${emoji}</text></svg>`)}`;
 }
 
 export function ShhChat({ me }: { me?: string }) {
@@ -508,10 +493,6 @@ export function ShhChat({ me }: { me?: string }) {
   // the tab loses focus, so it never flashes the real title/icon when you tab away.
   useEffect(() => {
     const original = document.title;
-    const maskTo = (target: string, custom: string) => {
-      if (target === "custom") { if (custom.trim()) document.title = custom.trim(); setFavicon("📄"); }
-      else if (DISGUISES[target]) { document.title = DISGUISES[target].title; setFavicon(DISGUISES[target].emoji); }
-    };
     const activeLook = () => {
       const d = prefs.disguise;
       if (d === "off") { document.title = original; setFavicon(null); }

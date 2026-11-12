@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import { cookies } from "next/headers";
 import { currentUser } from "@/lib/auth";
 import { DEFAULT_SKIN, isSkin } from "@/lib/skins";
+import { AntiFlip } from "@/components/anti-flip";
 import "./globals.css";
 
 // Plus Jakarta Sans: a clean, modern, professional grotesque — crisper than the
@@ -54,7 +55,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <link rel="preconnect" href="https://image.tmdb.org" crossOrigin="" />
         <link rel="dns-prefetch" href="https://i.ytimg.com" />
       </head>
-      <body className="min-h-screen overflow-x-hidden">{children}</body>
+      <body className="min-h-screen overflow-x-hidden">
+        <AntiFlip />
+        {children}
+      </body>
     </html>
   );
 }
