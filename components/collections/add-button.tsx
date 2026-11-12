@@ -47,7 +47,7 @@ export function AddToCollection({ kind, refId, title, cover, className }: { kind
     <D.Root open={open} onOpenChange={(o) => { setOpen(o); if (o) load(); }}>
       <D.Trigger asChild>
         <button type="button" className={cn("flex h-11 items-center gap-2 rounded-full border-1.5 border-line bg-cream-card px-5 font-bold text-plum-body transition hover:border-frost-hot", className)}>
-          <FolderPlus className="size-4" />Add to list
+          <FolderPlus className="size-4" />Collection
         </button>
       </D.Trigger>
       <D.Portal>

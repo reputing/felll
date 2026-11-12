@@ -3,11 +3,13 @@ import { requireMember } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { episodeAt, getCatalogTop, getForYou, getHome, nextAiring, type Anime } from "@/lib/jikan";
 import { Hero } from "@/components/home/hero";
-import { KeepWatching, type Resume } from "@/components/home/keep-watching";
+import { KeepWatching, animeKW, type Resume } from "@/components/home/keep-watching";
 import { QueueRail } from "@/components/queue/queue-rail";
 import { MangaKeepReading, MangaPopular } from "@/components/manga/home-rail";
 import { HomeSections, type HomeSection } from "@/components/home/home-sections";
-import { MoviesHomeRail, MoviesContinue } from "@/components/movies/home-rail";
+import { MoviesHomeRail } from "@/components/movies/home-rail";
+import { continueWatching } from "@/lib/movie-user";
+import { movieKW } from "@/lib/movie-resume";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
 import { TopRow } from "@/components/home/top-row";
 import { Shelf, ShelfSkeleton, type ShelfItem } from "@/components/shelf";
@@ -22,7 +24,7 @@ export default async function Home() {
     getHome(),
     getCatalogTop(300),
     all<Resume>(
-      `select mal_id, episode, position, duration, title, image from watch_progress w
+      `select mal_id, episode, position, duration, title, image, updated_at from watch_progress w
        where user_id = ? and updated_at = (select max(updated_at) from watch_progress where user_id = w.user_id and mal_id = w.mal_id)
        order by updated_at desc limit 8`,
       me.id,
@@ -43,6 +45,12 @@ export default async function Home() {
   ).catch(() => [])).filter((r) => !have.has(r.mal_id) && (!r.episodes || r.progress < r.episodes))
     .map((r): Resume => ({ mal_id: r.mal_id, episode: r.progress + 1, position: 0, duration: 0, title: r.title, image: r.image }));
   resume.push(...fromList.slice(0, Math.max(0, 12 - resume.length)));
+
+  // One "Keep watching" rail for everything: anime, films and series, newest first (films and series are fetched here because
+  // they live in their own tables; a missing table just means none)
+  const moviesKeep = await continueWatching(me.id, 10);
+  const keepAnime = resume.map(animeKW);
+  const keep = [...keepAnime, ...moviesKeep.map(movieKW)].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, 14);
 
   // One pool feeds the hero and the genre rows. Everything on the page is a
   // horizontal row — no sidebars, no dashboard panels.
@@ -67,8 +75,7 @@ export default async function Home() {
   // Everything under the hero is a movable row (see HomeSections). Continue-watching and
   // continue-reading come first so picking up where you left off never takes a long scroll.
   const sections: HomeSection[] = [
-    { id: "keep-watching", label: "Keep watching", node: <KeepWatching items={resume} /> },
-    { id: "keep-movies", label: "Keep watching (films & series)", node: <Suspense fallback={null}><MoviesContinue userId={me.id} /></Suspense> },
+    { id: "keep-watching", label: "Keep watching", node: <KeepWatching items={keep} historyHref={moviesKeep.length > keepAnime.length ? "/movies/history" : "/box/history"} /> },
     { id: "keep-reading", label: "Keep reading", node: <MangaKeepReading /> },
     { id: "queue", label: "Your queue", node: <QueueRail /> },
     { id: "top10", label: "Top 10 this week", node: <TopRow eyebrow="Most played here" title="Top 10 this week" items={ranked.length ? ranked : toItems(trending)} href="/rankings" /> },

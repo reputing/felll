@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { ChevronRight, Play, Star } from "lucide-react";
+import { ChevronRight, Star } from "lucide-react";
 import { Poster } from "@/components/poster";
 import type { MovieCard } from "@/lib/tmdb";
 import type { ContinueItem } from "@/lib/movie-user";
+import { KeepWatching } from "@/components/home/keep-watching";
+import { movieKW } from "@/lib/movie-resume";
 
 // A shelf of posters, the way the home page shelves anime.
 export function Rail({ eyebrow, title, items, href }: { eyebrow?: string; title: string; items: MovieCard[]; href?: string }) {
@@ -30,34 +32,8 @@ export function Rail({ eyebrow, title, items, href }: { eyebrow?: string; title:
   );
 }
 
-const clock = (s: number) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}h ${m}m` : `${m}m`; };
-
-/** "Continue watching": the film you stopped in, or the episode you are on (the next one once it is finished). */
+/** "Continue watching" on the movies hub: the same card as the home page's Keep watching. */
 export function ContinueRail({ items, title = "Continue watching" }: { items: ContinueItem[]; title?: string }) {
   if (!items.length) return null;
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="px-1"><div className="eyebrow">Pick up where you left off</div><h2 className="mt-0.5 text-xl font-extrabold tracking-[-.6px]">{title}</h2></div>
-      <div className="scrollbar-none -mx-1 flex gap-3 overflow-x-auto px-1 pb-2">
-        {items.map((r) => {
-          const pct = r.duration > 0 ? Math.min(100, (r.position / r.duration) * 100) : 0;
-          const tv = r.media === "tv";
-          const href = tv ? `/movies/tv-${r.imdb_id}${r.watched ? "" : `?se=${r.season}&ep=${r.episode}`}` : `/movies/movie-${r.imdb_id}`;
-          return (
-            <Link key={r.imdb_id} href={href} className="group grid w-[300px] flex-none grid-cols-[84px_1fr] items-center gap-3 rounded-3xl border-1.5 border-line bg-cream-card p-2 pr-3 transition hover:border-frost-hot">
-              <Poster src={r.poster} className="aspect-[2/3] w-[84px] rounded-2xl" />
-              <span className="min-w-0">
-                <span className="block truncate text-[14.5px] font-extrabold">{r.title}</span>
-                <span className="block truncate text-[12px] font-semibold text-plum-muted">
-                  {tv ? (r.watched ? `Up next after S${r.season} E${r.episode}` : `S${r.season} E${r.episode}${r.ep_title ? ` · ${r.ep_title}` : ""}`) : r.duration ? `${clock(Math.max(0, r.duration - r.position))} left` : "Started"}
-                </span>
-                {pct > 0 && !r.watched && <span className="mt-2 block h-1 w-full overflow-hidden rounded-full bg-cream-tint"><span className="block h-full rounded-full bg-frost-hot" style={{ width: `${pct}%` }} /></span>}
-                <span className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-full bg-frost px-3 text-[12px] font-extrabold text-frost-ink"><Play className="size-3" fill="currentColor" />{r.watched && tv ? "Next episode" : "Resume"}</span>
-              </span>
-            </Link>
-          );
-        })}
-      </div>
-    </section>
-  );
+  return <KeepWatching items={items.map(movieKW)} title={title} eyebrow="Pick up where you left off" historyHref="/movies/history" />;
 }
