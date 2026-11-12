@@ -6,6 +6,7 @@ import { Poster } from "@/components/poster";
 import { cn } from "@/lib/utils";
 import type { MovieCard } from "@/lib/tmdb";
 import { GENRES } from "@/lib/cinema";
+import { CATALOG } from "@/lib/catalog-size";
 
 // Anime has its own section, so the movies page is films + series only.
 const TABS = [
@@ -53,7 +54,7 @@ export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialG
         {TABS.map((t) => (
           <button key={t.v} type="button" aria-pressed={type === t.v} onClick={() => setType(t.v)}
             className={cn("h-[42px] rounded-full border-1.5 border-line bg-cream-card px-5 text-[13.5px] font-bold hover:border-frost-hot", type === t.v && "border-frost-hot bg-frost text-frost-ink")}>
-            {t.label}
+            {t.label}<span className="ml-1.5 font-mono text-[11.5px] opacity-60">{CATALOG[t.v]}</span>
           </button>
         ))}
         {!q.trim() && (
@@ -74,7 +75,7 @@ export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialG
         )}
         <div className="relative ml-auto">
           <Search aria-hidden className="pointer-events-none absolute left-3.5 top-1/2 size-[17px] -translate-y-1/2 text-plum-muted" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search movies & series…" aria-label="Search"
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${CATALOG.all} films & series…`} aria-label="Search"
             className="h-[42px] w-[220px] max-w-full rounded-full border-1.5 border-line bg-cream-card pl-10 pr-4 text-[13.5px] font-semibold outline-none focus:border-frost-hot" />
         </div>
       </div>

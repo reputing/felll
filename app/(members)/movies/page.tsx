@@ -4,6 +4,7 @@ import { requireMember } from "@/lib/auth";
 import { movieCatalog, movieDetail } from "@/lib/tmdb";
 import { continueWatching } from "@/lib/movie-user";
 import { PageHead } from "@/components/page-head";
+import { CATALOG } from "@/lib/catalog-size";
 import { Button } from "@/components/ui/button";
 import { MovieBrowse } from "@/components/movies/browse";
 import { ContinueRail, Rail } from "@/components/movies/rail";
@@ -30,7 +31,7 @@ export default async function MoviesPage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-8 px-3 pb-14 pt-4 sm:px-5">
-      <PageHead eyebrow="Cupcake / watch" title="Movies &amp; Series" sub="Films and shows from across the catalog, not just anime.">
+      <PageHead eyebrow="Cupcake / watch" title="Movies &amp; Series" sub={`${CATALOG.all} films and series, from the blockbusters to the obscure.`}>
         <div className="flex gap-2">
           <Button variant="outline" asChild><Link href="/movies/list"><Library className="size-4" />My list</Link></Button>
           <Button variant="outline" asChild><Link href="/movies/history"><Clock3 className="size-4" />History</Link></Button>
@@ -70,7 +71,7 @@ export default async function MoviesPage({ searchParams }: { searchParams: Promi
       )}
 
       <section className="flex flex-col gap-3" id="browse">
-        <div className="px-1"><div className="eyebrow">Find something</div><h2 className="mt-0.5 text-xl font-extrabold tracking-[-.6px]">{browsing ? "Browse" : "Browse everything"}</h2></div>
+        <div className="px-1"><div className="eyebrow">Find something · {CATALOG.all} titles</div><h2 className="mt-0.5 text-xl font-extrabold tracking-[-.6px]">{browsing ? "Browse" : "Browse everything"}</h2></div>
         <MovieBrowse initialGenre={sp.genre ?? ""} initialQuery={sp.q ?? ""} />
       </section>
     </div>
