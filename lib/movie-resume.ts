@@ -1,4 +1,4 @@
-import type { KWItem } from "@/components/home/keep-watching";
+import type { KWItem } from "@/lib/keep-watching";
 import type { ContinueItem } from "./movie-user";
 
 /** A film or series the member is part-way through, as a card of the shared "Keep watching" rail (same card as anime). */

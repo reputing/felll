@@ -7,26 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Poster } from "@/components/poster";
 import { clock } from "@/lib/utils";
 
-export interface Resume { mal_id: number; episode: number; position: number; duration: number; title: string; image: string | null; updated_at?: number }
-
-/** One card of the rail: anime, a film or an episode of a series, all drawn the same way. */
-export interface KWItem {
-  key: string; href: string; image: string | null;
-  /** the chip on the picture: "EP 5", "S2 E3", "FILM" */
-  badge: string; title: string;
-  /** a second small line under the title (an episode's name), when there is one */
-  sub?: string | null;
-  position: number; duration: number;
-  /** DELETE this to take the card off the rail */
-  removeUrl: string;
-  /** for ordering a mixed rail, newest first */
-  at?: number;
-}
-
-export const animeKW = (r: Resume): KWItem => ({
-  key: `a${r.mal_id}`, href: `/watch/${r.mal_id}/${r.episode}`, image: r.image, badge: `EP ${r.episode}`, title: r.title,
-  position: r.position, duration: r.duration, removeUrl: `/api/progress?malId=${r.mal_id}`, at: r.updated_at ?? 0,
-});
+import type { KWItem } from "@/lib/keep-watching";
 
 /** "Keep watching": the cards of whatever you were in the middle of. The home page feeds it anime and films and series
  *  together; the movies hub feeds it films and series only. */
