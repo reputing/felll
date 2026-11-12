@@ -32,13 +32,6 @@ async function readEnv(): Promise<Record<string, string | undefined>> {
 }
 
 const nowSec = () => Math.floor(Date.now() / 1000);
-const chatHits = new Map<string, { n: number; at: number }>();
-function chatThrottled(id: string): boolean {
-  const t = Date.now(), h = chatHits.get(id);
-  if (chatHits.size > 5000) chatHits.clear();
-  if (!h || t - h.at > 60_000) { chatHits.set(id, { n: 1, at: t }); return false; }
-  return ++h.n > 30;
-}
 
 // Which models can serve this request right now, best first (the requested one if it
 // is working, then its provider's others, then the other provider's).
@@ -496,9 +489,6 @@ export async function POST(req: Request) {
   }
 
   if (b.op === "chat") {
-    // One member cannot spend the shared AI keys all day: 30 chat calls a minute each. (Per isolate: it stops a runaway loop or a
-    // script, not a determined attacker with many connections; the keys themselves are the real limit.)
-    if (chatThrottled(me.id)) return Response.json({ error: "slow down a little" }, { status: 429 });
     let messages = Array.isArray(b.messages) ? b.messages : [];
     if (!messages.length) return Response.json({ error: "nothing to send" }, { status: 400 });
     const { providers, byId, candidates } = await modelsFor(e, b.model, { vision: hasImages(messages), tools: !!b.exec });
