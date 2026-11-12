@@ -85,11 +85,12 @@ visitor ──▶ │ /  portal ─ kuro SSO / password ─▶ session cookie   
    1080p. Each source has a same-origin proxy URL beside the direct one. **Moviebox's CDN refuses datacenter addresses**
    (it answered 429 to Cloudflare's network and to the container), so this path depends on the viewer's own connection
    being accepted; when it is not, the player moves on by itself.
-3. **No embed servers.** Third-party player iframes (VidSrc, VidLink and the rest) were tried and removed: they open ad tabs
-   and redirects, and none can be sandboxed, because their check reads `document.domain`, which every sandboxed frame
-   blocks. Zeus, the site's own direct player, is the only server; a title Moviebox does not carry yet says so. The old list
-   and the browser audit that produced it live in `lib/movie-servers.ts` (off; `MOVIE_ALLOW_AD_SERVERS=1` is read there
-   only by the health page's sampler).
+3. **Zeus: CineSrc in a sandboxed iframe** (`lib/movie-servers.ts`). The only server. It plays with `sandbox="allow-scripts
+   allow-same-origin"` (no popups, redirects, top navigation, forms, downloads or modals) and `allow` limited to autoplay,
+   fullscreen and picture-in-picture; resume is `?t=<seconds>` and progress comes from its `cinesrc:*` messages (origin and
+   source checked). It needs a TMDB id (Cinemeta supplies it). It still asks one ad exchange for something, which the sandbox
+   keeps from becoming a popup or redirect; nothing ad-like showed on the picture in testing. Other third-party players were
+   tried and dropped: they refuse to play in any sandbox. The old Moviebox direct source is unused.
 
 **Library, history and people** (needs migration `0021_movies.sql`; until it is applied the pages hide these parts):
 status list, favourites, 1-10 rating and a cupcake average (`movie_library`); continue watching, per-episode watched ticks,

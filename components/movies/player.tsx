@@ -1,8 +1,9 @@
 "use client";
 import type Hls from "hls.js";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Captions, Maximize } from "lucide-react";
+import { Captions, ChevronRight, Loader2, Maximize, Minimize, RectangleHorizontal, RotateCw, ShieldCheck } from "lucide-react";
 import type { MovieStream, MovieSource, MovieEmbed } from "@/lib/tmdb";
 import { SettingsPanel } from "@/components/watch/settings-panel";
 import { SubtitleLayer, useSubStyle } from "@/components/watch/subtitles";
@@ -23,7 +24,7 @@ export interface PlayTrack { imdb: string; media: "movie" | "tv"; season?: numbe
 
 const mmss = (s: number) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
 
-export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack }) {
+export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, next }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack; next?: { href: string; label: string } }) {
   const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
   // The direct 8Stream sources resolve lazily (see effect below), so the page
   // never blocks on them. "Cupcake" is offered optimistically until proven dead.
@@ -37,8 +38,28 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track }: {
   // stop that (they refuse to play in one). Zeus, our own player, is the default; an embed only loads after the viewer
   // has been told what it is and said yes, and that choice is remembered for the rest of the visit.
   const [ok, setOk] = useState(false);
-  const askEmbed = !!curEmbed && !ok;
-  const useEmbed = !!curEmbed && ok;
+  // a server that plays inside a sandbox (Zeus) is safe to load straight away; anything else asks first
+  const askEmbed = !!curEmbed && !curEmbed.sandbox && !ok;
+  const useEmbed = !!curEmbed && (!!curEmbed.sandbox || ok);
+  const router = useRouter();
+  const pathname = usePathname();
+  // the frame's look: a spinner over the poster until the player says it is ready (like the anime player's loader), theater
+  // mode, and the "Up next" countdown when an episode ends
+  const [ready, setReady] = useState(false);
+  const [theater, setTheater] = useState(false);
+  const [full, setFull] = useState(false);
+  const [reloads, setReloads] = useState(0);
+  const [nextIn, setNextIn] = useState<number | null>(null);
+  const nextDismissed = useRef(false);
+  useEffect(() => { setReady(false); setNextIn(null); nextDismissed.current = false; }, [curEmbed?.url, reloads]);
+  useEffect(() => { const t = setTimeout(() => setReady(true), 7000); return () => clearTimeout(t); }, [curEmbed?.url, reloads]); // never hide a working player behind a spinner
+  useEffect(() => { const on = () => setFull(!!document.fullscreenElement); document.addEventListener("fullscreenchange", on); return () => document.removeEventListener("fullscreenchange", on); }, []);
+  useEffect(() => {
+    if (nextIn == null) return;
+    if (nextIn <= 0) { if (next) router.push(next.href); return; }
+    const t = setTimeout(() => setNextIn((n) => (n == null ? n : n - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [nextIn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const video = useRef<HTMLVideoElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -162,26 +183,37 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track }: {
   // currentTime/duration, and MEDIA_DATA with progress.watched/duration, per episode for a series). Only messages from our
   // own player frame are believed.
   useEffect(() => {
-    if (!useEmbed || !track) return;
+    if (!useEmbed) return;
     const on = (e: MessageEvent) => {
       if (e.source !== frame.current?.contentWindow) return;
       const d = e.data;
       if (!d || typeof d !== "object") return;
       let pos: number | undefined, dur: number | undefined, force = false;
-      if (d.type === "PLAYER_EVENT" && d.data) {
+      if (typeof d.type === "string" && d.type.startsWith("cinesrc:")) {
+        if (!track && d.type !== "cinesrc:ready" && d.type !== "cinesrc:loadedmetadata" && d.type !== "cinesrc:play" && d.type !== "cinesrc:ended") return;
+        // Zeus: only believed from its own origin. timeupdate carries currentTime and duration; pause and ended save at once.
+        if (e.origin !== "https://cinesrc.st") return;
+        if (d.type === "cinesrc:ready" || d.type === "cinesrc:loadedmetadata" || d.type === "cinesrc:play") setReady(true);
+        if (d.type === "cinesrc:ended" && next && !nextDismissed.current) setNextIn(10);
+        if (d.type === "cinesrc:timeupdate") { pos = Number(d.currentTime); dur = Number(d.duration); }
+        else if (d.type === "cinesrc:pause" || d.type === "cinesrc:ended") { force = true; pos = Number(d.currentTime ?? 0) || sent.current.pos; dur = Number(d.duration ?? 0); }
+        // its own next-episode button changes the episode inside the frame: follow it, so history and the page stay in step
+        const s2 = Number(d.season), e2 = Number(d.episode);
+        if (track && track.media === "tv" && s2 > 0 && e2 > 0 && (s2 !== track.season || e2 !== track.episode)) router.replace(`${pathname}?se=${s2}&ep=${e2}`, { scroll: false });
+      } else if (d.type === "PLAYER_EVENT" && d.data) {
         pos = Number(d.data.currentTime ?? d.data.player_progress); dur = Number(d.data.duration ?? d.data.player_duration);
         force = d.data.event === "pause" || d.data.event === "ended";
       } else if (d.type === "MEDIA_DATA" && d.data && typeof d.data === "object") {
         const x = Object.values(d.data)[0] as { progress?: { watched?: number; duration?: number }; show_progress?: Record<string, { progress?: { watched?: number; duration?: number } }> } | undefined;
-        const ep = track.media === "tv" ? x?.show_progress?.[`s${track.season}e${track.episode}`]?.progress : undefined;
+        const ep = track?.media === "tv" ? x?.show_progress?.[`s${track.season}e${track.episode}`]?.progress : undefined;
         const p = ep ?? x?.progress;
         pos = Number(p?.watched); dur = Number(p?.duration);
       }
-      if (pos != null && Number.isFinite(pos) && pos > 0) report(pos, Number.isFinite(dur) ? dur! : 0, force);
+      if (pos != null && Number.isFinite(pos) && (pos > 0 || force)) report(pos, Number.isFinite(dur) ? dur! : 0, force);
     };
     window.addEventListener("message", on);
     return () => window.removeEventListener("message", on);
-  }, [useEmbed, track?.imdb, track?.season, track?.episode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useEmbed, next?.href, track?.imdb, track?.season, track?.episode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The direct player: the same reports from the <video>, and resuming where you left off.
   useEffect(() => {
@@ -200,7 +232,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track }: {
   // shows the "leave this site?" prompt and Cancel keeps them on the page. Our own links are client-side navigations and
   // never trigger it.
   useEffect(() => {
-    if (!useEmbed) return;
+    if (!useEmbed || curEmbed?.sandbox) return; // a sandboxed frame cannot navigate the page, so only unsandboxed ones need the guard
     const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
     window.addEventListener("beforeunload", guard);
     return () => window.removeEventListener("beforeunload", guard);
@@ -234,18 +266,45 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track }: {
           </div>
         </div>
       ) : useEmbed && curEmbed ? (
-        // No sandbox attribute, on purpose: tested in a browser, every one of these servers detects a sandboxed frame and
-        // refuses to play ("Please Disable Sandbox"). `allow` is what lets them use fullscreen, autoplay and DRM.
-        <div ref={box} className="relative [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:bg-black">
-          <iframe ref={frame} key={curEmbed.url} src={curEmbed.url} title="Player" allowFullScreen referrerPolicy="origin"
-            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-            className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black [:fullscreen>&]:max-h-full [:fullscreen>&]:rounded-none" />
-          {/* The server paints its own promo line over the picture ("watch free movies at ..."), always in the same place
-              (measured: 27-73% across, 74-81% down the player, whatever the size or whether the controls are showing).
-              This blurs that strip from our side of the frame; clicks pass straight through it. It also covers the
-              server's own subtitles, which is the price. Fullscreen has to be ours (the button below) or the overlay
-              would be left outside the frame. */}
-          <div aria-hidden className="pointer-events-none absolute left-[24%] top-[71%] h-[13%] w-[52%] rounded-2xl bg-black/60 backdrop-blur-xl [backdrop-filter:blur(18px)]" />
+        // The frame, dressed like the anime player: night ground, 26px corners, a frost spinner over the poster until the
+        // player is ready. What is inside the frame is the server's own player and cannot be restyled from here.
+        <div ref={box} className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", theater && !full && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
+          {/* No sandbox attribute here only for a server that cannot take one (see lib/movie-servers.ts). For Zeus it is set before
+              src, so the first request is already sandboxed: scripts and same-origin only, so popups, redirects, top navigation,
+              forms, downloads and modals are blocked by the browser. `allow` grants only autoplay, fullscreen and picture-in-picture. */}
+          <iframe ref={frame} key={`${curEmbed.url}#${reloads}`} {...(curEmbed.sandbox ? { sandbox: curEmbed.sandbox } : {})} src={curEmbed.url} title="Player" allowFullScreen referrerPolicy="origin"
+            allow={curEmbed.sandbox ? "autoplay; fullscreen; picture-in-picture" : "autoplay; fullscreen; picture-in-picture; encrypted-media"}
+            onLoad={() => setTimeout(() => setReady(true), 900)}
+            className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />
+          {!ready && (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center bg-night">
+              {poster && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={poster} alt="" referrerPolicy="no-referrer" className="absolute inset-0 size-full object-cover opacity-30 blur-sm" />
+              )}
+              <div className="relative flex flex-col items-center gap-3 text-center">
+                <Loader2 className="size-12 animate-spin text-frost" />
+                <span className="text-[12px] font-extrabold uppercase tracking-[.14em] text-white/70">Getting {track?.title ?? "your title"} ready</span>
+              </div>
+            </div>
+          )}
+          {nextIn != null && next && (
+            <div className="absolute inset-0 z-20 grid place-items-center bg-black/70 backdrop-blur-sm animate-in fade-in">
+              <div className="flex flex-col items-center gap-2 text-center text-white sm:gap-4">
+                <div className="text-[11px] font-bold uppercase tracking-[.16em] text-frost sm:text-[12px]">Up next · {next.label}</div>
+                <div className="relative grid size-16 place-items-center sm:size-24">
+                  <svg className="absolute inset-0 -rotate-90" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="6" /><circle cx="50" cy="50" r="45" fill="none" stroke="var(--frost)" strokeWidth="6" strokeLinecap="round" strokeDasharray={283} strokeDashoffset={283 * (nextIn / 10)} className="transition-[stroke-dashoffset] duration-1000 ease-linear" /></svg>
+                  <span className="font-mono text-[22px] sm:text-[30px]">{nextIn}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { nextDismissed.current = true; setNextIn(null); }} className="h-10 rounded-full border-1.5 border-white/30 px-5 text-[13.5px] font-bold hover:bg-white/10">Cancel</button>
+                  <button type="button" onClick={() => router.push(next.href)} className="h-10 rounded-full bg-frost px-5 text-[13.5px] font-extrabold text-frost-ink">Play now</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* the server paints its own promo line over the picture (only the ones that cannot be sandboxed); blur it from our side */}
+          {!curEmbed.sandbox && <div aria-hidden className="pointer-events-none absolute left-[24%] top-[71%] h-[13%] w-[52%] rounded-2xl bg-black/60 backdrop-blur-xl [backdrop-filter:blur(18px)]" />}
         </div>
       ) : (
         <div className="relative" data-settings>
@@ -272,11 +331,19 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track }: {
         </div>
       )}
       {track?.resume && track.resume > 30 && (
-        <p className="px-1 text-[12.5px] font-bold text-frost-text">{useEmbed ? `You left off at ${mmss(track.resume)}. Drag the bar there to pick up.` : `Resuming from ${mmss(track.resume)}.`}</p>
+        <p className="px-1 text-[12.5px] font-bold text-frost-text">{useEmbed && !curEmbed?.sandbox ? `You left off at ${mmss(track.resume)}. Drag the bar there to pick up.` : `Resuming from ${mmss(track.resume)}.`}</p>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {useEmbed && (
-          <button type="button" onClick={goFull} className="flex h-8 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot"><Maximize className="size-3.5" />Fullscreen</button>
+          <>
+            <span className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold text-plum-body" title={curEmbed?.sandbox ? "Runs in a locked frame: no pop-ups, no redirects" : "Third-party player"}>
+              <ShieldCheck className={cn("size-4", curEmbed?.sandbox ? "text-[#4fbf9c]" : "text-sprinkle-butter")} />{curEmbed?.sandbox ? "Protected" : "Unprotected"}
+            </span>
+            <button type="button" aria-pressed={theater} onClick={() => setTheater((t) => !t)} className={cn("hidden h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot lg:flex", theater && "border-frost-hot text-frost-text")}><RectangleHorizontal className="size-4" />Theater</button>
+            <button type="button" onClick={goFull} className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot">{full ? <Minimize className="size-4" /> : <Maximize className="size-4" />}{full ? "Exit" : "Fullscreen"}</button>
+            <button type="button" onClick={() => setReloads((n) => n + 1)} title="Reload the player at your last spot" className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot"><RotateCw className="size-4" />Reload</button>
+            {next && <button type="button" onClick={() => router.push(next.href)} className="ml-auto flex h-9 items-center gap-1.5 rounded-full border-1.5 border-frost-hot bg-frost px-3.5 text-[12px] font-extrabold text-frost-ink">{next.label}<ChevronRight className="size-4" /></button>}
+          </>
         )}
         {servers.length > 1 && (
           <div className="mr-1 flex items-center gap-2">

@@ -233,9 +233,9 @@ export async function movieSeasonEpisodes(id: number | string, season: number): 
 
 // --- Embed players ---------------------------------------------------------------------------------
 /** Embed players for a title, one per live server, keyed by whichever ids it has (lib/movie-servers). */
-export async function movieEmbeds(media: MovieMedia, ids: TitleIds, se?: number, ep?: number): Promise<MovieEmbed[]> {
+export async function movieEmbeds(media: MovieMedia, ids: TitleIds, se?: number, ep?: number, resume?: number): Promise<MovieEmbed[]> {
   if (!ids.imdb && !ids.tmdb) return [];
-  return liveEmbeds(media, ids, se || 1, ep || 1);
+  return liveEmbeds(media, ids, se || 1, ep || 1, resume);
 }
 
 // --- story map ---------------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ChevronRight, Clock, Play, Star } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { all, first } from "@/lib/db";
-import { movieDetail, movieCatalog, movieStoryMap, moviesEnabled, type MovieMedia } from "@/lib/tmdb";
+import { movieDetail, movieEmbeds, movieCatalog, movieStoryMap, moviesEnabled, type MovieMedia } from "@/lib/tmdb";
 import { Poster } from "@/components/poster";
 import { MoviePlayer } from "@/components/movies/player";
 import { TitleActions } from "@/components/movies/title-actions";
@@ -79,17 +79,15 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const curEp = idx >= 0 ? allEps[idx] : null;
   const totalAired = allEps.filter((e) => !e.aired || Date.parse(e.aired) <= Date.now()).length || null;
 
-  // Zeus (our own player, no ads) is the only server. Third-party embed players are not offered at all: they open ad tabs
-  // and redirects and cannot be sandboxed (see lib/movie-servers.ts, kept for reference and the health page).
-  const embeds: { name: string; url: string }[] = [];
-  const [story, avg, similar] = await Promise.all([
+  // Zeus is CineSrc in a sandboxed iframe (lib/movie-servers.ts says why it, and nothing else, is offered). It resumes at ?t=.
+  const [embeds, story, avg, similar] = await Promise.all([
+    movieEmbeds(d.media, { imdb: d.imdbId, tmdb: d.tmdbId }, se, ep, resume),
     movieStoryMap(d.media, d.id).catch(() => null),
     imdb ? first<{ a: number | null; n: number }>("select avg(score) as a, count(score) as n from movie_library where imdb_id = ?", imdb).catch(() => null) : Promise.resolve(null),
     movieCatalog({ type: d.media, genre: d.genres[0], sort: "popular" }).then((r) => r.items.filter((i) => i.slug !== slug).slice(0, 14)).catch(() => []),
   ]);
 
-  const streamQs = new URLSearchParams({ media: d.media, title: d.title, ...(d.year ? { year: String(d.year) } : {}), ...(imdb ? { imdb } : {}), ...(se ? { se: String(se), ep: String(ep ?? 1) } : {}) });
-  const streamSrc = `/api/movie/stream?${streamQs}`;
+  const streamSrc: string | null = null; // the old direct source (Moviebox) is no longer used by the player
   const watchedEps = mine.filter((m) => m.watched && m.season === se).map((m) => m.episode);
   const base = { imdb, title: d.title, poster: d.poster, year: d.year, episodes: totalAired };
 
@@ -103,6 +101,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
       {streamSrc || embeds.length ? (
         <MoviePlayer
           key={`${slug}-${se ?? 0}-${ep ?? 0}`} streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${tv ? `-s${se}e${ep}` : ""}`}
+          next={nextEp ? { href: `/movies/${slug}?se=${nextEp.se}&ep=${nextEp.ep}`, label: `${nextEp.se !== se ? `S${nextEp.se} ` : ""}Episode ${nextEp.ep}` } : undefined}
           track={imdb && ready ? { imdb, media: d.media, season: se, episode: ep, title: d.title, poster: d.poster, year: d.year, epTitle: curEp?.title ?? null, episodes: totalAired, resume } : undefined}
         />
       ) : (

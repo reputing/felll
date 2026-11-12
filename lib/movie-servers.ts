@@ -9,10 +9,14 @@
 // The embeds play in the viewer's own browser, so a host that blocks datacenter addresses (which the direct Moviebox
 // stream also does) is not a problem for them.
 export interface TitleIds { imdb?: string | null; tmdb?: number | null }
-export interface MovieEmbed { name: string; url: string }
+/** `sandbox` is the iframe's sandbox attribute for a server that accepts one; the player applies it before the page loads. */
+export interface MovieEmbed { name: string; url: string; sandbox?: string; origin?: string }
 
 interface Host {
   name: string;
+  /** the sandbox this server was shown to play in; when set, popups, redirects and top navigation are blocked for it */
+  sandbox?: string;
+  origin?: string;
   /** a url on this host, or null when the host cannot take the ids we have */
   movie: (i: TitleIds) => string | null;
   tv: (i: TitleIds, s: number, e: number) => string | null;
@@ -32,34 +36,37 @@ const twoEmbed = (base: string): Pick<Host, "movie" | "tv"> => ({
   tv: (i, s, e) => (i.imdb ? `${base}/embedtv/${i.imdb}&s=${s}&e=${e}` : i.tmdb ? `${base}/embedtv/${i.tmdb}&s=${s}&e=${e}` : null),
 });
 
-// Servers are named for Greek gods, like the anime ones (lib/anivexa.ts). Zeus is the site's own player (a direct stream),
-// which is why no embed here uses that name.
+// Servers are named for Greek gods, like the anime ones (lib/anivexa.ts).
 //
-// ADS. These are third-party players, and nearly all of them are paid for by pop-unders and ad overlays. Every host was
-// run in a real browser with repeated clicks while counting popups, ad-network requests and overlays:
-//   - Apollo (Viduki) opened no popups, asked an ad network for nothing and showed no overlay, for films and episodes:
-//     it is the only one on by default.
-//   - Poseidon (VidSrc.to), Hermes (VidLink) and Ares (VidNest) each opened a popup window and called ad networks
-//     (rapidadexchange, adsco); Athena (YTHD) plays but captions its own ad on the picture; Artemis (2Embed, both
-//     domains) answers "this video file cannot be played". Those are kept below, off, in case one is ever wanted; the
-//     MOVIE_ALLOW_AD_SERVERS=1 variable turns them on.
-// A sandboxed iframe would stop the popups, but every one of these refuses to play in one (tested with five different
-// sandbox flag sets), so the only way to a clean player is to leave the others out.
+// Zeus is CineSrc (cinesrc.st), the one third-party player that was tested to play INSIDE a sandboxed iframe:
+//   sandbox="allow-scripts allow-same-origin"  (no popups, no top navigation, no forms, no downloads, no modals)
+// In a real browser, with that sandbox, it played films and episodes, opened no popups or tabs, and showed no ad on the
+// picture; it does ask one ad exchange (adexchangerapid.com) for something, which the sandbox cannot show as a popup or
+// redirect. It has a postMessage API (progress, ready, pause) and resumes at `?t=<seconds>`, and it carries new releases the
+// old direct source (Moviebox) did not. It needs a TMDB id (Cinemeta supplies it with every title).
+//
+// The others were tried and left off. They open ad tabs and redirects and refuse to play in any sandbox (their check reads
+// document.domain, which no sandboxed frame allows), so they stay in AD_HOSTS for reference and the health page only.
+// MOVIE_ALLOW_AD_SERVERS=1 would show them; do not set it.
+const ZEUS_SANDBOX = "allow-scripts allow-same-origin";
 const HOSTS: Host[] = [
-  { name: "Apollo", movie: (i) => (i.tmdb ? `https://vidsrc.wtf/api/1/movie/?id=${i.tmdb}` : null), tv: (i, s, e) => (i.tmdb ? `https://vidsrc.wtf/api/1/tv/?id=${i.tmdb}&s=${s}&e=${e}` : null) },
+  {
+    name: "Zeus", sandbox: ZEUS_SANDBOX, origin: "https://cinesrc.st",
+    movie: (i) => (i.tmdb ? `https://cinesrc.st/embed/movie/${i.tmdb}` : null),
+    tv: (i, s, e) => (i.tmdb ? `https://cinesrc.st/embed/tv/${i.tmdb}?s=${s}&e=${e}` : null),
+  },
 ];
 
 const AD_HOSTS: Host[] = [
+  { name: "Apollo", movie: (i) => (i.tmdb ? `https://vidsrc.wtf/api/1/movie/?id=${i.tmdb}` : null), tv: (i, s, e) => (i.tmdb ? `https://vidsrc.wtf/api/1/tv/?id=${i.tmdb}&s=${s}&e=${e}` : null) },
   { name: "Poseidon", movie: (i) => { const p = imdbOrTmdb(i); return p ? `https://vidsrc.to/embed/movie/${p.v}` : null; }, tv: (i, s, e) => { const p = imdbOrTmdb(i); return p ? `https://vidsrc.to/embed/tv/${p.v}/${s}/${e}` : null; } },
   { name: "Hermes", ...tmdbPath("https://vidlink.pro") },
   { name: "Ares", ...tmdbPath("https://vidnest.fun") },
-  { name: "Athena", movie: (i) => (i.tmdb ? `https://ythd.org/embed/${i.tmdb}` : null), tv: (i, s, e) => (i.tmdb ? `https://ythd.org/embed/${i.tmdb}/${s}-${e}` : null) },
-  { name: "Artemis", movie: twoEmbed("https://www.2embed.cc").movie, tv: () => null },
 ];
 
 /** Where the embeds are allowed to load from: the page's frame-src lists exactly these, so a frame that tries to redirect
  *  itself somewhere else is blocked by the browser. (Viduki's own page lives on www.viduki.net.) */
-export const FRAME_ORIGINS = ["https://vidsrc.wtf", "https://viduki.net", "https://www.viduki.net"];
+export const FRAME_ORIGINS = ["https://cinesrc.st"];
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
@@ -84,21 +91,24 @@ async function alive(url: string): Promise<boolean> {
 }
 
 /** What the picker would offer for this title, before the liveness check. */
-export function embedsFor(media: "movie" | "tv", ids: TitleIds, se = 1, ep = 1, withAds = false): MovieEmbed[] {
+export function embedsFor(media: "movie" | "tv", ids: TitleIds, se = 1, ep = 1, withAds = false, resume?: number): MovieEmbed[] {
   const out: MovieEmbed[] = [];
   for (const h of withAds ? [...HOSTS, ...AD_HOSTS] : HOSTS) {
-    const url = media === "tv" ? h.tv(ids, se, ep) : h.movie(ids);
-    if (url) out.push({ name: h.name, url });
+    let url = media === "tv" ? h.tv(ids, se, ep) : h.movie(ids);
+    if (!url) continue;
+    // Zeus resumes at ?t=<seconds> (checked: a film opened with t=600 reported its first time as 600)
+    if (h.sandbox && resume && resume > 30) url += (url.includes("?") ? "&" : "?") + `t=${Math.floor(resume)}`;
+    out.push({ name: h.name, url, ...(h.sandbox ? { sandbox: h.sandbox } : {}), ...(h.origin ? { origin: h.origin } : {}) });
   }
   return out;
 }
 
 /** The embeds worth showing now: dead hosts are left out (all of them, if every check failed, so the page is never empty
  *  because of a network blip on our side). Waits at most 3 seconds, then treats an unanswered host as alive. */
-export async function liveEmbeds(media: "movie" | "tv", ids: TitleIds, se = 1, ep = 1): Promise<MovieEmbed[]> {
+export async function liveEmbeds(media: "movie" | "tv", ids: TitleIds, se = 1, ep = 1, resume?: number): Promise<MovieEmbed[]> {
   let withAds = false;
   try { withAds = ((await getCloudflareContext({ async: true })).env as unknown as Record<string, string | undefined>).MOVIE_ALLOW_AD_SERVERS === "1"; } catch { withAds = process.env.MOVIE_ALLOW_AD_SERVERS === "1"; }
-  const all = embedsFor(media, ids, se, ep, withAds);
+  const all = embedsFor(media, ids, se, ep, withAds, resume);
   const checks = await Promise.all(all.map((e) => Promise.race([alive(e.url), new Promise<boolean>((r) => setTimeout(() => r(true), 3200))])));
   const up = all.filter((_, i) => checks[i]);
   return up.length ? up : all;
