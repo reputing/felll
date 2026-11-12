@@ -53,6 +53,11 @@ export default async function Profile({ params }: Props) {
       "select id, manga_id, body, spoiler, created_at, likes from manga_comments where user_id = ? and deleted = 0 order by created_at desc limit 5", u.id).catch(() => []),
   ]);
   const movieRows = hiddenSafe(await all<{ imdb_id: string; media: string; title: string; poster: string | null; favorite: number; status: string | null }>("select imdb_id, media, title, poster, favorite, status from movie_library where user_id = ? order by favorite desc, updated_at desc limit 24", u.id).catch(() => []), !!u.private_lists && !self);
+  // what they are watching right now: films and series marked "watching", with the episode they are on
+  const watchingNow = hiddenSafe(await all<{ imdb_id: string; media: string; title: string; poster: string | null; last: string | null }>(
+    `select l.imdb_id, l.media, l.title, l.poster,
+       (select 'S' || p.season || ' E' || p.episode from movie_progress p where p.user_id = l.user_id and p.imdb_id = l.imdb_id and l.media = 'tv' order by p.updated_at desc limit 1) as last
+       from movie_library l where l.user_id = ? and l.status = 'watching' order by l.updated_at desc limit 8`, u.id).catch(() => []), !!u.private_lists && !self);
   const c = counts.results[0] as { followers: number; following: number };
   const now = live.results[0] as { mal_id: number | null; episode: number | null; title: string | null } | undefined;
   const showcaseIds: number[] = (() => { try { return JSON.parse(u.showcase); } catch { return []; } })();
@@ -238,6 +243,19 @@ export default async function Profile({ params }: Props) {
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+          {watchingNow.length > 0 && (
+            <section className="rounded-box border-1.5 border-line bg-cream-card p-5">
+              <div className="eyebrow mb-3">Watching now · {watchingNow.length}</div>
+              <div className="grid grid-cols-4 gap-2">
+                {watchingNow.slice(0, 8).map((m) => (
+                  <Link key={m.imdb_id} href={`/movies/${m.media}-${m.imdb_id}`} title={m.title} className="relative block">
+                    <Poster src={m.poster ?? `https://images.metahub.space/poster/small/${m.imdb_id}/img`} label={m.title} className="aspect-[2/3] rounded-xl transition hover:-translate-y-0.5" />
+                    {m.last && <span className="absolute inset-x-1 bottom-1 rounded-lg bg-black/75 px-1.5 py-0.5 text-center font-mono text-[11px] font-extrabold text-white">{m.last}</span>}
+                  </Link>
+                ))}
+              </div>
             </section>
           )}
           {movieRows.length > 0 && (

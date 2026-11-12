@@ -4,7 +4,7 @@ import { Poster } from "@/components/poster";
 import type { MovieCard } from "@/lib/tmdb";
 import type { ContinueItem } from "@/lib/movie-user";
 import { KeepWatching } from "@/components/home/keep-watching";
-import { movieKW } from "@/lib/movie-resume";
+import { movieKeep } from "@/lib/movie-resume";
 
 // A shelf of posters, the way the home page shelves anime.
 export function Rail({ eyebrow, title, items, href }: { eyebrow?: string; title: string; items: MovieCard[]; href?: string }) {
@@ -33,7 +33,9 @@ export function Rail({ eyebrow, title, items, href }: { eyebrow?: string; title:
 }
 
 /** "Continue watching" on the movies hub: the same card as the home page's Keep watching. */
-export function ContinueRail({ items, title = "Continue watching" }: { items: ContinueItem[]; title?: string }) {
+export async function ContinueRail({ items, title = "Continue watching" }: { items: ContinueItem[]; title?: string }) {
   if (!items.length) return null;
-  return <KeepWatching items={items.map(movieKW)} title={title} eyebrow="Pick up where you left off" historyHref="/movies/history" />;
+  const cards = await movieKeep(items);
+  if (!cards.length) return null;
+  return <KeepWatching items={cards} title={title} eyebrow="Pick up where you left off" historyHref="/movies/history" />;
 }

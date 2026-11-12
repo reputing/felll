@@ -10,7 +10,7 @@ import { MangaKeepReading, MangaPopular } from "@/components/manga/home-rail";
 import { HomeSections, type HomeSection } from "@/components/home/home-sections";
 import { MoviesHomeRail } from "@/components/movies/home-rail";
 import { continueWatching } from "@/lib/movie-user";
-import { movieKW } from "@/lib/movie-resume";
+import { movieKeep } from "@/lib/movie-resume";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
 import { TopRow } from "@/components/home/top-row";
 import { Shelf, ShelfSkeleton, type ShelfItem } from "@/components/shelf";
@@ -51,7 +51,7 @@ export default async function Home() {
   // they live in their own tables; a missing table just means none)
   const moviesKeep = await continueWatching(me.id, 10);
   const keepAnime = resume.map(animeKW);
-  const keep = [...keepAnime, ...moviesKeep.map(movieKW)].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, 14);
+  const keep = [...keepAnime, ...(await movieKeep(moviesKeep))].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, 14);
 
   // One pool feeds the hero and the genre rows. Everything on the page is a
   // horizontal row — no sidebars, no dashboard panels.

@@ -11,7 +11,7 @@ import { Episodes } from "@/components/movies/episodes";
 import { Cast } from "@/components/movies/cast";
 import { Comments } from "@/components/comments/comments";
 import { cinemaPing } from "@/lib/cinema";
-import { cn } from "@/lib/utils";
+import { clock, cn } from "@/lib/utils";
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ se?: string; ep?: string }> };
 
@@ -70,7 +70,9 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const seasons = d.seasons.map((s) => s.season);
   // the episode to play: the one asked for, else where this member left off, else the first
   const mine = imdb && ready ? await all<{ season: number; episode: number; position: number; duration: number; watched: number; updated_at: number }>("select season, episode, position, duration, watched, updated_at from movie_progress where user_id = ? and imdb_id = ?", me.id, imdb).catch(() => []) : [];
-  const latest = [...mine].sort((a, b) => b.updated_at - a.updated_at)[0];
+  // only episodes that exist count as "where you left off" (older rows can hold a season or episode the series never had)
+  const real = (m: { season: number; episode: number }) => !tv || !d.episodes?.length || d.episodes.some((e) => e.se === m.season && e.ep === m.episode);
+  const latest = [...mine].filter(real).sort((a, b) => b.updated_at - a.updated_at)[0];
   let se: number | undefined, ep: number | undefined;
   if (tv) {
     if (sp.se && sp.ep) { se = Number(sp.se) || 1; ep = Number(sp.ep) || 1; }
@@ -100,12 +102,38 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const totalAired = allEps.filter((e) => !e.aired || Date.parse(e.aired) <= Date.now()).length || null;
 
   // Zeus is CineSrc in a sandboxed iframe (lib/movie-servers.ts says why it, and nothing else, is offered). It resumes at ?t=.
-  const [embeds, story, avg, similar] = await Promise.all([
+  // "Pick up at S2 E4": where this member left off, shown when they are looking at some other episode (a link to the first one, say)
+  // Opening an episode records it straight away, so "the latest" is wherever the viewer just clicked. The target is therefore the
+  // newest episode with real progress that is NOT the one on screen, else the one after the newest finished episode.
+  let pick: { se: number; ep: number; at: number } | null = null;
+  if (tv) {
+    const here = (m: { season: number; episode: number }) => m.season === se && m.episode === ep;
+    const part = [...mine].filter((m) => real(m) && !here(m) && !m.watched && m.position > 30).sort((x, y) => y.updated_at - x.updated_at)[0];
+    if (part) pick = { se: part.season, ep: part.episode, at: Math.floor(part.position) };
+    else {
+      const done = [...mine].filter((m) => real(m) && m.watched).sort((x, y) => y.updated_at - x.updated_at)[0];
+      const eps = d.episodes ?? [];
+      const i = done ? eps.findIndex((e) => e.se === done.season && e.ep === done.episode) : -1;
+      const n = i >= 0 ? eps.slice(i + 1).find((e) => !e.aired || Date.parse(e.aired) <= Date.now()) : null;
+      if (n) pick = { se: n.se, ep: n.ep, at: 0 };
+    }
+  }
+  const [embeds, story, avg, similar, also] = await Promise.all([
     movieEmbeds(d.media, { imdb: d.imdbId, tmdb: d.tmdbId }, se, ep, resume),
     movieStoryMap(d.media, d.id).catch(() => null),
     imdb ? first<{ a: number | null; n: number }>("select avg(score) as a, count(score) as n from movie_library where imdb_id = ?", imdb).catch(() => null) : Promise.resolve(null),
     movieCatalog({ type: d.media, genre: d.genres[0], sort: "popular" }).then((r) => r.items.filter((i) => i.slug !== slug).slice(0, 14)).catch(() => []),
+    // what other members who saved this title also saved (and this member has not): the community's own "more like this"
+    imdb && ready
+      ? all<{ imdb_id: string; media: string; title: string; poster: string | null; n: number }>(
+          `select l.imdb_id, l.media, l.title, l.poster, count(*) as n from movie_library l
+            where l.user_id in (select user_id from movie_library where imdb_id = ?1 and user_id != ?2)
+              and l.imdb_id != ?1 and l.imdb_id not in (select imdb_id from movie_library where user_id = ?2)
+            group by l.imdb_id order by n desc, max(coalesce(l.score, 0)) desc, l.updated_at desc limit 12`, imdb, me.id).catch(() => [])
+      : Promise.resolve([]),
   ]);
+  const alsoSlugs = new Set(also.map((a) => `${a.media}-${a.imdb_id}`));
+  const similarShown = similar.filter((m) => !alsoSlugs.has(m.slug));
 
   const streamSrc: string | null = null; // the old direct source (Moviebox) is no longer used by the player
   const watchedEps = mine.filter((m) => m.watched && m.season === se).map((m) => m.episode);
@@ -140,11 +168,18 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
             <div className="eyebrow">Season {se} · Episode {ep}</div>
             <div className="truncate text-[15px] font-extrabold">{curEp.title}</div>
           </div>
-          {nextEp && (
-            <Link href={`/movies/${slug}?se=${nextEp.se}&ep=${nextEp.ep}`} scroll={false} className="flex h-10 items-center gap-2 rounded-full border-1.5 border-frost-hot bg-frost px-4 text-[13px] font-extrabold text-frost-ink">
-              Next: {nextEp.se !== se ? `S${nextEp.se} ` : ""}E{nextEp.ep}<Play className="size-3.5" fill="currentColor" />
-            </Link>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {pick && (pick.se !== se || pick.ep !== ep) && (
+              <Link href={`/movies/${slug}?se=${pick.se}&ep=${pick.ep}`} scroll={false} className="flex h-10 items-center gap-2 rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-extrabold hover:border-frost-hot">
+                Pick up at S{pick.se} E{pick.ep}{pick.at > 30 ? <span className="font-mono text-[12px] font-semibold text-plum-muted">{clock(pick.at)}</span> : null}
+              </Link>
+            )}
+            {nextEp && (
+              <Link href={`/movies/${slug}?se=${nextEp.se}&ep=${nextEp.ep}`} scroll={false} className="flex h-10 items-center gap-2 rounded-full border-1.5 border-frost-hot bg-frost px-4 text-[13px] font-extrabold text-frost-ink">
+                Next: {nextEp.se !== se ? `S${nextEp.se} ` : ""}E{nextEp.ep}<Play className="size-3.5" fill="currentColor" />
+              </Link>
+            )}
+          </div>
         </div>
       )}
 
@@ -213,11 +248,26 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
         </section>
       )}
 
-      {similar.length > 0 && (
+      {also.length > 0 && (
+        <section className="flex flex-col gap-3" aria-label="Members also saved">
+          <h2 className="px-1 text-lg font-extrabold tracking-[-.4px]">Members who saved this also saved</h2>
+          <div className="scrollbar-none flex gap-3 overflow-x-auto pb-1">
+            {also.map((m) => (
+              <Link key={`${m.media}-${m.imdb_id}`} href={`/movies/${m.media}-${m.imdb_id}`} className="group w-[128px] flex-none">
+                <Poster src={m.poster ?? `https://images.metahub.space/poster/small/${m.imdb_id}/img`} label={m.title} className="aspect-[2/3] rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot" />
+                <div className="mt-1.5 line-clamp-2 px-0.5 text-[12.5px] font-extrabold leading-tight">{m.title}</div>
+                {m.n > 1 && <div className="px-0.5 text-[11.5px] font-semibold text-plum-muted">{m.n} members</div>}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {similarShown.length > 0 && (
         <section className="flex flex-col gap-3" aria-label="More like this">
           <h2 className="px-1 text-lg font-extrabold tracking-[-.4px]">More {d.genres[0] ? d.genres[0].toLowerCase() : "like this"}</h2>
           <div className="scrollbar-none flex gap-3 overflow-x-auto pb-1">
-            {similar.map((m) => (
+            {similarShown.map((m) => (
               <Link key={m.slug} href={`/movies/${m.slug}`} className="group w-[128px] flex-none">
                 <Poster src={m.poster} className="aspect-[2/3] rounded-2xl border-1.5 border-line transition group-hover:-translate-y-1 group-hover:border-frost-hot" />
                 <div className="mt-1.5 line-clamp-2 px-0.5 text-[12.5px] font-extrabold leading-tight">{m.title}</div>

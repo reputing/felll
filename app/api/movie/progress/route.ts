@@ -41,8 +41,10 @@ export async function POST(req: Request) {
   const imdb = String(b.imdb || "");
   if (!IMDB.test(imdb) || (b.media !== "movie" && b.media !== "tv") || !b.title) return Response.json({ error: "which title?" }, { status: 400 });
   const tv = b.media === "tv";
+  // no series has a season 1000000000: an impossible number is refused rather than stored (it would show up as "where you left off")
   const season = tv ? Math.max(1, Number(b.season) || 1) : 0;
   const episode = tv ? Math.max(1, Number(b.episode) || 1) : 0;
+  if (season > 200 || episode > 10000) return Response.json({ error: "no such episode" }, { status: 400 });
   const pos = Math.max(0, Number(b.position) || 0), dur = Math.max(0, Number(b.duration) || 0);
   const done = !b.unwatch && (!!b.watched || (dur > 60 && pos / dur >= 0.9));
   const title = String(b.title).slice(0, 200);
