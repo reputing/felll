@@ -25,7 +25,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
   const [sources, setSources] = useState<MovieSource[] | null>(null); // null = not loaded yet
   const [nativeDead, setNativeDead] = useState(false);
   const hasNative = !!streamSrc && !nativeDead;
-  const servers = [...(hasNative ? [{ k: "cupcake", label: "Cupcake" }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name }))];
+  const servers = [...(hasNative ? [{ k: "cupcake", label: "Zeus" }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name }))];
   const [server, setServer] = useState<string>(streamSrc ? "cupcake" : embeds[0]?.name ?? "cupcake");
   const curEmbed = embeds.find((e) => e.name === server) ?? null;
   const useEmbed = !!curEmbed;
@@ -122,6 +122,18 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
   }, [cur]);
 
   useEffect(() => () => hls.current?.destroy(), []);
+
+  // Anti-redirect. A third-party frame can send the whole tab somewhere else once somebody has clicked inside it (that is
+  // how most ad redirects work), and a sandbox that forbids it is not an option (every server refuses one). So while an
+  // embed is on screen the browser is asked to confirm before the page unloads; a redirect the viewer did not ask for
+  // shows the "leave this site?" prompt and Cancel keeps them on the page. Our own links are client-side navigations and
+  // never trigger it.
+  useEffect(() => {
+    if (!useEmbed) return;
+    const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [useEmbed]);
 
   if (!hasNative && !embeds.length) {
     return <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night text-center text-[14px] font-semibold text-night-muted">This title isn’t playable right now. Try another.</div>;

@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/:file(logo.png|favicon.png)", headers: [{ key: "cache-control", value: "public, max-age=604800, stale-while-revalidate=86400" }] },
+      // The movie player frames third-party pages. frame-src names the only places a frame may load or redirect to, so one
+      // that tries to send itself to an ad page is stopped by the browser (anti-redirect; see lib/movie-servers.ts).
+      // YouTube is for trailers. Only frame-src is set here, so nothing else on the page is restricted.
+      { source: "/movies/:path+", headers: [{ key: "content-security-policy", value: "frame-src 'self' https://vidsrc.wtf https://viduki.net https://www.viduki.net https://www.youtube-nocookie.com https://www.youtube.com" }] },
       {
         source: "/:path*",
         headers: [
