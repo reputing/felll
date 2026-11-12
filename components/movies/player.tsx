@@ -1,7 +1,7 @@
 "use client";
 import type Hls from "hls.js";
 import { usePathname, useRouter } from "next/navigation";
-import { ZeusControls } from "@/components/movies/zeus-controls";
+import { ZeusControls, type Prefs } from "@/components/movies/zeus-controls";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Captions, ChevronRight, Loader2, Maximize, Minimize, RectangleHorizontal, RotateCw } from "lucide-react";
@@ -50,10 +50,21 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const [theater, setTheater] = useState(false);
   const [full, setFull] = useState(false);
   const [reloads, setReloads] = useState(0);
+  // switching server reloads the frame on that server at the spot you are at; CineSrc takes both as options (lastserver, t)
+  const [pick, setPick] = useState<{ server: string; at: number } | null>(null);
+  const prefs = useRef<Prefs>({ autoNext: true, stopAfter: false });
   const [nextIn, setNextIn] = useState<number | null>(null);
   const nextDismissed = useRef(false);
-  useEffect(() => { setReady(false); setNextIn(null); nextDismissed.current = false; }, [curEmbed?.url, reloads]);
-  useEffect(() => { const t = setTimeout(() => setReady(true), 7000); return () => clearTimeout(t); }, [curEmbed?.url, reloads]); // never hide a working player behind a spinner
+  const frameUrl = (() => {
+    if (!curEmbed) return "";
+    if (!pick) return curEmbed.url;
+    const u = new URL(curEmbed.url);
+    u.searchParams.set("lastserver", pick.server); u.searchParams.set("prioritize", "true");
+    if (pick.at > 5) u.searchParams.set("t", String(Math.floor(pick.at)));
+    return u.toString();
+  })();
+  useEffect(() => { setReady(false); setNextIn(null); nextDismissed.current = false; }, [frameUrl, reloads]);
+  useEffect(() => { const t = setTimeout(() => setReady(true), 7000); return () => clearTimeout(t); }, [frameUrl, reloads]); // never hide a working player behind a spinner
   useEffect(() => { const on = () => setFull(!!document.fullscreenElement); document.addEventListener("fullscreenchange", on); return () => document.removeEventListener("fullscreenchange", on); }, []);
   useEffect(() => {
     if (nextIn == null) return;
@@ -195,7 +206,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
         // Zeus: only believed from its own origin. timeupdate carries currentTime and duration; pause and ended save at once.
         if (e.origin !== "https://cinesrc.st") return;
         if (d.type === "cinesrc:ready" || d.type === "cinesrc:loadedmetadata" || d.type === "cinesrc:play") setReady(true);
-        if (d.type === "cinesrc:ended" && next && !nextDismissed.current) setNextIn(10);
+        if (d.type === "cinesrc:ended" && next && !nextDismissed.current && prefs.current.autoNext && !prefs.current.stopAfter) setNextIn(10);
         if (d.type === "cinesrc:timeupdate") { pos = Number(d.currentTime); dur = Number(d.duration); }
         else if (d.type === "cinesrc:pause" || d.type === "cinesrc:ended") { force = true; pos = Number(d.currentTime ?? 0) || sent.current.pos; dur = Number(d.duration ?? 0); }
         // its own next-episode button changes the episode inside the frame: follow it, so history and the page stay in step
@@ -273,13 +284,15 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
           {/* No sandbox attribute here only for a server that cannot take one (see lib/movie-servers.ts). For Zeus it is set before
               src, so the first request is already sandboxed: scripts and same-origin only, so popups, redirects, top navigation,
               forms, downloads and modals are blocked by the browser. `allow` grants only autoplay, fullscreen and picture-in-picture. */}
-          <iframe ref={frame} key={`${curEmbed.url}#${reloads}`} {...(curEmbed.sandbox ? { sandbox: curEmbed.sandbox } : {})} src={curEmbed.url} title="Player" allowFullScreen referrerPolicy="origin"
+          <iframe ref={frame} key={`${frameUrl}#${reloads}`} {...(curEmbed.sandbox ? { sandbox: curEmbed.sandbox } : {})} src={frameUrl} title="Player" allowFullScreen referrerPolicy="origin"
             allow={curEmbed.sandbox ? "autoplay; fullscreen; picture-in-picture" : "autoplay; fullscreen; picture-in-picture; encrypted-media"}
             onLoad={() => setTimeout(() => setReady(true), 900)}
             className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />
           {/* our own controls and the cupcake bug over a frame whose own controls are off (see zeus-controls.tsx) */}
           {curEmbed.sandbox && curEmbed.origin && (
-            <ZeusControls frame={frame} box={box} origin={curEmbed.origin} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull} />
+            <ZeusControls frame={frame} box={box} origin={curEmbed.origin} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull}
+              subsFor={track ? { imdb: track.imdb, media: track.media, season: track.season, episode: track.episode, subKey: subKey ?? `m:${track.imdb}`, title: track.title } : undefined}
+              onServer={(id, at) => setPick({ server: id, at })} onPrefs={(p) => { prefs.current = p; }} />
           )}
           {!ready && (
             <div className="pointer-events-none absolute inset-0 grid place-items-center bg-night">

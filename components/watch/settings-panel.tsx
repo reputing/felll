@@ -49,6 +49,8 @@ export interface PanelProps {
   page: "main" | "subs"; onPage: (p: "main" | "subs") => void; onClose: () => void;
   /** movies: only the subtitles page, opening at the top of the picture (the native controls sit at the bottom) */
   subsOnly?: boolean;
+  /** the picture is in a frame we cannot listen to, so there is no audio to sync against */
+  noAutoSync?: boolean;
 }
 
 export function SettingsPanel(p: PanelProps) {
@@ -105,10 +107,10 @@ export function SettingsPanel(p: PanelProps) {
           <button type="button" onClick={() => p.onOffset(0)} className={cn(chip, off)}>0</button>
         </div>
         <p className="px-1 pt-1 text-[11px] text-white/50">+ shows them later, − earlier.</p>
-        <button type="button" disabled={!p.hasCues || p.sync.phase === "listening"} onClick={p.onAutoSync} className={cn(chip, off, "mt-2 flex h-9 w-full items-center justify-center gap-2 disabled:opacity-50")}>
+        {!p.noAutoSync && (<button type="button" disabled={!p.hasCues || p.sync.phase === "listening"} onClick={p.onAutoSync} className={cn(chip, off, "mt-2 flex h-9 w-full items-center justify-center gap-2 disabled:opacity-50")}>
           {p.sync.phase === "listening" ? <Loader2 className="size-4 animate-spin" /> : <AudioLines className="size-4" />}
           {p.sync.phase === "listening" ? `Listening… ${Math.round(p.sync.progress * 100)}%` : "Auto-sync by listening to the audio"}
-        </button>
+        </button>)}
         {p.sync.msg && <p className={cn("px-1 pt-1.5 text-[11.5px] font-bold", p.sync.phase === "error" ? "text-red-300" : "text-frost")}>{p.sync.msg}</p>}
         <div className="mt-2 flex gap-2">
           <button type="button" disabled={!p.hasCues} onClick={() => p.onDownload("srt")} className={cn(chip, off, "flex flex-1 items-center justify-center gap-1.5 disabled:opacity-50")}><Download className="size-3.5" />.srt</button>

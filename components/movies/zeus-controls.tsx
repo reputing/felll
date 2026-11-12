@@ -1,7 +1,12 @@
 "use client";
-import { ChevronRight, Maximize, Minimize, Pause, Play, RectangleHorizontal, RotateCcw, RotateCw, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
+import { Captions, ChevronRight, Maximize, Minimize, Pause, Play, RectangleHorizontal, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { SettingsPanel } from "@/components/watch/settings-panel";
+import { SubtitleLayer, useSubStyle } from "@/components/watch/subtitles";
+import { useSubs } from "@/components/watch/use-subs";
+import type { Source, Track } from "@/components/watch/player";
+import { toast } from "@/lib/store";
 import { cn, clock } from "@/lib/utils";
 
 // Our own control bar for Zeus: the same bar, seek line, buttons and cupcake bug as the anime player, drawn over a frame whose
@@ -9,13 +14,27 @@ import { cn, clock } from "@/lib/utils";
 // postMessage commands (play, pause, seek, setVolume, setMuted, setPlaybackRate) and follows its events (play, pause,
 // timeupdate, volumechange, ratechange, ended), which are only believed from its own origin and its own frame.
 const bar = "grid size-10 place-items-center rounded-full text-white/90 transition hover:bg-white/15 hover:text-white";
-const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+// Zeus's servers, in the order CineSrc lists them, under Greek names like the anime servers. The ids are CineSrc's own
+// (the `lastserver` option and the `sourceused` event use them). A server that does not carry a title is skipped by CineSrc,
+// so asking for one is a preference: the player says so when it ends up on a different one.
+export const ZEUS_SERVERS: { id: string; name: string }[] = [
+  { id: "nebula", name: "Zeus" }, { id: "light", name: "Apollo" }, { id: "wave", name: "Poseidon" }, { id: "orbit", name: "Athena" },
+  { id: "storm", name: "Ares" }, { id: "aurora", name: "Eos" }, { id: "flux", name: "Hermes" }, { id: "river", name: "Hera" },
+  { id: "surge", name: "Dionysus" }, { id: "mist", name: "Artemis" }, { id: "tempest", name: "Hephaestus" }, { id: "thunder", name: "Hades" },
+];
+const serverName = (id: string | null) => ZEUS_SERVERS.find((x) => x.id === id)?.name ?? id ?? "";
+const LS = { autoNext: "kuro:movieAutoNext", lang: "kuro:movieSubLang" };
+
+export interface SubsFor { imdb: string; media: "movie" | "tv"; season?: number; episode?: number; subKey: string; title: string }
+export interface Prefs { autoNext: boolean; stopAfter: boolean }
 
 export interface Hop { href: string; label: string }
 
-export function ZeusControls({ frame, box, origin, ready, prev, next, theater, onTheater, full, onFull }: {
+export function ZeusControls({ frame, box, origin, ready, prev, next, theater, onTheater, full, onFull, subsFor, onServer, onPrefs }: {
   frame: RefObject<HTMLIFrameElement | null>; box: RefObject<HTMLDivElement | null>; origin: string; ready: boolean;
   prev?: Hop; next?: Hop; theater: boolean; onTheater: () => void; full: boolean; onFull: () => void;
+  subsFor?: SubsFor; onServer: (id: string, at: number) => void; onPrefs: (p: Prefs) => void;
 }) {
   const router = useRouter();
   const [playing, setPlaying] = useState(false);
@@ -26,6 +45,19 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
   const [rate, setRate] = useState(1);
   const [idle, setIdle] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [page, setPage] = useState<"main" | "subs">("main");
+  const [used, setUsed] = useState<string | null>(null);
+  const asked = useRef<string | null>(null);
+  const [autoNext, setAutoNext] = useState(true);
+  const [stopAfter, setStopAfter] = useState(false);
+  const [sleepMin, setSleepMin] = useState<number | null>(null);
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [caption, setCaption] = useState<string | number | null>(null);
+  const [subStyle, patchSubStyle, resetSubStyle] = useSubStyle();
+  // the subtitle layer reads a "video clock"; a frame has none, so this stands in for one, fed by the player's events and
+  // run forward between them so lines are not late
+  const clockRef = useRef({ currentTime: 0 });
+  const base = useRef({ t: 0, at: 0, playing: false, rate: 1 });
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const poke = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -42,13 +74,20 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
       const d = e.data;
       if (!d || typeof d.type !== "string") return;
       switch (d.type) {
-        case "cinesrc:play": setPlaying(true); break;
-        case "cinesrc:pause": case "cinesrc:ended": setPlaying(false); break;
+        case "cinesrc:play": setPlaying(true); base.current = { ...base.current, playing: true, at: performance.now() }; break;
+        case "cinesrc:pause": case "cinesrc:ended": setPlaying(false); base.current = { ...base.current, playing: false, t: clockRef.current.currentTime, at: performance.now() }; break;
+        case "cinesrc:sourceused": {
+          const id = String(d.sourceId);
+          setUsed(id);
+          if (asked.current && asked.current !== id) toast(`${serverName(asked.current)} doesn’t have this one, using ${serverName(id)}`);
+          asked.current = null;
+          break;
+        }
         case "cinesrc:loadedmetadata": if (d.duration > 0) setDur(d.duration); break;
-        case "cinesrc:timeupdate": if (!scrubbing.current) setT(Number(d.currentTime) || 0); if (d.duration > 0) setDur(d.duration); break;
-        case "cinesrc:seeked": setT(Number(d.currentTime) || 0); break;
+        case "cinesrc:timeupdate": if (!scrubbing.current) setT(Number(d.currentTime) || 0); if (d.duration > 0) setDur(d.duration); base.current = { ...base.current, t: Number(d.currentTime) || 0, at: performance.now() }; break;
+        case "cinesrc:seeked": setT(Number(d.currentTime) || 0); base.current = { ...base.current, t: Number(d.currentTime) || 0, at: performance.now() }; break;
         case "cinesrc:volumechange": setVol(Number(d.volume)); setMuted(!!d.muted); break;
-        case "cinesrc:ratechange": setRate(Number(d.playbackRate) || 1); break;
+        case "cinesrc:ratechange": setRate(Number(d.playbackRate) || 1); base.current = { ...base.current, t: clockRef.current.currentTime, at: performance.now(), rate: Number(d.playbackRate) || 1 }; break;
         case "cinesrc:response":
           if (d.command === "getVolume") setVol(Number(d.result));
           else if (d.command === "getMuted") setMuted(!!d.result);
@@ -62,6 +101,47 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
   // once it is ready, ask where it stands (a volume the viewer set last time, whether it autoplayed)
   useEffect(() => { if (ready) { send("getVolume"); send("getMuted"); send("getPaused"); } }, [ready, send]);
 
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => { const b = base.current; clockRef.current.currentTime = b.t + (b.playing ? ((performance.now() - b.at) / 1000) * b.rate : 0); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  // playback choices, remembered; the page reads them when an episode ends
+  useEffect(() => { try { setAutoNext(localStorage.getItem(LS.autoNext) !== "0"); } catch { /* */ } }, []);
+  useEffect(() => { onPrefs({ autoNext, stopAfter }); }, [autoNext, stopAfter]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setAuto = (v: boolean) => { setAutoNext(v); try { localStorage.setItem(LS.autoNext, v ? "1" : "0"); } catch { /* */ } };
+  useEffect(() => {
+    if (sleepMin == null) return;
+    const id = setTimeout(() => { send("pause"); setSleepMin(null); toast("Sleep timer: paused"); }, sleepMin * 60_000);
+    return () => clearTimeout(id);
+  }, [sleepMin, send]);
+
+  // --- subtitles: the tracks for this film or episode, and the language you used last time --------------------------
+  const sk = subsFor ? `${subsFor.imdb}:${subsFor.season ?? 0}:${subsFor.episode ?? 0}` : "";
+  useEffect(() => {
+    if (!subsFor) return;
+    let on = true;
+    setTracks([]); setCaption(null);
+    const qs = new URLSearchParams({ imdb: subsFor.imdb, ...(subsFor.season ? { se: String(subsFor.season), ep: String(subsFor.episode ?? 1) } : {}) });
+    fetch(`/api/movie/subs?${qs}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!on) return;
+      const list: Track[] = d?.tracks ?? [];
+      setTracks(list);
+      let want = ""; try { want = localStorage.getItem(LS.lang) || ""; } catch { /* */ }
+      const hit = want ? list.find((t) => t.language === want) : null;
+      if (hit) setCaption((c) => c ?? hit.id);
+    }).catch(() => {});
+    return () => { on = false; };
+  }, [sk]); // eslint-disable-line react-hooks/exhaustive-deps
+  const subs = useSubs({ video: clockRef as unknown as RefObject<HTMLVideoElement | null>, subKey: subsFor?.subKey ?? "m:none", title: subsFor?.title ?? "movie", ep: subsFor?.season ? subsFor.episode ?? null : null, tracks, caption, setCaption });
+  const pickCaption = (id: string | number | null) => {
+    setCaption(id);
+    try { const t = tracks.find((x) => x.id === id); if (t) localStorage.setItem(LS.lang, t.language); else if (id == null) localStorage.removeItem(LS.lang); } catch { /* */ }
+  };
+  useEffect(() => { if (subs.mine) setCaption((c) => c ?? "mine"); }, [subs.mine]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // --- fading the controls out while it plays ----------------------------------------------------------------------
   const wake = useCallback(() => { setIdle(false); clearTimeout(poke.current); poke.current = setTimeout(() => setIdle(true), 2600); }, []);
   useEffect(() => {
@@ -71,6 +151,7 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
     return () => { el.removeEventListener("mousemove", wake); el.removeEventListener("touchstart", wake); clearTimeout(poke.current); };
   }, [box, wake]);
   const hidden = playing && idle && !menu && !hover;
+  const closeMenu = () => { setMenu(false); setPage("main"); };
 
   // --- actions -----------------------------------------------------------------------------------------------------
   const say = (s: string) => { setFlash(s); setTimeout(() => setFlash((f) => (f === s ? null : f)), 700); };
@@ -79,7 +160,8 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
   const seekBy = useCallback((d: number) => { seekTo(t + d); say(d > 0 ? `+${d}s` : `${d}s`); }, [seekTo, t]);
   const setVolume = (v: number) => { send("setVolume", [v]); send("setMuted", [v === 0]); setVol(v); setMuted(v === 0); };
   const toggleMute = () => { send("setMuted", [!muted]); setMuted(!muted); };
-  const pickRate = (r: number) => { send("setPlaybackRate", [r]); setRate(r); setMenu(false); };
+  const pickRate = (r: number) => { send("setPlaybackRate", [r]); setRate(r); };
+  const pickServer = (id: string) => { asked.current = id; onServer(id, clockRef.current.currentTime); closeMenu(); toast(`Switching to ${serverName(id)}…`); };
 
   // keys, the way the anime player has them: space/k play, j/l back and forward 10s, arrows 5s, m mute, f fullscreen, t theater
   useEffect(() => {
@@ -108,7 +190,9 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
   return (
     <>
       {/* the picture itself takes the clicks (the frame cannot: its own controls are off): click plays, double-click is fullscreen */}
-      <div className={cn("absolute inset-0 z-[6]", hidden && "cursor-none")} onClick={() => { toggle(); wake(); }} onDoubleClick={onFull} aria-hidden />
+      <div className={cn("absolute inset-0 z-[6]", hidden && "cursor-none")} onClick={() => { if (menu) { closeMenu(); return; } toggle(); wake(); }} onDoubleClick={onFull} aria-hidden />
+
+      <SubtitleLayer video={clockRef as unknown as RefObject<HTMLVideoElement | null>} cues={subs.overlayOn ? subs.cues : []} offset={subs.offset} style={subStyle} preview={menu && page === "subs"} />
 
       {/* Cupcake broadcaster bug: the same soft watermark the anime player wears on our own server */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -121,6 +205,20 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
         </button>
       )}
       {flash && <div className="pointer-events-none absolute left-1/2 top-1/2 z-[8] -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/60 px-5 py-2.5 text-[15px] font-extrabold text-white backdrop-blur animate-in fade-in zoom-in-95">{flash}</div>}
+
+      {menu && (
+        <SettingsPanel
+          sources={ZEUS_SERVERS.map((x): Source => ({ id: x.id, label: x.name, audio: "sub" }))} current={used ? { id: used, label: serverName(used), audio: "sub" } : undefined} dead={new Set()} failed={new Set()} onPick={(x) => pickServer(String(x.id))}
+          speed={rate} onSpeed={pickRate}
+          subs={tracks} caption={caption} onCaption={pickCaption}
+          mineName={subs.mine?.name ?? null} onUpload={subs.uploadSubs} onRemoveMine={subs.removeMine}
+          offset={subs.offset} onOffset={subs.setOffset} onAutoSync={() => {}} noAutoSync sync={subs.sync} hasCues={subs.cues.length > 0} onDownload={subs.downloadSubs}
+          style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
+          autoNext={autoNext} onAutoNext={setAuto} stopAfter={stopAfter} onStopAfter={setStopAfter}
+          sleepMin={sleepMin} onSleep={setSleepMin}
+          page={page} onPage={setPage} onClose={closeMenu}
+        />
+      )}
 
       {/* controls */}
       <div className={cn("absolute inset-x-0 bottom-0 z-[9] bg-gradient-to-t from-black/85 via-black/40 to-transparent px-2 pb-1.5 pt-14 transition-opacity duration-300 sm:px-4 sm:pb-3", hidden && "pointer-events-none opacity-0")} onClick={(e) => e.stopPropagation()}>
@@ -151,14 +249,8 @@ export function ZeusControls({ frame, box, origin, ready, prev, next, theater, o
           </div>
           <span className="ml-2 font-mono text-[12.5px] tabular-nums text-white/85">{clock(t)} <span className="text-white/45">/ {clock(dur)}</span></span>
           <span className="flex-1" />
-          <div className="relative">
-            <button type="button" className={cn(bar, "w-auto px-3 font-mono text-[12.5px] font-bold", rate !== 1 && "text-frost")} onClick={() => setMenu((m) => !m)} aria-label="Playback speed" aria-expanded={menu}>{rate}×</button>
-            {menu && (
-              <div className="absolute bottom-12 right-0 flex flex-col rounded-2xl border-1.5 border-night-line bg-night/95 p-1.5 shadow-[0_12px_28px_-12px_rgba(0,0,0,.8)] backdrop-blur animate-in fade-in slide-in-from-bottom-1">
-                {RATES.map((r) => <button key={r} type="button" onClick={() => pickRate(r)} className={cn("h-8 rounded-xl px-4 text-left font-mono text-[13px] text-white/85 hover:bg-white/10", r === rate && "bg-frost/20 text-frost")}>{r}×</button>)}
-              </div>
-            )}
-          </div>
+          <button type="button" className={cn(bar, caption != null && "text-frost")} onClick={() => { setPage("subs"); setMenu(true); }} aria-label="Subtitles" title="Subtitles"><Captions className="size-5" /></button>
+          <button type="button" className={cn(bar, menu && "text-frost")} onClick={() => { if (menu) closeMenu(); else { setPage("main"); setMenu(true); } }} aria-label="Settings" aria-expanded={menu} title="Settings"><Settings className="size-5" /></button>
           <button type="button" className={cn(bar, "hidden md:grid", theater && "text-frost")} onClick={onTheater} aria-label="Theater mode" aria-pressed={theater} title="Theater (T)"><RectangleHorizontal className="size-5" /></button>
           <button type="button" className={bar} onClick={onFull} aria-label="Fullscreen" title="Fullscreen (F)">{full ? <Minimize className="size-5" /> : <Maximize className="size-5" />}</button>
           {next && <button type="button" onClick={() => router.push(next.href)} className="ml-1 hidden h-9 items-center gap-1 rounded-full bg-frost px-3.5 text-[12px] font-extrabold text-frost-ink sm:flex">{next.label}<ChevronRight className="size-4" /></button>}
