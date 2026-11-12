@@ -18,6 +18,8 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: [
+          // Browsers only honour this over https, which is where it matters: once seen, they stop trying http for six months
+          { key: "strict-transport-security", value: "max-age=15552000" },
           { key: "x-content-type-options", value: "nosniff" },
           { key: "referrer-policy", value: "strict-origin-when-cross-origin" },
           { key: "x-frame-options", value: "SAMEORIGIN" },
