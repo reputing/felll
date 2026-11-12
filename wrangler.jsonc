@@ -50,6 +50,8 @@
     // The catalog comes from `npm run sync` (AniList/Kitsu), never live Jikan.
     // This makes any stray live call fail fast instead of hanging on a timeout.
     "JIKAN_DISABLED": "1",
+    // /shh fallback with no key: AI Horde (volunteers' machines answer, so it is last in line). See lib/ai.ts.
+    "AIHORDE_ENABLED": "1",
     // The Anivexa backend ("the bot"). Deploy anivexa-server/ as a Cloudflare
     // Container (npm run anivexa:container:deploy) and point this at its URL.
     "ANIVEXA_API_URL": "https://anivexa-api.matthewsjakael.workers.dev",

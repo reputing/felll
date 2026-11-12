@@ -570,7 +570,8 @@ export async function POST(req: Request) {
               try {
                 rr = await fetch(`${prov.base}/chat/completions`, {
                   method: "POST",
-                  headers: { "content-type": "application/json", accept: "text/event-stream", authorization: `Bearer ${prov.key}` },
+                  // a keyless provider gets no Authorization header at all: AI Horde answers an empty "Bearer " with a 401 (OVH and Kilo ignore it)
+                  headers: { "content-type": "application/json", accept: "text/event-stream", ...(prov.key ? { authorization: `Bearer ${prov.key}` } : {}) },
                   body: JSON.stringify({ model: sp.id, messages: sendMsgs, tools: useTools ? tools : undefined, stream: true }),
                   signal: ac.signal,
                 });
