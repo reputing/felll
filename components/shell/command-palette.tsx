@@ -8,7 +8,7 @@ import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { set, useBox } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-interface Hit { kind: "anime" | "manga" | "member" | "go"; href: string; title: string; sub: string; image?: string | null; Icon?: typeof Search; seasons?: { id: number; label: string; title: string }[] }
+interface Hit { kind: "anime" | "manga" | "movie" | "member" | "go"; href: string; title: string; sub: string; image?: string | null; Icon?: typeof Search; seasons?: { id: number; label: string; title: string }[] }
 
 const PAGES: Hit[] = [
   { kind: "go", href: "/home", title: "Explore", sub: "the watch box", Icon: Compass },
@@ -40,10 +40,11 @@ export function CommandPalette() {
     const t = setTimeout(async () => {
       const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { signal: ctl.signal }).catch(() => null);
       if (!res?.ok) return;
-      const body = (await res.json()) as { anime: { id: number; title: string; sub: string; image: string | null; seasons?: { id: number; label: string; title: string }[] }[]; manga?: { id: string; title: string; sub: string; image: string | null }[]; members: { handle: string; display_name: string; avatar_url: string | null }[] };
+      const body = (await res.json()) as { anime: { id: number; title: string; sub: string; image: string | null; seasons?: { id: number; label: string; title: string }[] }[]; manga?: { id: string; title: string; sub: string; image: string | null }[]; movies?: { slug: string; title: string; sub: string; image: string | null }[]; members: { handle: string; display_name: string; avatar_url: string | null }[] };
       setHits([
         ...body.anime.map((a) => ({ kind: "anime" as const, href: `/anime/${a.id}`, title: a.title, sub: a.sub, image: a.image, seasons: a.seasons })),
         ...(body.manga ?? []).map((m) => ({ kind: "manga" as const, href: `/manga/${m.id}`, title: m.title, sub: m.sub, image: m.image })),
+        ...(body.movies ?? []).map((m) => ({ kind: "movie" as const, href: `/movies/${m.slug}`, title: m.title, sub: m.sub, image: m.image })),
         ...body.members.map((m) => ({ kind: "member" as const, href: `/u/${m.handle}`, title: m.display_name, sub: `@${m.handle}`, image: m.avatar_url })),
       ]);
       setBusy(false);
@@ -88,7 +89,7 @@ export function CommandPalette() {
                 if (e.key === "ArrowUp") { e.preventDefault(); setI((x) => Math.max(x - 1, 0)); }
                 if (e.key === "Enter") { e.preventDefault(); if (q.trim() && !shown.length) go({ kind: "go", href: `/browse?q=${encodeURIComponent(q.trim())}`, title: "", sub: "" }); else go(shown[i]); }
               }}
-              placeholder="Search anime, manga, members, pages…"
+              placeholder="Search anime, manga, films, series, members, pages…"
               className="h-16 w-full bg-transparent pl-14 pr-5 text-[16px] font-semibold text-plum outline-none"
             />
           </div>
@@ -97,7 +98,7 @@ export function CommandPalette() {
               <div key={h.kind + h.href} className={cn("rounded-2xl", n === i && "bg-cream-blush")}>
               <button data-i={n} type="button" onMouseMove={() => setI(n)} onClick={() => go(h)}
                 className="grid w-full grid-cols-[40px_1fr_auto] items-center gap-3 rounded-2xl p-2 text-left">
-                {h.kind === "anime" || h.kind === "manga" ? (
+                {h.kind === "anime" || h.kind === "manga" || h.kind === "movie" ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <span className="h-[52px] w-10 overflow-hidden rounded-[10px] bg-cream-tint">{h.image && <img src={h.image.startsWith("https://uploads.mangadex.org/covers/") ? `/api/manga-img?u=${encodeURIComponent(h.image)}` : h.image} alt="" referrerPolicy="no-referrer" className="size-full object-cover" />}</span>
                 ) : h.kind === "member" ? (

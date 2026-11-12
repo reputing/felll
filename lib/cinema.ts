@@ -173,7 +173,8 @@ async function meta(media: MovieMedia, imdb: string): Promise<Raw | null> {
   if (!IMDB.test(imdb)) return null;
   const d = await cached(`cinema:meta:${media}:${imdb}`, async () => {
     const r = await getJson(`/meta/${typeOf(media)}/${imdb}.json`);
-    return r?.meta?.id ? r.meta : null;
+    // Cinemeta answers a series id asked as a film with some other record, so the answer has to be the title asked for
+    return r?.meta?.id && String(r.meta.imdb_id ?? r.meta.id) === imdb ? r.meta : null;
   }, 12 * 3600);
   return d;
 }
@@ -181,8 +182,11 @@ async function meta(media: MovieMedia, imdb: string): Promise<Raw | null> {
 export async function cinemaDetail(media: MovieMedia, imdb: string): Promise<CinemaDetail | null> {
   const m = await meta(media, imdb);
   if (!m) return null;
-  const card = toCard(m, media);
+  // the title says what it is; trust that over the address (a link that only knew the IMDb id may have guessed wrong)
+  const real = mediaOf(m.type) ?? media;
+  const card = toCard(m, real);
   if (!card) return null;
+  media = real;
   const byEp: CinemaEpisode[] = (Array.isArray(m.videos) ? m.videos : [])
     .filter((v: Raw) => Number(v?.season) >= 1 && Number(v?.episode ?? v?.number) >= 1)
     .map((v: Raw) => ({

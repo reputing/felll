@@ -29,11 +29,13 @@ export default async function Box() {
     { k: "Mean score", v: stats.mean ?? "–" },
     { k: "Day streak", v: stats.streak },
     { k: "Manga read", v: stats.mangaRead },
+    { k: "Films & series", v: stats.moviesDone },
   ];
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-3 pb-12 pt-4 sm:px-5">
       <PageHead eyebrow={`@${me.handle} / the collection`} title="My watch box" sub="Everything you’re watching, planning, finished and loved.">
         <div className="flex gap-2">
+          <Button variant="outline" asChild><Link href="/movies/list">Films &amp; series</Link></Button>
           <Button variant="outline" asChild><Link href="/box/history"><Clock3 className="size-4" />History</Link></Button>
           <Button asChild><Link href={`/u/${me.handle}`}>Your page</Link></Button>
         </div>

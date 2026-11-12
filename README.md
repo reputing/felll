@@ -85,17 +85,20 @@ visitor ──▶ │ /  portal ─ kuro SSO / password ─▶ session cookie   
    1080p. Each source has a same-origin proxy URL beside the direct one. **Moviebox's CDN refuses datacenter addresses**
    (it answered 429 to Cloudflare's network and to the container), so this path depends on the viewer's own connection
    being accepted; when it is not, the player moves on by itself.
-3. **Embed servers** (`lib/movie-servers.ts`): VidSrc.to, VidLink, YTHD, 2Embed (x2), VidNest and Viduki, played in an
-   iframe in the viewer's own browser, so a datacenter block does not touch them. The picker leaves out any host that
-   does not answer (checked at render, cached ten minutes). Every host in the list was loaded in a real browser and
-   showed a player for the right title; ones that said "Not found" (vidsrc.pm, vidsrc.net, nontongo) or whose domain is
-   gone (vidsrc.xyz, embed.su, moviesapi.club and others) are not in it. **The iframe has no `sandbox` attribute on
-   purpose**: every one of these refuses to play in a sandboxed frame.
+3. **No embed servers.** Third-party player iframes (VidSrc, VidLink and the rest) were tried and removed: they open ad tabs
+   and redirects, and none can be sandboxed, because their check reads `document.domain`, which every sandboxed frame
+   blocks. Zeus, the site's own direct player, is the only server; a title Moviebox does not carry yet says so. The old list
+   and the browser audit that produced it live in `lib/movie-servers.ts` (off; `MOVIE_ALLOW_AD_SERVERS=1` is read there
+   only by the health page's sampler).
 
-`GET /api/health` shows each layer (catalog, container, every embed host). To re-test the embed list, load each URL in
-a browser (a page with one iframe and no sandbox is enough) and look for a player with the right runtime: a host that
-returns 200 can still say "Not found" inside its page, which only a browser sees.
+**Library, history and people** (needs migration `0021_movies.sql`; until it is applied the pages hide these parts):
+status list, favourites, 1-10 rating and a cupcake average (`movie_library`); continue watching, per-episode watched ticks,
+resume and history (`movie_progress`, written by the player at 15 s intervals and at 90%); comments per title and per
+episode (`movie_comments`); films and series in collections; `/movies/list`, `/movies/history`; cast with photos and
+`/movies/person/<name>` built from IMDb's suggestion box, Wikipedia and Wikidata (`lib/people.ts`, no key). Films and
+series also show in the ⌘K palette, on profiles, in the box stats and on the home page's "Keep watching".
 
+`GET /api/health` shows each layer (catalog, container, every embed host). 
 ## Speed
 
 The old site took around 60 s per page because every page was rendered on

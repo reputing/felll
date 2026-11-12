@@ -57,7 +57,7 @@ export async function personPage(name: string): Promise<PersonPage | null> {
   return cached<PersonPage>(`person:page:${base.id}`, async () => {
     const [ent, films] = await Promise.all([
       sparql(`SELECT ?p ?desc ?wp ?img WHERE { ?p wdt:P345 "${base.id}". OPTIONAL { ?p schema:description ?desc FILTER(LANG(?desc)="en") } OPTIONAL { ?wp schema:about ?p; schema:isPartOf <https://en.wikipedia.org/> } OPTIONAL { ?p wdt:P18 ?img } } LIMIT 1`),
-      sparql(`SELECT DISTINCT ?imdb ?filmLabel ?date WHERE { ?p wdt:P345 "${base.id}". { ?f wdt:P161 ?p } UNION { ?f wdt:P57 ?p } ?f wdt:P345 ?imdb. FILTER(STRSTARTS(?imdb,"tt")) OPTIONAL { ?f wdt:P577 ?date } SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } } ORDER BY DESC(?date) LIMIT 120`),
+      sparql(`SELECT DISTINCT ?imdb ?filmLabel ?date WHERE { ?p wdt:P345 "${base.id}". { ?film wdt:P161 ?p } UNION { ?film wdt:P57 ?p } ?film wdt:P345 ?imdb. FILTER(STRSTARTS(?imdb,"tt")) OPTIONAL { ?film wdt:P577 ?date } SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } } ORDER BY DESC(?date) LIMIT 120`),
     ]);
     const e = ent?.[0];
     const wp = e?.wp?.value ? String(e.wp.value) : null;

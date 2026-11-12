@@ -7,7 +7,7 @@ import { KeepWatching, type Resume } from "@/components/home/keep-watching";
 import { QueueRail } from "@/components/queue/queue-rail";
 import { MangaKeepReading, MangaPopular } from "@/components/manga/home-rail";
 import { HomeSections, type HomeSection } from "@/components/home/home-sections";
-import { MoviesHomeRail } from "@/components/movies/home-rail";
+import { MoviesHomeRail, MoviesContinue } from "@/components/movies/home-rail";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
 import { TopRow } from "@/components/home/top-row";
 import { Shelf, ShelfSkeleton, type ShelfItem } from "@/components/shelf";
@@ -68,6 +68,7 @@ export default async function Home() {
   // continue-reading come first so picking up where you left off never takes a long scroll.
   const sections: HomeSection[] = [
     { id: "keep-watching", label: "Keep watching", node: <KeepWatching items={resume} /> },
+    { id: "keep-movies", label: "Keep watching (films & series)", node: <Suspense fallback={null}><MoviesContinue userId={me.id} /></Suspense> },
     { id: "keep-reading", label: "Keep reading", node: <MangaKeepReading /> },
     { id: "queue", label: "Your queue", node: <QueueRail /> },
     { id: "top10", label: "Top 10 this week", node: <TopRow eyebrow="Most played here" title="Top 10 this week" items={ranked.length ? ranked : toItems(trending)} href="/rankings" /> },

@@ -19,6 +19,8 @@ import type { User } from "@/lib/auth";
 
 type Props = { params: Promise<{ handle: string }> };
 
+/** a member who keeps their lists private shows none of their films and series either */
+const hiddenSafe = <T,>(rows: T[], hide: boolean): T[] => (hide ? [] : rows);
 interface MangaRow { manga_id: string; status: string | null; favorite: number; title: string; cover: string | null; updated_at: number }
 const MANGA_STATUS: Record<string, string> = { reading: "Reading", planning: "Plan to read", completed: "Completed", paused: "On hold", dropped: "Dropped" };
 
@@ -50,6 +52,7 @@ export default async function Profile({ params }: Props) {
     all<{ id: number; manga_id: string; body: string; spoiler: number; created_at: number; likes: number }>(
       "select id, manga_id, body, spoiler, created_at, likes from manga_comments where user_id = ? and deleted = 0 order by created_at desc limit 5", u.id).catch(() => []),
   ]);
+  const movieRows = hiddenSafe(await all<{ imdb_id: string; media: string; title: string; poster: string | null; favorite: number; status: string | null }>("select imdb_id, media, title, poster, favorite, status from movie_library where user_id = ? order by favorite desc, updated_at desc limit 24", u.id).catch(() => []), !!u.private_lists && !self);
   const c = counts.results[0] as { followers: number; following: number };
   const now = live.results[0] as { mal_id: number | null; episode: number | null; title: string | null } | undefined;
   const showcaseIds: number[] = (() => { try { return JSON.parse(u.showcase); } catch { return []; } })();
@@ -235,6 +238,14 @@ export default async function Profile({ params }: Props) {
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+          {movieRows.length > 0 && (
+            <section className="rounded-box border-1.5 border-line bg-cream-card p-5">
+              <div className="eyebrow mb-3">Films &amp; series · {movieRows.length}{movieRows.some((m) => m.favorite) ? " · favourites first" : ""}</div>
+              <div className="grid grid-cols-4 gap-2">
+                {movieRows.slice(0, 12).map((m) => <Link key={m.imdb_id} href={`/movies/${m.media}-${m.imdb_id}`} title={m.title}><Poster src={m.poster ?? `https://images.metahub.space/poster/small/${m.imdb_id}/img`} className="aspect-[2/3] rounded-xl transition hover:-translate-y-0.5" /></Link>)}
+              </div>
             </section>
           )}
           {favs.length > 0 && !hidden && (

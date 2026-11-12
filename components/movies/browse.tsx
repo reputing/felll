@@ -20,11 +20,11 @@ const SORTS = [
   { v: "recent", label: "New" },
 ] as const;
 
-export function MovieBrowse() {
+export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialGenre?: string; initialQuery?: string }) {
   const [type, setType] = useState("all");
   const [sort, setSort] = useState<string>("popular");
-  const [genre, setGenre] = useState("");
-  const [q, setQ] = useState("");
+  const [genre, setGenre] = useState(GENRES.includes(initialGenre) ? initialGenre : "");
+  const [q, setQ] = useState(initialQuery);
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MovieCard[] | null>(null);
   const [totalPages, setTotalPages] = useState(1);

@@ -34,6 +34,15 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const me = await requireMember(`/movies/${slug}`);
   if (!(await moviesEnabled())) redirect("/movies");
 
+  // /movies/t-<imdb> is a link from somewhere that does not know whether it is a film or a series (a person's credits):
+  // find out and go to the real address
+  const auto = /^t-(tt\d{5,10})$/.exec(slug);
+  if (auto) {
+    // series first: asked as a series, a film id comes back empty, but asked as a film a series id can come back as some other record
+    const found = (await movieDetail("tv", auto[1]).catch(() => null)) ?? (await movieDetail("movie", auto[1]).catch(() => null));
+    if (!found) notFound();
+    redirect(`/movies/${found.slug}`);
+  }
   const ref = parseSlug(slug);
   if (!ref) notFound();
   const d = await movieDetail(ref.media, ref.id);

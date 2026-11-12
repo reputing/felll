@@ -2,6 +2,7 @@ import { memberOr401 } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { formatLabel, searchAnime } from "@/lib/jikan";
 import { groupSeasons } from "@/lib/seasons";
+import { cinemaCatalog } from "@/lib/cinema";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // A few SFW manga from MangaDex for the palette. Kept non-pornographic — ⌘K is a
@@ -30,10 +31,11 @@ export async function GET(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
   const q = (new URL(req.url).searchParams.get("q") || "").trim().slice(0, 80);
-  if (q.length < 2) return Response.json({ anime: [], manga: [], members: [] });
-  const [anime, manga, members] = await Promise.all([
+  if (q.length < 2) return Response.json({ anime: [], manga: [], movies: [], members: [] });
+  const [anime, manga, movies, members] = await Promise.all([
     searchAnime({ q, limit: 16, order_by: "members", sort: "desc" }).catch(() => ({ items: [] })),
     searchMangaForPalette(q).catch(() => []),
+    cinemaCatalog({ q }).then((r) => r.items.slice(0, 5).map((m) => ({ slug: m.slug, title: m.title, image: m.poster, sub: [m.media === "tv" ? "Series" : "Film", m.year, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(" · ") }))).catch(() => []),
     all<{ handle: string; display_name: string; avatar_url: string | null }>(
       "select handle, display_name, avatar_url from users where handle like ? or display_name like ? order by last_seen desc limit 4",
       `${q.replace(/[%_]/g, "")}%`,
@@ -45,6 +47,7 @@ export async function GET(req: Request) {
       // seasons of one show fold into a single row with S1 S2 S3 chips (lib/seasons)
       anime: groupSeasons(anime.items).slice(0, 7).map(({ lead: a, seasons }) => ({ id: a.id, title: a.title, image: a.posterSm, sub: [formatLabel(a), a.year, a.score !== "–" ? `★ ${a.score}` : null].filter(Boolean).join(" · "), seasons })),
       manga,
+      movies,
       members,
     },
     { headers: { "cache-control": "private, max-age=60" } },
