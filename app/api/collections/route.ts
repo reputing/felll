@@ -1,7 +1,7 @@
 import { memberOr401 } from "@/lib/auth";
 import { all, db, first, run } from "@/lib/db";
 
-// Member collections (mixed anime + manga lists). GET shapes:
+// Member collections (mixed anime, manga, movie and series lists; a film or series is keyed by its IMDb id). GET shapes:
 //   (no params)        → my collections, with item count + up to 4 preview covers
 //   ?user=<handle>     → that member's PUBLIC collections (for their profile)
 //   ?id=<id>           → one collection + its items (public, or mine)
@@ -10,7 +10,7 @@ import { all, db, first, run } from "@/lib/db";
 
 const MAX_COLLECTIONS = 50;
 const MAX_ITEMS = 500;
-const isKind = (k: unknown): k is "anime" | "manga" => k === "anime" || k === "manga";
+const isKind = (k: unknown): k is "anime" | "manga" | "movie" | "tv" => k === "anime" || k === "manga" || k === "movie" || k === "tv";
 
 interface Col { id: string; name: string; visibility: string; updated_at: number; count: number }
 

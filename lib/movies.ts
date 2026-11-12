@@ -258,7 +258,7 @@ export async function movieStream(subjectId: string, slug: string, se?: number, 
 // The watch pages are keyed by IMDb id (lib/cinema), Moviebox by its own subject id, so a title is matched by name and
 // year the first time it is played and the match is remembered. A series is matched on its base name ("Severance S2"
 // is the series "Severance"), a film must be a film, and the year breaks ties between remakes.
-const norm = (t: string) => t.toLowerCase().replace(/&/g, "and").replace(/\s+s\d+(\s*-\s*s?\d+)?$/i, "").replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (t: string) => t.toLowerCase().replace(/\s*\[[^\]]*\]/g, "").replace(/&/g, "and").replace(/\s+s\d+(\s*-\s*s?\d+)?$/i, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 export interface MovieboxMatch { id: string; slug: string }
 

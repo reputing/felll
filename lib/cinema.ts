@@ -42,6 +42,7 @@ export interface CinemaDetail extends CinemaCard {
   seasons: { season: number; episodeCount: number }[];
   episodes: CinemaEpisode[];
   runtime: string | null;
+  directors: string[];
   trailer: string | null; // youtube id
   isSeries: boolean;
   imdbId: string;
@@ -208,6 +209,7 @@ export async function cinemaDetail(media: MovieMedia, imdb: string): Promise<Cin
     seasons: [...seasonMap].map(([season, episodeCount]) => ({ season, episodeCount })),
     episodes: byEp,
     runtime: m.runtime ? clean(m.runtime) : null,
+    directors: (Array.isArray(m.director) ? m.director : []).map(clean).filter(Boolean).slice(0, 4),
     trailer: typeof trailer === "string" ? trailer : null,
     isSeries: media === "tv",
     imdbId: card.id,

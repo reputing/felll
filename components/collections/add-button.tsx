@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 // "Add to list" — a dialog that lists the viewer's collections with a checkbox
 // each (toggles add/remove for this item), plus an inline "new list" field.
-export function AddToCollection({ kind, refId, title, cover, className }: { kind: "anime" | "manga"; refId: string; title: string; cover: string | null; className?: string }) {
+export function AddToCollection({ kind, refId, title, cover, className }: { kind: "anime" | "manga" | "movie" | "tv"; refId: string; title: string; cover: string | null; className?: string }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<PickerRow[] | null>(null);
   const [name, setName] = useState("");

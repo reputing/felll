@@ -2,7 +2,7 @@
 import type Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Captions } from "lucide-react";
+import { Captions, Maximize } from "lucide-react";
 import type { MovieStream, MovieSource, MovieEmbed } from "@/lib/tmdb";
 import { SettingsPanel } from "@/components/watch/settings-panel";
 import { SubtitleLayer, useSubStyle } from "@/components/watch/subtitles";
@@ -18,19 +18,54 @@ import { useNativeCues, useSubs } from "@/components/watch/use-subs";
 // loop ("Maximum update depth exceeded") until the tab slowed to a crawl
 const NO_TRACKS: never[] = [];
 
-export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string }) {
+/** What the player reports back so "continue watching" and the history know where you are. */
+export interface PlayTrack { imdb: string; media: "movie" | "tv"; season?: number; episode?: number; title: string; poster: string | null; year: number | null; epTitle?: string | null; episodes?: number | null; resume?: number }
+
+const mmss = (s: number) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
+
+export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack }) {
   const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
   // The direct 8Stream sources resolve lazily (see effect below), so the page
   // never blocks on them. "Cupcake" is offered optimistically until proven dead.
   const [sources, setSources] = useState<MovieSource[] | null>(null); // null = not loaded yet
   const [nativeDead, setNativeDead] = useState(false);
-  const hasNative = !!streamSrc && !nativeDead;
-  const servers = [...(hasNative ? [{ k: "cupcake", label: "Zeus" }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name }))];
+  const hasNative = !!streamSrc;
+  const servers = [...(hasNative ? [{ k: "cupcake", label: "Zeus", third: false }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name, third: true }))];
   const [server, setServer] = useState<string>(streamSrc ? "cupcake" : embeds[0]?.name ?? "cupcake");
   const curEmbed = embeds.find((e) => e.name === server) ?? null;
-  const useEmbed = !!curEmbed;
+  // A third-party player is never loaded on its own: they are the ones that open ad tabs and redirects, and no sandbox can
+  // stop that (they refuse to play in one). Zeus, our own player, is the default; an embed only loads after the viewer
+  // has been told what it is and said yes, and that choice is remembered for the rest of the visit.
+  const [ok, setOk] = useState(false);
+  const askEmbed = !!curEmbed && !ok;
+  const useEmbed = !!curEmbed && ok;
 
   const video = useRef<HTMLVideoElement>(null);
+  const frame = useRef<HTMLIFrameElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const goFull = () => { const el = box.current; if (!el) return; if (document.fullscreenElement) void document.exitFullscreen(); else void el.requestFullscreen?.().catch(() => {}); };
+
+  // --- progress: tell the server where we are, at most every 15 seconds (and when paused or finished) -----------------
+  const sent = useRef({ at: 0, pos: 0 });
+  const trackRef = useRef(track);
+  useEffect(() => { trackRef.current = track; }, [track]);
+  const report = (pos: number, dur: number, force = false) => {
+    const t = trackRef.current;
+    if (!t) return;
+    const now = Date.now();
+    if (!force && (now - sent.current.at < 15_000 || Math.abs(pos - sent.current.pos) < 5)) return;
+    sent.current = { at: now, pos };
+    void fetch("/api/movie/progress", {
+      method: "POST", keepalive: true, headers: { "content-type": "application/json" },
+      body: JSON.stringify({ imdb: t.imdb, media: t.media, season: t.season, episode: t.episode, position: pos, duration: dur, title: t.title, poster: t.poster, year: t.year, epTitle: t.epTitle, episodes: t.episodes }),
+    }).catch(() => {});
+  };
+  // opening a title puts it on the history straight away (at the spot you left, so this never rewinds you)
+  useEffect(() => {
+    if (!track) return;
+    const id = setTimeout(() => report(track.resume ?? 0, 0, true), 4000);
+    return () => clearTimeout(id);
+  }, [track?.imdb, track?.season, track?.episode]); // eslint-disable-line react-hooks/exhaustive-deps
   const hls = useRef<Hls | null>(null);
   const [cur, setCur] = useState<MovieSource | undefined>(undefined);
 
@@ -61,8 +96,8 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
       const got: MovieSource[] = (d?.sources ?? []).map((s: { label: string; url: string; format?: string; proxy?: string }) => ({ label: s.label, url: s.url, format: s.format === "hls" ? ("hls" as const) : ("mp4" as const), proxy: s.proxy }));
       setSources(got);
       if (got.length) setCur(got[0]);
-      else { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); }
-    }).catch(() => { if (on) { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); } });
+      else setNativeDead(true);
+    }).catch(() => { if (on) setNativeDead(true); });
     return () => { on = false; };
   }, [useEmbed, streamSrc, sources, embeds]);
 
@@ -77,8 +112,8 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
     // embed. A watchdog advances if a source neither starts nor errors within a
     // few seconds, so a dead URL never stalls the player on a long timeout.
     // The direct url first (played with no Referer: the watch page sets a no-referrer policy, which a video element cannot set for itself), then the same-origin proxy for a
-    // CDN that insists on being asked a certain way. If both fail, hand over to the first embed server rather than
-    // leaving a black box: that is what "find a fallback" means for a viewer who just pressed play.
+    // CDN that insists on being asked a certain way. If both fail, the player says so and offers the third-party servers
+    // as a choice (it never switches to one by itself).
     const chain = [cur.url, cur.proxy].filter(Boolean) as string[];
     let idx = 0;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -88,7 +123,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
       clearTimeout(watchdog);
       idx += 1;
       if (idx < chain.length) { play(idx); return; }
-      if (embeds[0]) { setNativeDead(true); setServer(embeds[0].name); }
+      setNativeDead(true);
     };
     const play = (n: number) => {
       v.src = chain[n];
@@ -123,6 +158,42 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
 
   useEffect(() => () => hls.current?.destroy(), []);
 
+  // Embed players say where they are with postMessage (two shapes seen in the servers we use: PLAYER_EVENT with
+  // currentTime/duration, and MEDIA_DATA with progress.watched/duration, per episode for a series). Only messages from our
+  // own player frame are believed.
+  useEffect(() => {
+    if (!useEmbed || !track) return;
+    const on = (e: MessageEvent) => {
+      if (e.source !== frame.current?.contentWindow) return;
+      const d = e.data;
+      if (!d || typeof d !== "object") return;
+      let pos: number | undefined, dur: number | undefined, force = false;
+      if (d.type === "PLAYER_EVENT" && d.data) {
+        pos = Number(d.data.currentTime ?? d.data.player_progress); dur = Number(d.data.duration ?? d.data.player_duration);
+        force = d.data.event === "pause" || d.data.event === "ended";
+      } else if (d.type === "MEDIA_DATA" && d.data && typeof d.data === "object") {
+        const x = Object.values(d.data)[0] as { progress?: { watched?: number; duration?: number }; show_progress?: Record<string, { progress?: { watched?: number; duration?: number } }> } | undefined;
+        const ep = track.media === "tv" ? x?.show_progress?.[`s${track.season}e${track.episode}`]?.progress : undefined;
+        const p = ep ?? x?.progress;
+        pos = Number(p?.watched); dur = Number(p?.duration);
+      }
+      if (pos != null && Number.isFinite(pos) && pos > 0) report(pos, Number.isFinite(dur) ? dur! : 0, force);
+    };
+    window.addEventListener("message", on);
+    return () => window.removeEventListener("message", on);
+  }, [useEmbed, track?.imdb, track?.season, track?.episode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The direct player: the same reports from the <video>, and resuming where you left off.
+  useEffect(() => {
+    const v = video.current;
+    if (!v || !cur || !track) return;
+    const tick = () => report(v.currentTime, v.duration || 0);
+    const stop = () => report(v.currentTime, v.duration || 0, true);
+    const resume = () => { if (track.resume && track.resume > 30 && (!v.duration || track.resume < v.duration - 60) && v.currentTime < 1) v.currentTime = track.resume; };
+    v.addEventListener("timeupdate", tick); v.addEventListener("pause", stop); v.addEventListener("ended", stop); v.addEventListener("loadedmetadata", resume);
+    return () => { v.removeEventListener("timeupdate", tick); v.removeEventListener("pause", stop); v.removeEventListener("ended", stop); v.removeEventListener("loadedmetadata", resume); };
+  }, [cur, track?.imdb, track?.season, track?.episode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Anti-redirect. A third-party frame can send the whole tab somewhere else once somebody has clicked inside it (that is
   // how most ad redirects work), and a sandbox that forbids it is not an option (every server refuses one). So while an
   // embed is on screen the browser is asked to confirm before the page unloads; a redirect the viewer did not ask for
@@ -141,12 +212,41 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
 
   return (
     <div className="flex flex-col gap-2.5">
-      {useEmbed && curEmbed ? (
+      {askEmbed && curEmbed ? (
+        <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center">
+          <div className="max-w-[460px]">
+            <p className="text-[17px] font-extrabold text-night-text">{curEmbed.name} is a third-party player</p>
+            <p className="mt-2 text-[13.5px] leading-relaxed text-night-muted">It is the way to watch some titles, but it is not ours: it can open ad tabs, and the site behind it decides what it shows. Zeus is our own player and has no ads.</p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <button type="button" onClick={() => setOk(true)} className="h-10 rounded-full border-1.5 border-frost-hot bg-frost px-5 text-[13px] font-extrabold text-frost-ink">Play with {curEmbed.name}</button>
+              {hasNative && <button type="button" onClick={() => setServer("cupcake")} className="h-10 rounded-full border-1.5 border-night-line px-5 text-[13px] font-extrabold text-night-text">Back to Zeus</button>}
+            </div>
+          </div>
+        </div>
+      ) : nativeDead && !curEmbed ? (
+        <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center">
+          <div className="max-w-[460px]">
+            <p className="text-[17px] font-extrabold text-night-text">Zeus doesn’t have this one yet</p>
+            <p className="mt-2 text-[13.5px] leading-relaxed text-night-muted">New releases often take a while to arrive. Check back soon.</p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {embeds.map((e) => <button key={e.name} type="button" onClick={() => setServer(e.name)} className="h-10 rounded-full border-1.5 border-night-line px-5 text-[13px] font-extrabold text-night-text hover:border-frost-hot">Try {e.name}</button>)}
+            </div>
+          </div>
+        </div>
+      ) : useEmbed && curEmbed ? (
         // No sandbox attribute, on purpose: tested in a browser, every one of these servers detects a sandboxed frame and
         // refuses to play ("Please Disable Sandbox"). `allow` is what lets them use fullscreen, autoplay and DRM.
-        <iframe key={curEmbed.url} src={curEmbed.url} title="Player" allowFullScreen referrerPolicy="origin"
-          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-          className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black" />
+        <div ref={box} className="relative [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:bg-black">
+          <iframe ref={frame} key={curEmbed.url} src={curEmbed.url} title="Player" allowFullScreen referrerPolicy="origin"
+            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+            className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black [:fullscreen>&]:max-h-full [:fullscreen>&]:rounded-none" />
+          {/* The server paints its own promo line over the picture ("watch free movies at ..."), always in the same place
+              (measured: 27-73% across, 74-81% down the player, whatever the size or whether the controls are showing).
+              This blurs that strip from our side of the frame; clicks pass straight through it. It also covers the
+              server's own subtitles, which is the price. Fullscreen has to be ours (the button below) or the overlay
+              would be left outside the frame. */}
+          <div aria-hidden className="pointer-events-none absolute left-[24%] top-[71%] h-[13%] w-[52%] rounded-2xl bg-black/60 backdrop-blur-xl [backdrop-filter:blur(18px)]" />
+        </div>
       ) : (
         <div className="relative" data-settings>
           <video ref={video} controls playsInline poster={poster ?? undefined}
@@ -171,12 +271,18 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
           )}
         </div>
       )}
+      {track?.resume && track.resume > 30 && (
+        <p className="px-1 text-[12.5px] font-bold text-frost-text">{useEmbed ? `You left off at ${mmss(track.resume)}. Drag the bar there to pick up.` : `Resuming from ${mmss(track.resume)}.`}</p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
+        {useEmbed && (
+          <button type="button" onClick={goFull} className="flex h-8 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot"><Maximize className="size-3.5" />Fullscreen</button>
+        )}
         {servers.length > 1 && (
           <div className="mr-1 flex items-center gap-2">
             <span className="text-[11px] font-extrabold uppercase tracking-[.12em] text-plum-muted">Server</span>
             {servers.map((s) => (
-              <button key={s.k} type="button" aria-pressed={server === s.k} onClick={() => setServer(s.k)}
+              <button key={s.k} type="button" aria-pressed={server === s.k} onClick={() => setServer(s.k)} title={s.third ? "Third-party player: may show ads" : "Our own player: no ads"}
                 className={cn("h-8 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot", server === s.k && "border-frost-hot bg-frost text-frost-ink")}>
                 {s.label}
               </button>
@@ -196,7 +302,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey }: { stream
         )}
       </div>
       {servers.length > 1 && (
-        <p className="px-1 text-[11.5px] font-semibold text-plum-muted">Black screen or won’t play? Switch to another server above.</p>
+        <p className="px-1 text-[11.5px] font-semibold text-plum-muted">Zeus is our own player and has no ads. Other servers are third-party and may show them.</p>
       )}
     </div>
   );

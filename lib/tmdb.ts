@@ -51,6 +51,9 @@ export interface MovieDetail {
   imdbId: string | null;
   tmdbId: number | null;
   runtime?: string | null;
+  directors?: string[];
+  /** every episode of a series, with air dates (keyless catalog only) */
+  episodes?: MovieEpisode[];
   trailer?: string | null;
 }
 export interface MoviePage { items: MovieCard[]; totalPages: number }

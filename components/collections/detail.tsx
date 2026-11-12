@@ -54,7 +54,7 @@ export function CollectionDetail({ id }: { id: string }) {
         {mine && (
           <div className="flex gap-2">
             <button type="button" onClick={toggleVis} className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold hover:border-frost-hot">{c.visibility === "public" ? <><Lock className="size-4" />Make private</> : <><Globe className="size-4" />Make public</>}</button>
-            <Confirm title="Delete this list?" body="The list is removed. The anime and manga themselves are untouched." action="Delete" onConfirm={async () => { await deleteCollection(id); toast("List deleted"); router.push("/collections"); }}>
+            <Confirm title="Delete this list?" body="The list is removed. The anime, manga, films and series themselves are untouched." action="Delete" onConfirm={async () => { await deleteCollection(id); toast("List deleted"); router.push("/collections"); }}>
               <button type="button" className="flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold text-frost-text hover:border-frost-hot"><Trash2 className="size-4" />Delete</button>
             </Confirm>
           </div>
@@ -62,7 +62,7 @@ export function CollectionDetail({ id }: { id: string }) {
       </section>
 
       {items.length === 0 ? (
-        <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">Nothing here yet. Add anime or manga from their pages with “Add to list”.</p>
+        <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">Nothing here yet. Add anime, manga, films or series from their pages with “Add to list”.</p>
       ) : (
         <div className="grid grid-cols-3 gap-3.5 sm:grid-cols-4 lg:grid-cols-6">
           {items.map((it) => (
@@ -70,7 +70,7 @@ export function CollectionDetail({ id }: { id: string }) {
               <Link href={itemHref(it)} className="flex flex-col gap-1.5">
                 <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border-1.5 border-line shadow-poster transition group-hover:-translate-y-1 group-hover:border-frost-hot">
                   <Poster src={it.cover} className="size-full" />
-                  <span className="absolute left-1.5 top-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase tracking-[.08em] text-white">{it.kind}</span>
+                  <span className="absolute left-1.5 top-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase tracking-[.08em] text-white">{it.kind === "tv" ? "series" : it.kind}</span>
                 </div>
                 <div className="line-clamp-2 text-[13px] font-extrabold leading-tight">{it.title || "Untitled"}</div>
               </Link>
