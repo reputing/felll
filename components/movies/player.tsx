@@ -2,13 +2,11 @@
 import type Hls from "hls.js";
 import { usePathname, useRouter } from "next/navigation";
 import { ZeusControls, ZEUS_SERVERS, type Prefs } from "@/components/movies/zeus-controls";
+import type { Source } from "@/components/watch/player";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Captions, ChevronRight, Loader2, Maximize, Minimize, RectangleHorizontal, RotateCw } from "lucide-react";
-import type { MovieStream, MovieSource, MovieEmbed } from "@/lib/tmdb";
-import { SettingsPanel } from "@/components/watch/settings-panel";
-import { SubtitleLayer, useSubStyle } from "@/components/watch/subtitles";
-import { useNativeCues, useSubs } from "@/components/watch/use-subs";
+import { ChevronRight, Loader2, Maximize, Minimize, RectangleHorizontal, RotateCw } from "lucide-react";
+import type { MovieSource, MovieEmbed } from "@/lib/tmdb";
 
 // Movie/series player. Two kinds of server:
 //   • Cupcake — 8Stream's direct HLS for a movie, played in a native <video>
@@ -16,17 +14,12 @@ import { useNativeCues, useSubs } from "@/components/watch/use-subs";
 //     proxy so no CORS/Referer check can block it.
 //   • VidSrc / VidLink / … — TMDB-keyed iframe embeds. Instant and resilient
 //     (the embed host handles the CDN), and the only option for TV episodes.
-// one array for the life of the page: a fresh `[]` each render made the subtitles hook re-run its effect on every render and
-// loop ("Maximum update depth exceeded") until the tab slowed to a crawl
-const NO_TRACKS: never[] = [];
-
 /** What the player reports back so "continue watching" and the history know where you are. */
 export interface PlayTrack { tmdb?: number; imdb: string; media: "movie" | "tv"; season?: number; episode?: number; title: string; poster: string | null; year: number | null; epTitle?: string | null; episodes?: number | null; resume?: number }
 
 const mmss = (s: number) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
 
 export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, next, prev, trailer, knownMissing }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack; next?: { href: string; label: string }; prev?: { href: string; label: string }; trailer?: string | null; knownMissing?: boolean }) {
-  const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
   // The direct 8Stream sources resolve lazily (see effect below), so the page
   // never blocks on them. "Cupcake" is offered optimistically until proven dead.
   const [sources, setSources] = useState<MovieSource[] | null>(null); // null = not loaded yet
@@ -123,22 +116,14 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const dash = useRef<{ destroy: () => void } | null>(null); // dash.js, for the DASH sources (Atlantic)
   const [cur, setCur] = useState<MovieSource | undefined>(undefined);
 
-  // Your own subtitles for this title (upload, timing, auto-sync, look). Shown over the picture;
-  // inside the browser's own fullscreen/PiP, which our overlay can't reach, they ride a native track.
-  const [caption, setCaption] = useState<string | number | null>(null);
-  const [subStyle, patchSubStyle, resetSubStyle] = useSubStyle();
-  const [subsOpen, setSubsOpen] = useState(false);
-  const [native, setNative] = useState(false);
-  const subs = useSubs({ video, subKey: subKey ?? "m:none", title: "movie", ep: null, tracks: NO_TRACKS, caption, setCaption });
-  useEffect(() => { if (subs.mine) setCaption((c) => c ?? "mine"); }, [subs.mine]);
+  // Up next when a Hades episode ends (a frame announces this by message; our own <video> has an ended event)
   useEffect(() => {
     const v = video.current;
-    if (!v) return;
-    const upd = () => setNative(document.fullscreenElement === v || !!document.pictureInPictureElement || !!(v as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }).webkitDisplayingFullscreen);
-    for (const ev of ["fullscreenchange", "webkitbeginfullscreen", "webkitendfullscreen", "enterpictureinpicture", "leavepictureinpicture"]) (ev.startsWith("fullscreen") ? document : v).addEventListener(ev, upd);
-    return () => { for (const ev of ["fullscreenchange", "webkitbeginfullscreen", "webkitendfullscreen", "enterpictureinpicture", "leavepictureinpicture"]) (ev.startsWith("fullscreen") ? document : v).removeEventListener(ev, upd); };
-  }, [useEmbed, cur]);
-  useNativeCues(video, subs.cues, subs.offset, native && subs.overlayOn);
+    if (!v || useEmbed) return;
+    const on = () => { if (next && !nextDismissed.current && prefs.current.autoNext && !prefs.current.stopAfter) setNextIn(10); };
+    v.addEventListener("ended", on);
+    return () => v.removeEventListener("ended", on);
+  }, [useEmbed, cur, next]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Resolve 8Stream's HLS only when the Cupcake server is actually in use.
   useEffect(() => {
@@ -287,6 +272,39 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
     return () => window.removeEventListener("beforeunload", guard);
   }, [useEmbed]);
 
+  // the loader over the poster and the "Up next" countdown, shared by the frame and by Hades
+  const overlays = (
+    <>
+          {!ready && (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center bg-night">
+              {poster && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={poster} alt="" referrerPolicy="no-referrer" className="absolute inset-0 size-full object-cover opacity-30 blur-sm" />
+              )}
+              <div className="relative flex flex-col items-center gap-3 text-center">
+                <Loader2 className="size-12 animate-spin text-frost" />
+                <span className="text-[12px] font-extrabold uppercase tracking-[.14em] text-white/70">Getting {track?.title ?? "your title"} ready</span>
+              </div>
+            </div>
+          )}
+          {nextIn != null && next && (
+            <div className="absolute inset-0 z-20 grid place-items-center bg-black/70 backdrop-blur-sm animate-in fade-in">
+              <div className="flex flex-col items-center gap-2 text-center text-white sm:gap-4">
+                <div className="text-[11px] font-bold uppercase tracking-[.16em] text-frost sm:text-[12px]">Up next · {next.label}</div>
+                <div className="relative grid size-16 place-items-center sm:size-24">
+                  <svg className="absolute inset-0 -rotate-90" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="6" /><circle cx="50" cy="50" r="45" fill="none" stroke="var(--frost)" strokeWidth="6" strokeLinecap="round" strokeDasharray={283} strokeDashoffset={283 * (nextIn / 10)} className="transition-[stroke-dashoffset] duration-1000 ease-linear" /></svg>
+                  <span className="font-mono text-[22px] sm:text-[30px]">{nextIn}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { nextDismissed.current = true; setNextIn(null); }} className="h-10 rounded-full border-1.5 border-white/30 px-5 text-[13.5px] font-bold hover:bg-white/10">Cancel</button>
+                  <button type="button" onClick={() => router.push(next.href)} className="h-10 rounded-full bg-frost px-5 text-[13.5px] font-extrabold text-frost-ink">Play now</button>
+                </div>
+              </div>
+            </div>
+          )}
+    </>
+  );
+
   if (!hasNative && !embeds.length) {
     return <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night text-center text-[14px] font-semibold text-night-muted">This title isn’t playable right now. Try another.</div>;
   }
@@ -356,58 +374,22 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
               </div>
             </div>
           )}
-          {!ready && (
-            <div className="pointer-events-none absolute inset-0 grid place-items-center bg-night">
-              {poster && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={poster} alt="" referrerPolicy="no-referrer" className="absolute inset-0 size-full object-cover opacity-30 blur-sm" />
-              )}
-              <div className="relative flex flex-col items-center gap-3 text-center">
-                <Loader2 className="size-12 animate-spin text-frost" />
-                <span className="text-[12px] font-extrabold uppercase tracking-[.14em] text-white/70">Getting {track?.title ?? "your title"} ready</span>
-              </div>
-            </div>
-          )}
-          {nextIn != null && next && (
-            <div className="absolute inset-0 z-20 grid place-items-center bg-black/70 backdrop-blur-sm animate-in fade-in">
-              <div className="flex flex-col items-center gap-2 text-center text-white sm:gap-4">
-                <div className="text-[11px] font-bold uppercase tracking-[.16em] text-frost sm:text-[12px]">Up next · {next.label}</div>
-                <div className="relative grid size-16 place-items-center sm:size-24">
-                  <svg className="absolute inset-0 -rotate-90" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="6" /><circle cx="50" cy="50" r="45" fill="none" stroke="var(--frost)" strokeWidth="6" strokeLinecap="round" strokeDasharray={283} strokeDashoffset={283 * (nextIn / 10)} className="transition-[stroke-dashoffset] duration-1000 ease-linear" /></svg>
-                  <span className="font-mono text-[22px] sm:text-[30px]">{nextIn}</span>
-                </div>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => { nextDismissed.current = true; setNextIn(null); }} className="h-10 rounded-full border-1.5 border-white/30 px-5 text-[13.5px] font-bold hover:bg-white/10">Cancel</button>
-                  <button type="button" onClick={() => router.push(next.href)} className="h-10 rounded-full bg-frost px-5 text-[13.5px] font-extrabold text-frost-ink">Play now</button>
-                </div>
-              </div>
-            </div>
-          )}
+          {overlays}
           {/* the server paints its own promo line over the picture (only the ones that cannot be sandboxed); blur it from our side */}
           {!curEmbed.sandbox && <div aria-hidden className="pointer-events-none absolute left-[24%] top-[71%] h-[13%] w-[52%] rounded-2xl bg-black/60 backdrop-blur-xl [backdrop-filter:blur(18px)]" />}
         </div>
       ) : (
-        <div className="relative" data-settings>
-          <video ref={video} controls playsInline poster={poster ?? undefined}
-            className="aspect-video w-full rounded-[26px] border-1.5 border-night-line bg-black shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)]">
-            {subtitles.map((t, i) => <track key={i} kind="subtitles" src={t.url} srcLang={t.lang} label={t.label} default={i === 0} />)}
-          </video>
-          {subKey && !native && <SubtitleLayer video={video} cues={subs.overlayOn ? subs.cues : []} offset={subs.offset} style={subStyle} preview={subsOpen} />}
-          {subKey && (
-            <button type="button" onClick={() => setSubsOpen((o) => !o)} aria-label="Subtitles" aria-expanded={subsOpen}
-              className="absolute right-3 top-3 z-10 flex h-9 items-center gap-1.5 rounded-full bg-black/60 px-3 text-[12.5px] font-extrabold text-white backdrop-blur hover:bg-black/80">
-              <Captions className="size-4" />{subs.mine ? "Subtitles" : "Add subtitles"}
-            </button>
+        // Hades: our own <video> (HLS or DASH, never a third-party script) in the same dressed frame as Zeus, driven by the same
+        // control bar (zeus-controls.tsx), so the bar, settings, subtitles, skip buttons, theater and "Up next" all match.
+        <div ref={box} data-settings className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", theater && !full && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
+          <video ref={video} playsInline poster={poster ?? undefined} onLoadedData={() => setReady(true)} className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />
+          {cur && (
+            <ZeusControls video={video} session={cur.url} box={box} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull}
+              subsFor={track ? { tmdb: track.tmdb, imdb: track.imdb, media: track.media, season: track.season, episode: track.episode, subKey: subKey ?? `m:${track.imdb}`, title: track.title } : undefined}
+              srcs={{ sources: (sources ?? []).map((x): Source => ({ id: x.url, label: x.label, audio: "sub" })), current: { id: cur.url, label: cur.label, audio: "sub" }, onPick: (x) => { const m = (sources ?? []).find((y) => y.url === String(x.id)); if (m) setCur(m); } }}
+              onServer={() => {}} onPrefs={(p) => { prefs.current = p; }} />
           )}
-          {subKey && subsOpen && (
-            <SettingsPanel subsOnly page="subs" onPage={() => {}} onClose={() => setSubsOpen(false)}
-              sources={[]} dead={new Set()} failed={new Set()} onPick={() => {}} speed={1} onSpeed={() => {}}
-              subs={subs.mine ? [{ id: "mine", language: "und", label: `My file · ${subs.mine.name}`, url: "", is_default: 0 }] : []} caption={caption} onCaption={setCaption}
-              mineName={subs.mine?.name ?? null} onUpload={subs.uploadSubs} onRemoveMine={subs.removeMine}
-              offset={subs.offset} onOffset={subs.setOffset} onAutoSync={subs.autoSync} sync={subs.sync} hasCues={subs.cues.length > 0} onDownload={subs.downloadSubs}
-              style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
-              autoNext={false} onAutoNext={() => {}} stopAfter={false} onStopAfter={() => {}} sleepMin={null} onSleep={() => {}} />
-          )}
+          {overlays}
         </div>
       )}
       {track?.resume && track.resume > 30 && (
@@ -437,20 +419,9 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
             ))}
           </div>
         )}
-        {!useEmbed && (sources?.length ?? 0) > 1 && (
-          <>
-            <span className="text-[11px] font-extrabold uppercase tracking-[.12em] text-plum-muted">Quality</span>
-            {sources!.map((s) => (
-              <button key={s.label + s.url} type="button" aria-pressed={cur?.url === s.url} onClick={() => setCur(s)}
-                className={cn("h-8 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot", cur?.url === s.url && "border-frost-hot bg-frost text-frost-ink")}>
-                {s.label}
-              </button>
-            ))}
-          </>
-        )}
       </div>
       {servers.length > 1 && (
-        <p className="px-1 text-[11.5px] font-semibold text-plum-muted">Zeus is our own player and has no ads. Other servers are third-party and may show them.</p>
+        <p className="px-1 text-[11.5px] font-semibold text-plum-muted">Hades and Zeus are our own players and have no ads. Other servers are third-party and may show them. Hades keeps its sources in the settings menu.</p>
       )}
     </div>
   );

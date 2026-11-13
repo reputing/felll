@@ -10,7 +10,7 @@ import { toast } from "@/lib/store";
 import { introIsSane, outroIsSane, useSkipPrefs } from "@/lib/use-skip-prefs";
 import { cn, clock } from "@/lib/utils";
 
-// Our own control bar for Zeus: the same bar, seek line, buttons and cupcake bug as the anime player, drawn over a frame whose
+// Our own control bar for Zeus (and for Hades, which has no frame: pass `video` and it drives the <video> directly): the same bar, seek line, buttons and cupcake bug as the anime player, drawn over a frame whose
 // own controls are switched off (CineSrc's documented `controls=false`). It drives the video with CineSrc's documented
 // postMessage commands (play, pause, seek, setVolume, setMuted, setPlaybackRate) and follows its events (play, pause,
 // timeupdate, volumechange, ratechange, ended), which are only believed from its own origin and its own frame.
@@ -32,10 +32,14 @@ export interface Prefs { autoNext: boolean; stopAfter: boolean }
 
 export interface Hop { href: string; label: string }
 
-export function ZeusControls({ session, frame, box, origin, ready, prev, next, theater, onTheater, full, onFull, subsFor, onServer, onPrefs }: {
+export function ZeusControls({ session, frame, video, srcs, box, origin, ready, prev, next, theater, onTheater, full, onFull, subsFor, onServer, onPrefs }: {
   /** changes whenever the frame is reloaded or moved to another server: everything we believed about the old one is dropped */
   session: string;
-  frame: RefObject<HTMLIFrameElement | null>; box: RefObject<HTMLDivElement | null>; origin: string; ready: boolean;
+  frame?: RefObject<HTMLIFrameElement | null>; box: RefObject<HTMLDivElement | null>; origin?: string; ready: boolean;
+  /** a native <video> to drive instead of a frame (Hades) */
+  video?: RefObject<HTMLVideoElement | null>;
+  /** the settings menu's source list, when it is not the CineSrc servers (Hades: Lamda, AdRock, Atlantic) */
+  srcs?: { sources: Source[]; current?: Source; onPick: (s: Source) => void };
   prev?: Hop; next?: Hop; theater: boolean; onTheater: () => void; full: boolean; onFull: () => void;
   subsFor?: SubsFor; onServer: (id: string, at: number) => void; onPrefs: (p: Prefs) => void;
 }) {
@@ -76,8 +80,21 @@ export function ZeusControls({ session, frame, box, origin, ready, prev, next, t
   const scrubbing = useRef(false);
 
   const send = useCallback((command: string, args: unknown[] = []) => {
-    frame.current?.contentWindow?.postMessage({ type: "cinesrc:command", command, args }, origin);
-  }, [frame, origin]);
+    if (video) {
+      const v = video.current;
+      if (!v) return;
+      switch (command) {
+        case "play": void v.play().catch(() => {}); break;
+        case "pause": v.pause(); break;
+        case "seek": v.currentTime = Math.max(0, Number(args[0]) || 0); break;
+        case "setVolume": v.volume = Math.max(0, Math.min(1, Number(args[0]) || 0)); break;
+        case "setMuted": v.muted = !!args[0]; break;
+        case "setPlaybackRate": v.playbackRate = Number(args[0]) || 1; break;
+      }
+      return;
+    }
+    if (origin) frame?.current?.contentWindow?.postMessage({ type: "cinesrc:command", command, args }, origin);
+  }, [frame, origin, video]);
 
   // A new frame (another server, a reload) knows nothing yet: no length, no position, not playing. Without this the bar kept the
   // old server's "playing" and a running clock over a black picture (and the subtitles ticked along with it).
@@ -88,8 +105,9 @@ export function ZeusControls({ session, frame, box, origin, ready, prev, next, t
 
   // --- what the player says ---------------------------------------------------------------------------------------
   useEffect(() => {
+    if (video) return; // no frame to listen to: the <video> reports through its own events (next effect)
     const on = (e: MessageEvent) => {
-      if (e.origin !== origin || e.source !== frame.current?.contentWindow) return;
+      if (e.origin !== origin || e.source !== frame?.current?.contentWindow) return;
       const d = e.data;
       if (!d || typeof d.type !== "string") return;
       switch (d.type) {
@@ -116,7 +134,27 @@ export function ZeusControls({ session, frame, box, origin, ready, prev, next, t
     };
     window.addEventListener("message", on);
     return () => window.removeEventListener("message", on);
-  }, [origin, frame]);
+  }, [origin, frame, video]);
+  // the same state, read from a <video> instead of a frame's messages
+  useEffect(() => {
+    const v = video?.current;
+    if (!v) return;
+    const sync = () => { base.current = { t: v.currentTime, at: performance.now(), playing: !v.paused && !v.ended, rate: v.playbackRate }; };
+    const len = () => { if (Number.isFinite(v.duration) && v.duration > 0) setDur(v.duration); };
+    const on: Record<string, () => void> = {
+      play: () => { setPlaying(true); sync(); },
+      pause: () => { setPlaying(false); sync(); },
+      ended: () => { setPlaying(false); sync(); },
+      loadedmetadata: len, durationchange: len,
+      timeupdate: () => { if (!scrubbing.current) setT(v.currentTime); len(); sync(); },
+      seeked: () => { setT(v.currentTime); sync(); },
+      volumechange: () => { setVol(v.volume); setMuted(v.muted); },
+      ratechange: () => { setRate(v.playbackRate); sync(); },
+    };
+    for (const [k, f] of Object.entries(on)) v.addEventListener(k, f);
+    setVol(v.volume); setMuted(v.muted); setRate(v.playbackRate); len(); setPlaying(!v.paused); sync();
+    return () => { for (const [k, f] of Object.entries(on)) v.removeEventListener(k, f); };
+  }, [video, session]);
   // once it is ready, ask where it stands (a volume the viewer set last time, whether it autoplayed)
   useEffect(() => { if (ready) { send("getVolume"); send("getMuted"); send("getPaused"); } }, [ready, send]);
 
@@ -271,7 +309,7 @@ export function ZeusControls({ session, frame, box, origin, ready, prev, next, t
       {menu && sheet && <div className="fixed inset-0 z-[65] bg-black/40" onClick={closeMenu} aria-hidden />}
       {menu && (
         <SettingsPanel
-          sources={ZEUS_SERVERS.map((x): Source => ({ id: x.id, label: x.name, audio: "sub" }))} current={used ? { id: used, label: serverName(used), audio: "sub" } : undefined} dead={new Set()} failed={new Set()} onPick={(x) => pickServer(String(x.id))}
+          sources={srcs ? srcs.sources : ZEUS_SERVERS.map((x): Source => ({ id: x.id, label: x.name, audio: "sub" }))} current={srcs ? srcs.current : used ? { id: used, label: serverName(used), audio: "sub" } : undefined} dead={new Set()} failed={new Set()} onPick={(x) => (srcs ? srcs.onPick(x) : pickServer(String(x.id)))}
           speed={rate} onSpeed={pickRate}
           subs={tracks} caption={caption} onCaption={pickCaption}
           mineName={subs.mine?.name ?? null} onUpload={subs.uploadSubs} onRemoveMine={subs.removeMine}
