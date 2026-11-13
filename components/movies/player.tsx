@@ -25,7 +25,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const [sources, setSources] = useState<MovieSource[] | null>(null); // null = not loaded yet
   const [nativeDead, setNativeDead] = useState(false);
   const hasNative = !!streamSrc;
-  const servers = [...(hasNative ? [{ k: "cupcake", label: "Hades", third: false }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name, third: true }))];
+  const servers = [...(hasNative ? [{ k: "cupcake", label: "Iris", third: false }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name, third: true }))];
   const [server, setServer] = useState<string>(streamSrc ? "cupcake" : embeds[0]?.name ?? "cupcake");
   const curEmbed = embeds.find((e) => e.name === server) ?? null;
   // A third-party player is never loaded on its own: they are the ones that open ad tabs and redirects, and no sandbox can
@@ -116,7 +116,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const dash = useRef<{ destroy: () => void } | null>(null); // dash.js, for the DASH sources (Atlantic)
   const [cur, setCur] = useState<MovieSource | undefined>(undefined);
 
-  // Up next when a Hades episode ends (a frame announces this by message; our own <video> has an ended event)
+  // Up next when an Iris episode ends (a frame announces this by message; our own <video> has an ended event)
   useEffect(() => {
     const v = video.current;
     if (!v || useEmbed) return;
@@ -272,7 +272,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
     return () => window.removeEventListener("beforeunload", guard);
   }, [useEmbed]);
 
-  // the loader over the poster and the "Up next" countdown, shared by the frame and by Hades
+  // the loader over the poster and the "Up next" countdown, shared by the frame and by Iris
   const overlays = (
     <>
           {!ready && (
@@ -330,7 +330,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
             <p className="mt-2 text-[13.5px] leading-relaxed text-night-muted">It is the way to watch some titles, but it is not ours: it can open ad tabs, and the site behind it decides what it shows. Zeus is our own player and has no ads.</p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <button type="button" onClick={() => setOk(true)} className="h-10 rounded-full border-1.5 border-frost-hot bg-frost px-5 text-[13px] font-extrabold text-frost-ink">Play with {curEmbed.name}</button>
-              {hasNative && <button type="button" onClick={() => setServer("cupcake")} className="h-10 rounded-full border-1.5 border-night-line px-5 text-[13px] font-extrabold text-night-text">Back to Hades</button>}
+              {hasNative && <button type="button" onClick={() => setServer("cupcake")} className="h-10 rounded-full border-1.5 border-night-line px-5 text-[13px] font-extrabold text-night-text">Back to Iris</button>}
             </div>
           </div>
         </div>
@@ -379,7 +379,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
           {!curEmbed.sandbox && <div aria-hidden className="pointer-events-none absolute left-[24%] top-[71%] h-[13%] w-[52%] rounded-2xl bg-black/60 backdrop-blur-xl [backdrop-filter:blur(18px)]" />}
         </div>
       ) : (
-        // Hades: our own <video> (HLS or DASH, never a third-party script) in the same dressed frame as Zeus, driven by the same
+        // Iris: our own <video> (HLS or DASH, never a third-party script) in the same dressed frame as Zeus, driven by the same
         // control bar (zeus-controls.tsx), so the bar, settings, subtitles, skip buttons, theater and "Up next" all match.
         <div ref={box} data-settings className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", theater && !full && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
           <video ref={video} playsInline poster={poster ?? undefined} onLoadedData={() => setReady(true)} className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />

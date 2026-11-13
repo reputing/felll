@@ -2,7 +2,7 @@ import { ArrowRight, CalendarClock, Heart, MessagesSquare, Radio, Sparkles, Star
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { currentUser, KNOWN_COOKIE, SESSION_COOKIE, safeNext } from "@/lib/auth";
+import { currentUser, KNOWN_COOKIE, revokedNotice, SESSION_COOKIE, safeNext } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { jikanOr, normAnime } from "@/lib/jikan";
 import { kuroConfig } from "@/lib/kuro";
@@ -51,6 +51,7 @@ export default async function Portal({ searchParams }: Props) {
   // stranger: they get the real sign-in, never the "unavailable" page.
   const jar = await cookies();
   const returning = jar.has(KNOWN_COOKIE) || jar.has(SESSION_COOKIE) || !!sp.bye;
+  const revokedAt = await revokedNotice();
 
   const [wall, stats, faces, cfg] = await Promise.all([
     jikanOr<{ data: unknown[] }>("/top/anime?filter=airing&limit=25&sfw=true", { data: [] }, 3600),
@@ -122,7 +123,12 @@ export default async function Portal({ searchParams }: Props) {
           </div>
 
           {error && <p role="alert" className="rounded-2xl border-1.5 border-line-hot bg-cream-blush px-4 py-3 text-[13px] font-bold text-frost-deep">{error}</p>}
-          {sp.bye && !error && <p className="rounded-2xl bg-cream-tint px-4 py-3 text-[13px] font-bold text-plum-body">Signed out. See you soon.</p>}
+          {revokedAt && !error && (
+            <p role="alert" className="rounded-2xl border-1.5 border-line-hot bg-cream-blush px-4 py-3 text-[13px] font-bold text-frost-deep">
+              You were signed out of this device from another device. Sign in again to keep going.
+            </p>
+          )}
+          {sp.bye && !error && !revokedAt && <p className="rounded-2xl bg-cream-tint px-4 py-3 text-[13px] font-bold text-plum-body">Signed out. See you soon.</p>}
 
           <Link
             href={`/api/auth/kuro?next=${encodeURIComponent(next)}`}

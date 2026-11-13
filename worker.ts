@@ -25,7 +25,7 @@ async function chatUser(request: Request, env: CloudflareEnv) {
       .prepare(
         `select u.id, u.handle, u.display_name, u.avatar_url, u.accent, u.is_plus
          from sessions s join users u on u.id = s.user_id
-         where s.id = ? and s.expires_at > unixepoch()`,
+         where s.id = ? and s.expires_at > unixepoch() and s.revoked_at is null`,
       )
       .bind(hash)
       .first();

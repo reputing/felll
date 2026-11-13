@@ -42,7 +42,7 @@ export async function GET(req: Request) {
   await warmMovies();
   await Promise.allSettled([
     run("delete from presence where updated_at < unixepoch() - 86400"),
-    run("delete from sessions where expires_at < unixepoch()"),
+    run("delete from sessions where expires_at < unixepoch() or revoked_at < unixepoch() - 7 * 86400"),
     run("delete from sso_burned where expires_at < unixepoch()"),
     run("delete from jikan_cache where fetched_at < unixepoch() - 30 * 86400"),
     run("delete from daily_views where day < date('now', '-60 days')"),

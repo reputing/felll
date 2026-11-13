@@ -10,6 +10,7 @@ import rehypeKatex from "rehype-katex";
 import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, Feather, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
+import { pushCloak, syncCloak, type CloakPrefs } from "@/lib/cloak";
 import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/model-picker";
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
 import { FillDocButton } from "@/components/shh/fill";
@@ -22,7 +23,7 @@ interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
 interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean; orig?: string; via?: { model: string; wanted?: string } }
 interface Thread { id: string; title: string; updatedAt: number }
-interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string }
+interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string; at?: number }
 interface RoomMsg { id: number; handle: string | null; role: string; content: string; steps?: Step[] }
 
 const CODE_KEY = "shh:code";
@@ -33,7 +34,7 @@ const OLD_CONVO_KEY = "shh:convo";
 const threadKey = (id: string) => `shh:thread:${id}`;
 const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps, and LaTeX ($…$ or $$…$$) for math.";
 
-const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {}, antiFlip: false, antiFlipTarget: "docs", antiFlipCustom: "" };
+const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {}, antiFlip: false, antiFlipTarget: "word", antiFlipCustom: "" };
 const keyLabel = (k: string) => (k === " " ? "Space" : k.length === 1 ? k.toUpperCase() : k);
 
 // OpenAI-style payload (string content, or an array with image_url parts).
@@ -428,6 +429,8 @@ export function ShhChat({ me }: { me?: string }) {
     try {
       const c = localStorage.getItem(CODE_KEY); if (c) setCode(c);
       const p = localStorage.getItem(PREFS_KEY); if (p) setPrefsState({ ...DEFAULT_PREFS, ...JSON.parse(p) });
+      // and the account's copy, when it is newer than this device's
+      syncCloak().then((m) => { if (m) setPrefsState({ ...DEFAULT_PREFS, ...(m as unknown as Partial<Prefs>) }); });
       let list: Thread[] = [];
       try { list = JSON.parse(localStorage.getItem(THREADS_KEY) || "[]"); } catch { list = []; }
       if (!Array.isArray(list) || !list.length) {
@@ -477,7 +480,8 @@ export function ShhChat({ me }: { me?: string }) {
   useEffect(() => { setHumState(loadHumPrefs()); try { setNatural(localStorage.getItem("shh:natural") === "1"); } catch { /* */ } }, []);
   const setHum = (p: HumPrefs) => { setHumState(p); try { localStorage.setItem("shh:hum", JSON.stringify(p)); } catch { /* */ } };
   const toggleNatural = () => setNatural((n) => { const v = !n; try { localStorage.setItem("shh:natural", v ? "1" : "0"); } catch { /* */ } return v; });
-  const setPrefs = (p: Prefs) => { setPrefsState(p); try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* */ } };
+  // every change is stamped and mirrored to the account, so it follows the member to other devices (lib/cloak.ts)
+  const setPrefs = (p: Prefs) => { const q = { ...p, at: Date.now() }; setPrefsState(q); try { localStorage.setItem(PREFS_KEY, JSON.stringify(q)); } catch { /* */ } pushCloak(q as unknown as CloakPrefs); };
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy, roomMsgs, roomBusy]);
   useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = "0px"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; } }, [input]);

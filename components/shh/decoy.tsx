@@ -50,7 +50,7 @@ function Word({ onExit, cfg }: { onExit: () => void; cfg: DecoyConfig }) {
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f5f5f5", fontFamily: sys, display: "flex", flexDirection: "column", color: "#242424" }}>
       {/* title bar (light, modern) */}
       <div style={{ background: "#fff", height: 44, display: "flex", alignItems: "center", padding: "0 12px", gap: 12, borderBottom: "1px solid #eee", fontSize: 12.5 }}>
-        <button type="button" onClick={onExit} aria-label="menu" title=" " style={{ width: 24, height: 24, borderRadius: 5, border: "none", background: "#2b579a", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", display: "grid", placeItems: "center", flex: "none" }}>W</button>
+        <button type="button" onClick={onExit} aria-label="menu" title=" " style={{ width: 26, height: 26, border: "none", background: "transparent", padding: 0, cursor: "pointer", display: "grid", placeItems: "center", flex: "none" }}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/disguise/word.png" alt="" width={26} height={26} draggable={false} /></button>
         <span style={{ display: "flex", alignItems: "center", gap: 7, color: "#444" }}>
           <span style={{ width: 28, height: 15, background: "#2b579a", borderRadius: 8, position: "relative", display: "inline-block" }}><span style={{ position: "absolute", top: 1.5, right: 1.5, width: 12, height: 12, background: "#fff", borderRadius: "50%" }} /></span>
           AutoSave

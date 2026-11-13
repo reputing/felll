@@ -64,7 +64,7 @@ export async function startSession(p: KuroProfile, userAgent: string): Promise<s
     d
       .prepare("insert into sessions (id, user_id, expires_at, user_agent) values (?, ?, ?, ?)")
       .bind(await sha256(t), p.uid, now() + SESSION_DAYS * 86400, userAgent.slice(0, 200)),
-    d.prepare("delete from sessions where expires_at < unixepoch()"),
+    d.prepare("delete from sessions where expires_at < unixepoch() or revoked_at < unixepoch() - 7 * 86400"),
   ]);
   try { (await cookies()).set({ name: KNOWN_COOKIE, value: "1", httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 400 * 86400 }); } catch { /* not in a request that can set cookies */ }
   return t;
@@ -87,7 +87,7 @@ export const currentUser = cache(async (): Promise<User | null> => {
   try {
     return await first<User>(
       `select u.* from sessions s join users u on u.id = s.user_id
-       where s.id = ? and s.expires_at > unixepoch()`,
+       where s.id = ? and s.expires_at > unixepoch() and s.revoked_at is null`,
       await sha256(t),
     );
   } catch {
@@ -143,7 +143,7 @@ export async function mySessions(userId: string): Promise<DeviceSession[]> {
   const t = (await cookies()).get(SESSION_COOKIE)?.value;
   const mine = t ? await sha256(t) : "";
   const rows = await all<{ id: string; created_at: number; expires_at: number; user_agent: string }>(
-    "select id, created_at, expires_at, user_agent from sessions where user_id = ? and expires_at > unixepoch() order by created_at desc limit 50",
+    "select id, created_at, expires_at, user_agent from sessions where user_id = ? and expires_at > unixepoch() and revoked_at is null order by created_at desc limit 50",
     userId,
   );
   return rows.map((r) => ({ sid: r.id.slice(0, 16), created_at: r.created_at, expires_at: r.expires_at, user_agent: r.user_agent, current: r.id === mine }));
@@ -154,9 +154,10 @@ export async function revokeSession(userId: string, sid: string): Promise<{ ok: 
   if (!/^[A-Za-z0-9_-]{16}$/.test(sid)) return { ok: false, self: false };
   const t = (await cookies()).get(SESSION_COOKIE)?.value;
   const mine = t ? await sha256(t) : "";
-  const row = await first<{ id: string }>("select id from sessions where user_id = ? and substr(id, 1, 16) = ?", userId, sid);
+  const row = await first<{ id: string }>("select id from sessions where user_id = ? and substr(id, 1, 16) = ? and revoked_at is null", userId, sid);
   if (!row) return { ok: false, self: false };
-  await run("delete from sessions where id = ? and user_id = ?", row.id, userId);
+  // kept as a marker (not deleted) so that device can be told it was signed out; it can no longer be used to sign in
+  await run("update sessions set revoked_at = unixepoch() where id = ? and user_id = ?", row.id, userId);
   return { ok: true, self: row.id === mine };
 }
 
@@ -164,7 +165,18 @@ export async function revokeSession(userId: string, sid: string): Promise<{ ok: 
 export async function revokeOthers(userId: string): Promise<number> {
   const t = (await cookies()).get(SESSION_COOKIE)?.value;
   const mine = t ? await sha256(t) : "";
-  const before = await first<{ n: number }>("select count(*) as n from sessions where user_id = ? and id != ?", userId, mine);
-  await run("delete from sessions where user_id = ? and id != ?", userId, mine);
+  const before = await first<{ n: number }>("select count(*) as n from sessions where user_id = ? and id != ? and revoked_at is null", userId, mine);
+  await run("update sessions set revoked_at = unixepoch() where user_id = ? and id != ? and revoked_at is null", userId, mine);
   return before?.n ?? 0;
+}
+
+/** When this browser's session was ended from another device ("sign out all other devices"), the time it happened; else null. The
+ *  sign-in uses it to say so, instead of leaving the member to wonder why they were thrown out. */
+export async function revokedNotice(): Promise<number | null> {
+  const t = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!t) return null;
+  try {
+    const row = await first<{ revoked_at: number | null }>("select revoked_at from sessions where id = ?", await sha256(t));
+    return row?.revoked_at ?? null;
+  } catch { return null; }
 }

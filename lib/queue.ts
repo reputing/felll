@@ -44,7 +44,10 @@ export function removeFromQueue(id: number) {
   write(read().filter((x) => x.id !== id));
 }
 
+// one array for every server render: a fresh `[]` each call makes React think the snapshot keeps changing
+const NONE: QueueItem[] = [];
+
 export function useQueue(): QueueItem[] {
   // server snapshot is empty so hydration matches; the real list loads on the client
-  return useSyncExternalStore((cb) => { subs.add(cb); return () => { subs.delete(cb); }; }, read, () => []);
+  return useSyncExternalStore((cb) => { subs.add(cb); return () => { subs.delete(cb); }; }, read, () => NONE);
 }
