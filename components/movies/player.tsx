@@ -420,9 +420,6 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
           </div>
         )}
       </div>
-      {servers.length > 1 && (
-        <p className="px-1 text-[11.5px] font-semibold text-plum-muted">Hades and Zeus are our own players and have no ads. Other servers are third-party and may show them. Hades keeps its sources in the settings menu.</p>
-      )}
     </div>
   );
 }
