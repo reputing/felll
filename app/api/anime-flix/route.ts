@@ -14,9 +14,9 @@ export async function GET(req: Request) {
     {
       servers,
       policy: EMBED_POLICY,
-      playbackAvailability: "unverified",
+      playbackAvailability: "intermittent",
       adFreeGuaranteed: false,
-      notice: "Beta server. It may show ads, progress is not saved, and playback is not guaranteed.",
+      notice: "Beta server. It may show ads, progress is not saved, and it does not always start.",
     },
     { headers: { "cache-control": "private, max-age=300" } },
   );

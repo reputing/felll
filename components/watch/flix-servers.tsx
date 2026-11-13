@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 
 // Optional extra anime servers (Flixcloud, found through Reanime's resolver). Collapsed until a viewer asks: nothing is requested
 // for people who never open it. It is labelled for what it is, because it is not the same as our own player:
-//   it may show ads (the player loads third-party ad and tracking scripts inside its frame), progress is not saved, and whether it
-//   plays has not been verified from our test machine. The frame is sandboxed (scripts and same-origin only: no popups, no redirects
+//   it may show ads (the player loads third-party ad and tracking scripts inside its frame), progress is not saved, and it does not
+//   always start (its stream request sometimes answers 410). The frame is sandboxed (scripts and same-origin only: no popups, no redirects
 //   of this page, no forms, downloads or modals). Never relax that sandbox because a server shows an error.
 interface Policy { sandbox: string; allow: string; referrerPolicy: string; origin: string }
 interface Server { name: string; language: string; hardsub: boolean; embedUrl: string }
@@ -56,7 +56,7 @@ export function FlixServers({ anilistId, episode }: { anilistId: number | null; 
         <div className="mt-3 flex flex-col gap-3">
           <p className="flex items-start gap-2 rounded-xl border-1.5 border-line bg-cream-blush p-3 text-[12.5px] font-semibold leading-snug text-plum-body">
             <TriangleAlert className="mt-0.5 size-4 flex-none text-frost-text" aria-hidden />
-            <span>These come from another site&rsquo;s player. They may show ads, your progress isn&rsquo;t saved, and we can&rsquo;t promise every episode plays. Popups and redirects are blocked.</span>
+            <span>These come from another site&rsquo;s player. They may show ads, your progress isn&rsquo;t saved, and it doesn&rsquo;t always start. Popups and redirects are blocked.</span>
           </p>
           {state === "loading" && <div className="flex items-center gap-2 text-[13px] font-semibold text-plum-muted"><Loader2 className="size-4 animate-spin" />looking for servers…</div>}
           {state === "none" && <p className="text-[13px] font-semibold text-plum-muted">no extra servers for this episode right now.</p>}

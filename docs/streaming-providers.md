@@ -16,9 +16,9 @@ Evidence levels (a listed link, a loaded frame and playing video are three diffe
 | Source | Where | Evidence | Sandbox | Ads |
 |---|---|---|---|---|
 | **CineSrc ("Zeus")** | movies and series (`lib/movie-servers.ts`, `components/movies/player.tsx`) | Playback verified (31 of 32 sampled titles played, one at a time, median 7 s) | `allow-scripts allow-same-origin` | Popups and redirects blocked by the sandbox. Its own docs say "minimal ads"; no zero-ad mode exists |
-| **Flixcloud via Reanime's resolver** | anime watch page, collapsed "More servers (beta)" (`lib/flixcloud.ts`, `app/api/anime-flix`, `components/watch/flix-servers.tsx`) | Resolver: **HTTP verified** (5 rows for AniList 206401 episode 7, matching the report). Playback: **not verified**; from our test machine the stream request answered 410 Gone ("Failed to decrypt video URL") for 2 episodes and 3 player versions | `allow-scripts allow-same-origin` | **Not ad-free.** The player loads third-party scripts inside its frame (`llvpn.com/tag.min.js`, `my.rtmark.net/gid.js`, `luugy.com`) plus Cloudflare analytics. Popups and page redirects are blocked; scripts inside the frame are not |
+| **Flixcloud via Reanime's resolver** | anime watch page, collapsed "More servers (beta)" (`lib/flixcloud.ts`, `app/api/anime-flix`, `components/watch/flix-servers.tsx`) | Resolver: **HTTP verified** (5 rows for AniList 206401 episode 7, matching the supplied report and `cloudflare/anime.mjs`). Playback: **plays sometimes**. With the supplied prototype's player options (`autoPlay=true&skI=false&skO=false`) the video decoded at 1920x1080 with the clock advancing under the sandbox in about 3 of 10 tries from our datacenter test machine; without those options it never played (0 of 5). The player's stream request (`/api/m3u8/...`) otherwise answers 410 Gone, most often on repeated requests from one connection | `allow-scripts allow-same-origin` | **Not ad-free.** The player loads third-party scripts inside its frame (`llvpn.com/tag.min.js`, `my.rtmark.net/gid.js`, an ad-network ping to `luugy.com`) plus Cloudflare analytics. In the samples there was no popup, redirect or blocked attempt after 7 clicks and no visible ad, but that does not show there are none. Popups and page redirects are blocked by the sandbox; scripts inside the frame are not |
 
-Flixcloud is opt-in only: collapsed until a viewer opens it, labelled as beta, never a default and never an automatic fallback. If the 410 is specific to datacenter connections it may play for real viewers; that has to be checked from a normal connection.
+Flixcloud is opt-in only: collapsed until a viewer opens it, labelled as beta, never a default and never an automatic fallback. The 410s look like throttling of one connection, so viewers on their own connections may see it start more often; that still has to be checked from a normal connection.
 
 Rules for anything embedded: never relax the sandbox because a server shows an error; the frame-src allowlist (`next.config.ts`) names the only origins a frame may load; the embed URL is rebuilt by us from a validated id and version, never copied from an upstream response.
 
@@ -26,7 +26,7 @@ Rules for anything embedded: never relax the sandbox because a server shows an e
 
 | Source | Reason |
 |---|---|
-| AdRock native player | Depends on decoding the provider's obfuscated URLs and on a captured stream link that expires. That is extracting a stream around the provider's own protection |
+| AdRock native player | Read in the supplied ZIP (`dist/adrock.js`): it holds an AES key taken from AdRock's own site code and uses it to decrypt the provider's encrypted stream URLs, then plays the raw CDN links (and ships a captured one, `native-sample.js`). That is removing the provider's protection layer to hotlink streams |
 | Cinejoy | The resolver is a protected transport (WebAssembly plus an encoded POST). No plain API was established |
 | Koddo | Session and challenge-gated native pipeline (Turnstile player gate) |
 | 1Shows | Provider list answers a Cloudflare challenge |
