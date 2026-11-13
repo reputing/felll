@@ -58,11 +58,10 @@ export default async function Portal({ searchParams }: Props) {
   return (
     <main className="relative grid min-h-svh place-items-center overflow-hidden px-4 py-10">
       <PosterWall items={posters} />
-      <div aria-hidden className="pointer-events-none absolute -left-32 -top-32 size-[480px] rounded-full bg-frost/30 blur-3xl" />
-      <div aria-hidden className="pointer-events-none absolute -bottom-40 -right-24 size-[520px] rounded-full bg-sprinkle-lilac/20 blur-3xl" />
+      <div aria-hidden className="aurora"><i /><i /><i /></div>
 
       <div className="relative z-10 grid w-full max-w-[980px] items-stretch gap-4 animate-rise lg:grid-cols-[1.05fr_1fr]">
-        <section className="flex flex-col justify-between gap-8 rounded-shell border-1.5 border-night-line bg-night p-8 text-night-text shadow-[0_40px_80px_-40px_rgba(42,20,32,.9)]">
+        <section className="flex flex-col justify-between gap-8 beam rounded-shell border border-white/15 bg-black/55 p-6 text-night-text shadow-[inset_0_1px_0_rgb(255_255_255/.14),0_40px_80px_-40px_rgba(0,0,0,.9)] backdrop-blur-2xl sm:p-8">
           <div>
             <div className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -81,7 +80,7 @@ export default async function Portal({ searchParams }: Props) {
           </div>
           <ul className="grid grid-cols-2 gap-2">
             {FEATURES.map(({ Icon, label, note }) => (
-              <li key={label} className="rounded-2xl border border-night-line bg-night-line/40 p-3">
+              <li key={label} className="rounded-2xl border border-white/10 bg-white/[.06] p-3 backdrop-blur">
                 <Icon className="size-4 text-frost" />
                 <div className="mt-2 text-[13px] font-extrabold">{label}</div>
                 <div className="text-[11.5px] text-night-muted/80">{note}</div>
@@ -90,7 +89,7 @@ export default async function Portal({ searchParams }: Props) {
           </ul>
         </section>
 
-        <section className="flex flex-col gap-5 rounded-shell border-1.5 border-line bg-cream-card/95 p-7 shadow-shell backdrop-blur-xl">
+        <section className="flex flex-col gap-5 glass-strong rounded-shell p-6 sm:p-7">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 rounded-full border-1.5 border-line bg-paper px-3 py-1.5 text-[12px] font-bold text-plum-body">
               <span className="size-2 rounded-full bg-sprinkle-mint animate-pulse-dot" /> {compact(s.online)} online now

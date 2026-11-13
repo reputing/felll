@@ -17,10 +17,10 @@ export function TopRow({ title, eyebrow, items, href }: { title: string; eyebrow
       </div>
       <div className="scrollbar-none -mx-1 -mt-2 flex snap-x gap-3 overflow-x-auto px-1 pb-1 pt-2">
         {items.slice(0, 10).map((a, i) => (
-          <Link key={a.id} href={`/anime/${a.id}`} className="group w-[148px] flex-none snap-start">
+          <Link key={a.id} href={`/anime/${a.id}`} className="group w-[122px] flex-none snap-start sm:w-[148px]">
             <span className="relative block">
-              <Poster src={a.image} className="aspect-[2/3] rounded-[18px] border-1.5 border-line shadow-poster transition duration-300 group-hover:-translate-y-1 group-hover:border-frost-hot" />
-              <span className="absolute left-1.5 top-1.5 grid h-7 min-w-7 place-items-center rounded-xl bg-black/75 px-1.5 font-mono text-[15px] font-extrabold text-white backdrop-blur">{i + 1}</span>
+              <Poster src={a.image} className="aspect-[2/3] rounded-[18px] border border-[var(--glass-line)] shadow-poster transition duration-300 group-hover:-translate-y-1 group-hover:border-frost-hot" />
+              <span aria-hidden className="rank-num pointer-events-none absolute bottom-2 left-2 text-[44px] sm:text-[52px]">{i + 1}</span>
             </span>
             <div className="mt-2 line-clamp-2 px-0.5 text-[13px] font-extrabold leading-tight">{a.title}</div>
           </Link>

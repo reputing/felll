@@ -27,7 +27,6 @@ const MORE = [
   { href: "/rooms", label: "Watch rooms" },
   { href: "/community", label: "Community" },
 ];
-const ALL = [...PRIMARY, ...MORE];
 
 // The private AI corner (/shh) is intentionally NOT in the nav — it's secret,
 // reached only by typing the URL. hideSlogan hides the cupcake.gg wordmark.
@@ -52,12 +51,10 @@ export function SiteHeader({ user, unread, hideSlogan }: { user: MenuUser; unrea
   }, []);
 
   return (
-    <header className="sticky top-0 z-40 bg-gradient-to-b from-cream from-75% to-transparent px-3 pt-2.5 sm:px-5">
+    <header className="sticky top-0 z-40 px-3 pt-2.5 sm:px-5">
       <div className={cn(
-        "mx-auto flex max-w-[1560px] items-center gap-3 rounded-shell border-1.5 border-line shadow-shell transition-all duration-300 sm:gap-4",
-        scrolled
-          ? "min-h-[56px] bg-cream-card/55 py-1.5 pl-5 pr-2.5 backdrop-blur-2xl backdrop-saturate-150 sm:pl-6"
-          : "min-h-[72px] bg-cream-card/70 py-2.5 pl-5 pr-2.5 backdrop-blur-2xl backdrop-saturate-150 sm:pl-7",
+        "glass-strong mx-auto flex max-w-[1560px] items-center gap-2 rounded-shell transition-all duration-300 sm:gap-4",
+        scrolled ? "min-h-[54px] py-1.5 pl-3 pr-2 sm:min-h-[56px] sm:pl-6 sm:pr-2.5" : "min-h-[60px] py-2 pl-3 pr-2 sm:min-h-[72px] sm:py-2.5 sm:pl-7 sm:pr-2.5",
       )}>
         <Link href="/home" aria-label="cupcake.gg home" className="flex flex-none items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -96,14 +93,11 @@ export function SiteHeader({ user, unread, hideSlogan }: { user: MenuUser; unrea
             </Menu.Portal>
           </Menu.Root>
         </nav>
-        <div className="flex-1" />
-        <button type="button" onClick={() => set({ palette: true })} className="group relative hidden h-11 min-w-[150px] flex-[0_1_300px] items-center overflow-hidden whitespace-nowrap rounded-full border-1.5 border-line bg-paper pl-[42px] pr-[60px] text-left text-sm font-medium text-plum-faint hover:border-frost-hot md:flex">
+        <div className="hidden flex-1 md:block" />
+        <button type="button" onClick={() => set({ palette: true })} className="group relative flex h-11 min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap rounded-full border border-[var(--glass-line)] bg-black/[.06] pl-[40px] pr-3 text-left text-sm font-medium text-plum-muted transition hover:border-frost-hot md:min-w-[150px] md:flex-[0_1_300px] md:pr-[60px] dark:bg-white/[.04]">
           <Search aria-hidden className="absolute left-4 size-[17px] text-plum-muted" strokeWidth={2.2} />
           <span className="truncate">Find your next watch…</span>
-          <kbd className="absolute right-2.5 flex h-6 items-center rounded-[7px] border border-line bg-cream-tint px-[7px] font-mono text-[11.5px] text-plum-muted">⌘K</kbd>
-        </button>
-        <button type="button" onClick={() => set({ palette: true })} aria-label="Search" className="grid size-10 place-items-center rounded-full border-1.5 border-line bg-paper md:hidden">
-          <Search className="size-[17px]" />
+          <kbd className="absolute right-2.5 hidden h-6 items-center md:flex rounded-[7px] border border-line bg-cream-tint px-[7px] font-mono text-[11.5px] text-plum-muted">⌘K</kbd>
         </button>
         {/* The online count + who's-watching list is cramped and intrusive on
             phones, so show it from sm up only. */}
@@ -115,14 +109,6 @@ export function SiteHeader({ user, unread, hideSlogan }: { user: MenuUser; unrea
         <NotificationsBell unread={unread} />
         <UserMenu user={user} />
       </div>
-      <nav aria-label="main" className="scrollbar-none mx-auto mt-2 flex max-w-[1560px] gap-1 overflow-x-auto lg:hidden">
-        {ALL.map((n) => {
-          const on = path === n.href || path.startsWith(n.href + "/");
-          return (
-            <Link key={n.href} href={n.href} className={cn("flex h-9 flex-none items-center rounded-full border-1.5 border-line bg-cream-card px-3.5 text-[13px] font-bold", on && "border-frost-hot bg-frost text-frost-ink")}>{n.label}</Link>
-          );
-        })}
-      </nav>
     </header>
   );
 }

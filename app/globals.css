@@ -31,8 +31,20 @@
   --glow: 194 61 116;
   --checker-a: #fbe1ea;
   --checker-b: #fff7f9;
+  /* glass: translucent surface, a bright 1px rim, and an inner top highlight. Light skins use frosted white. */
+  --glass: rgb(255 255 255 / .5);
+  --glass-strong: rgb(255 255 255 / .72);
+  --glass-line: rgb(255 255 255 / .7);
+  --glass-hi: rgb(255 255 255 / .85);
+  --glass-shadow: 0 14px 34px -18px rgb(var(--glow) / .35);
+  --aurora-1: var(--glow);
+  --aurora-2: 148 121 232;
+  --aurora-3: 79 191 156;
+  --aurora-o: .3;
+  --dock-h: 0px;
   color-scheme: light;
 }
+@media (max-width: 1023px) { :root { --dock-h: 74px; } }
 
 [data-skin="midnight"] {
   /* the default: black and pink */
@@ -63,6 +75,12 @@
   --glow: 255 150 200;
   --checker-a: #151116;
   --checker-b: #0f0c10;
+  --glass: rgb(26 20 30 / .46);
+  --glass-strong: rgb(18 14 22 / .7);
+  --glass-line: rgb(255 255 255 / .11);
+  --glass-hi: rgb(255 255 255 / .17);
+  --glass-shadow: 0 18px 40px -20px rgb(0 0 0 / .8);
+  --aurora-o: .42;
   color-scheme: dark;
 }
 
@@ -245,7 +263,7 @@
   *, ::after, ::before { border-color: var(--line); }
   html { background: var(--cream); }
   body {
-    background: var(--cream);
+    background: transparent;
     color: var(--plum);
     font-family: var(--font-sans);
     font-size: 0.875rem;
@@ -303,4 +321,90 @@ html[data-theater] .watch-grid > .watch-side { max-height: 520px; }
   .boot, .boot-slow { animation: none; opacity: 1; }
   .boot-word .nz, .boot-word .nz i, .boot-say b { animation: none; }
   .boot-word .kr { display: none; }
+}
+
+
+/* ------------------------------------------------------------------------------------------------------------------
+   Glass. A surface that lets the aurora behind it show through, with a bright rim and an inner highlight. Used for the
+   header, the dock, the hero panel and the popular board; not for every card (backdrop blur is not free on phones).
+   ------------------------------------------------------------------------------------------------------------------ */
+@utility glass {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--glass-hi) 34%, transparent), transparent 52%), var(--glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.7);
+  backdrop-filter: blur(18px) saturate(1.7);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow);
+}
+@utility glass-strong {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--glass-hi) 30%, transparent), transparent 55%), var(--glass-strong);
+  -webkit-backdrop-filter: blur(26px) saturate(1.8);
+  backdrop-filter: blur(26px) saturate(1.8);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass, .glass-strong { background: var(--cream-card); }
+}
+
+/* The ambient light behind everything: three slow, blurred colour fields. It is what the glass has to blur. */
+.aurora { position: fixed; inset: 0; z-index: -10; overflow: hidden; pointer-events: none; }
+.aurora i { position: absolute; border-radius: 9999px; opacity: var(--aurora-o); filter: blur(64px); will-change: transform; animation: aurora-drift 28s ease-in-out infinite alternate; }
+.aurora i:nth-child(1) { width: 62vmax; height: 62vmax; left: -22vmax; top: -26vmax; background: radial-gradient(circle, rgb(var(--aurora-1) / .9), transparent 66%); }
+.aurora i:nth-child(2) { width: 54vmax; height: 54vmax; right: -20vmax; top: 8vmax; background: radial-gradient(circle, rgb(var(--aurora-2) / .85), transparent 66%); animation-duration: 34s; animation-delay: -9s; }
+.aurora i:nth-child(3) { width: 48vmax; height: 48vmax; left: 18vmax; bottom: -26vmax; background: radial-gradient(circle, rgb(var(--aurora-3) / .6), transparent 66%); animation-duration: 40s; animation-delay: -17s; }
+@keyframes aurora-drift { from { transform: translate3d(0, 0, 0) scale(1); } to { transform: translate3d(5vmax, 4vmax, 0) scale(1.14); } }
+@media (max-width: 639px) { .aurora i { filter: blur(48px); } .aurora i:nth-child(3) { display: none; } }
+
+/* --- motion, in the spirit of the 21st.dev / Magic UI set: scroll reveal, travelling border light, text shimmer -------- */
+@property --beam-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+@keyframes beam-spin { to { --beam-angle: 360deg; } }
+/* a light that travels round the edge of a card (BorderBeam). Put it on a positioned, overflow-visible element. */
+.beam { position: relative; }
+.beam::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
+  background: conic-gradient(from var(--beam-angle), transparent 0 70%, var(--frost) 84%, #fff 92%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: beam-spin 7s linear infinite;
+}
+@keyframes text-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.text-shimmer {
+  background: linear-gradient(100deg, var(--frost-deep) 30%, var(--frost) 45%, #fff 50%, var(--frost) 55%, var(--frost-deep) 70%) 0 0 / 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: text-shimmer 4.5s linear infinite;
+}
+/* BlurFade: content eases in, un-blurring, as it scrolls into view (components/fx/blur-fade.tsx adds .in) */
+.bf { opacity: 0; filter: blur(8px); transform: translateY(14px); transition: opacity .7s cubic-bezier(.2,.8,.2,1), filter .7s cubic-bezier(.2,.8,.2,1), transform .7s cubic-bezier(.2,.8,.2,1); transition-delay: var(--bf-d, 0ms); }
+.bf.in { opacity: 1; filter: none; transform: none; }
+/* a number set big behind a poster (the Top 10 rows) */
+.rank-num { font-weight: 900; line-height: .8; letter-spacing: -.06em; color: rgb(0 0 0 / .32); -webkit-text-stroke: 2px var(--frost); paint-order: stroke fill; text-shadow: 0 4px 14px rgb(0 0 0 / .55); }
+@media (prefers-reduced-motion: reduce) {
+  .aurora i, .beam::after, .text-shimmer { animation: none !important; }
+  .bf { opacity: 1; filter: none; transform: none; transition: none; }
+}
+
+/* --- Loading screen: a glass card with the mascot and orbiting sprinkles. Fades in only after a beat, so a quick load never flashes it. --- */
+.boot2 { display: grid; place-items: center; gap: 14px; min-height: min(70vh, 600px); text-align: center; opacity: 0; animation: boot-in .35s ease .12s forwards; }
+.boot2-card { display: grid; justify-items: center; gap: 14px; width: min(88vw, 340px); padding: 30px 26px 24px; border-radius: 32px; }
+.boot2-orbit { position: relative; width: 140px; height: 140px; display: grid; place-items: center; }
+.boot2-orbit img { width: 82px; height: 82px; position: relative; z-index: 2; filter: drop-shadow(0 10px 22px rgb(var(--glow) / .5)); animation: boot2-bob 2.4s ease-in-out infinite; }
+.boot2-orbit .orb { position: absolute; inset: 0; border-radius: 9999px; border: 1.5px dashed color-mix(in srgb, var(--frost) 55%, transparent); animation: spin 18s linear infinite; }
+.boot2-orbit .orb.o2 { inset: 16px; border-style: solid; border-color: color-mix(in srgb, var(--frost) 22%, transparent); animation-duration: 11s; animation-direction: reverse; }
+.boot2-orbit .halo { position: absolute; inset: 22px; border-radius: 9999px; background: radial-gradient(circle, rgb(var(--glow) / .5), transparent 68%); filter: blur(10px); animation: boot2-pulse 2.4s ease-in-out infinite; }
+.boot2-orbit .dot { position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px; border-radius: 9999px; background: var(--c, var(--frost)); box-shadow: 0 0 12px var(--c, var(--frost)); animation: boot2-orbit 5.5s linear infinite; animation-delay: var(--d, 0s); }
+.boot2-word { font-size: 30px; font-weight: 900; letter-spacing: -.05em; line-height: 1; }
+.boot2-word span { -webkit-text-fill-color: var(--plum-faint); font-weight: 800; }
+.boot2-bar { width: 100%; height: 6px; border-radius: 9999px; overflow: hidden; background: color-mix(in srgb, var(--plum) 10%, transparent); }
+.boot2-bar b { display: block; height: 100%; width: 40%; border-radius: inherit; background: linear-gradient(90deg, transparent, var(--frost), #fff, var(--frost), transparent); animation: boot2-bar 1.5s cubic-bezier(.45,0,.25,1) infinite; }
+.boot2-say { position: relative; height: 20px; width: 100%; margin: 0; font-size: 13.5px; font-weight: 700; color: var(--plum-muted); }
+.boot2-say span { position: absolute; inset: 0; opacity: 0; animation: boot2-say 7.5s ease-in-out infinite; }
+.boot2-say span:nth-child(2) { animation-delay: 2.5s; } .boot2-say span:nth-child(3) { animation-delay: 5s; }
+@keyframes boot2-bob { 0%,100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-8px) rotate(3deg); } }
+@keyframes boot2-pulse { 0%,100% { opacity: .55; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.1); } }
+@keyframes boot2-orbit { from { transform: rotate(0deg) translateX(66px) rotate(0deg); } to { transform: rotate(360deg) translateX(66px) rotate(-360deg); } }
+@keyframes boot2-bar { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+@keyframes boot2-say { 0% { opacity: 0; transform: translateY(6px); } 6%, 30% { opacity: 1; transform: none; } 36%, 100% { opacity: 0; transform: translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) {
+  .boot2 { animation: none; opacity: 1; }
+  .boot2-orbit img, .boot2-orbit .orb, .boot2-orbit .halo, .boot2-orbit .dot, .boot2-bar b { animation: none; }
+  .boot2-say span:first-child { opacity: 1; animation: none; }
 }

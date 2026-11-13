@@ -12,7 +12,8 @@ import { MoviesHomeRail } from "@/components/movies/home-rail";
 import { continueWatching } from "@/lib/movie-user";
 import { movieKeep } from "@/lib/movie-resume";
 import { FreshSchedule, type Slot } from "@/components/home/fresh-schedule";
-import { TopRow } from "@/components/home/top-row";
+import { PopularTabs } from "@/components/home/popular-tabs";
+import { popularBoards } from "@/lib/popular";
 import { Shelf, ShelfSkeleton, type ShelfItem } from "@/components/shelf";
 
 export const metadata = { title: "Explore" };
@@ -21,7 +22,7 @@ const toItems = (xs: Anime[]): ShelfItem[] => xs.map((a) => ({ id: a.id, title: 
 
 export default async function Home() {
   const me = await requireMember();
-  const [{ trending, season, top, popular }, catalogTop, resume, local] = await Promise.all([
+  const [{ trending, season, top, popular }, catalogTop, resume] = await Promise.all([
     getHome(),
     getCatalogTop(300),
     all<Resume>(
@@ -29,10 +30,6 @@ export default async function Home() {
        where user_id = ? and updated_at = (select max(updated_at) from watch_progress where user_id = w.user_id and mal_id = w.mal_id)
        order by updated_at desc limit 8`,
       me.id,
-    ),
-    all<{ mal_id: number; title: string; image: string | null; views: number }>(
-      `select mal_id, max(title) as title, max(image) as image, sum(views) as views from daily_views
-       where day >= date('now', '-7 days') group by mal_id order by views desc limit 10`,
     ),
   ]);
 
@@ -64,7 +61,7 @@ export default async function Home() {
       const at = nextAiring(a, since);
       return at ? [{ id: a.id, title: a.title, poster: a.posterSm, color: a.color, at, ep: episodeAt(a, at) }] : [];
     });
-  const ranked: ShelfItem[] = local.map((r) => ({ id: r.mal_id, title: r.title, image: r.image }));
+  const boards = await popularBoards(catalogTop, 10);
 
   // Top genres across the pool → a content row each (Netflix's "Because you
   // watch X" / genre rows), replacing the old browse-by-genre sidebar.
@@ -79,7 +76,6 @@ export default async function Home() {
     { id: "keep-watching", label: "Keep watching", node: <KeepWatching items={keep} historyHref={moviesKeep.length > keepAnime.length ? "/movies/history" : "/box/history"} /> },
     { id: "keep-reading", label: "Keep reading", node: <MangaKeepReading /> },
     { id: "queue", label: "Your queue", node: <QueueRail /> },
-    { id: "top10", label: "Top 10 this week", node: <TopRow eyebrow="Most played here" title="Top 10 this week" items={ranked.length ? ranked : toItems(trending)} href="/rankings" /> },
     { id: "trending", label: "Trending", node: <Shelf eyebrow="Hot right now" title="Trending" items={toItems(trending)} href="/browse" /> },
     { id: "for-you", label: "For you", node: <Suspense fallback={<ShelfSkeleton />}><ForYou userId={me.id} /></Suspense> },
     { id: "season", label: "New this season", node: <Shelf eyebrow="Just dropped" title="New this season" items={toItems(season)} href="/seasonal" /> },
@@ -100,8 +96,9 @@ export default async function Home() {
       ) : (
         // One column, one rhythm: a full-width hero, then nothing but rows —
         // hero and rows share the same container so every left edge lines up.
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-9 px-4 pb-16 pt-4 sm:px-6">
+        <div className="mx-auto flex max-w-[1500px] flex-col gap-7 px-3 pb-16 pt-3 sm:gap-9 sm:px-6 sm:pt-4">
           <Hero items={trending.slice(0, 5)} />
+          <PopularTabs boards={boards} />
           <HomeSections sections={sections} />
         </div>
       )}

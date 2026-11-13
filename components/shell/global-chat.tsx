@@ -124,7 +124,7 @@ export function GlobalChat({ me }: { me: string }) {
     <>
       {!open && (
         <button type="button" onClick={() => setOpen(true)} aria-label="Open chat"
-          className="fixed bottom-4 right-4 z-40 flex h-12 items-center gap-2 rounded-full border-1.5 border-line bg-cream-card px-4 font-extrabold text-frost-text shadow-halo transition hover:border-frost-hot sm:bottom-6 sm:right-6">
+          className="fixed bottom-[calc(var(--dock-h)+env(safe-area-inset-bottom)+14px)] right-4 z-40 flex h-12 items-center gap-2 rounded-full border-1.5 border-line bg-cream-card px-4 font-extrabold text-frost-text shadow-halo transition hover:border-frost-hot sm:bottom-6 sm:right-6">
           <MessageCircle className="size-5" />
           <span className="hidden text-[13px] sm:inline">Chat</span>
           {unseen > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-frost-hot px-1 text-[11px] font-extrabold text-white">{unseen > 99 ? "99+" : unseen}</span>}
