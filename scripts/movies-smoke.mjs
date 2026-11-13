@@ -32,7 +32,7 @@ for (const slug of slugs) {
     // the control bar clock reads "0:12 / 1:48:00" once cinesrc reports a duration
     const t = await p.locator("span.font-mono.tabular-nums").first().textContent().catch(() => "");
     if (/\/ \d+:\d\d/.test(t) && !/\/ 0:00\s*$/.test(t)) { state = "plays"; break; }
-    if (await p.getByText("This one is taking too long").count()) { state = "stuck"; break; }
+    if (await p.getByText(/taking too long|find this one right now|isn.t playing for people/).count()) { state = "stuck"; break; }
     if (await p.getByText("That page wandered off").count()) { state = "page error"; break; }
   }
   if (state !== "plays") bad++;

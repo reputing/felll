@@ -11,6 +11,7 @@ import { Episodes } from "@/components/movies/episodes";
 import { Cast } from "@/components/movies/cast";
 import { Comments } from "@/components/comments/comments";
 import { cinemaPing } from "@/lib/cinema";
+import { MISSING_THRESHOLD, missingReports } from "@/lib/movie-missing";
 import { clock, cn } from "@/lib/utils";
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ se?: string; ep?: string }> };
@@ -118,6 +119,8 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
       if (n) pick = { se: n.se, ep: n.ep, at: 0 };
     }
   }
+  // members who found that this one does not start (lib/movie-missing.ts): when enough did, the player is not auto-loaded
+  const missing = imdb ? await missingReports(imdb, se ?? 0, ep ?? 0) : 0;
   const [embeds, story, avg, similar, also] = await Promise.all([
     movieEmbeds(d.media, { imdb: d.imdbId, tmdb: d.tmdbId }, se, ep, resume),
     movieStoryMap(d.media, d.id).catch(() => null),
@@ -148,7 +151,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
 
       {streamSrc || embeds.length ? (
         <MoviePlayer
-          key={`${slug}-${se ?? 0}-${ep ?? 0}`} streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${tv ? `-s${se}e${ep}` : ""}`}
+          key={`${slug}-${se ?? 0}-${ep ?? 0}`} trailer={d.trailer} knownMissing={missing >= MISSING_THRESHOLD} streamSrc={streamSrc} embeds={embeds} poster={d.backdrop ?? d.poster} subKey={`m:${slug}${tv ? `-s${se}e${ep}` : ""}`}
           prev={prevEp ? { href: `/movies/${slug}?se=${prevEp.se}&ep=${prevEp.ep}`, label: `${prevEp.se !== se ? `S${prevEp.se} ` : ""}Episode ${prevEp.ep}` } : undefined}
           next={nextEp ? { href: `/movies/${slug}?se=${nextEp.se}&ep=${nextEp.ep}`, label: `${nextEp.se !== se ? `S${nextEp.se} ` : ""}Episode ${nextEp.ep}` } : undefined}
           track={imdb && ready ? { tmdb: d.tmdbId || undefined, imdb, media: d.media, season: se, episode: ep, title: d.title, poster: d.poster, year: d.year, epTitle: curEp?.title ?? null, episodes: totalAired, resume } : undefined}

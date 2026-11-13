@@ -25,7 +25,7 @@ export interface PlayTrack { tmdb?: number; imdb: string; media: "movie" | "tv";
 
 const mmss = (s: number) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
 
-export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, next, prev }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack; next?: { href: string; label: string }; prev?: { href: string; label: string } }) {
+export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, next, prev, trailer, knownMissing }: { streamSrc?: string | null; embeds?: MovieEmbed[]; poster?: string | null; subKey?: string; track?: PlayTrack; next?: { href: string; label: string }; prev?: { href: string; label: string }; trailer?: string | null; knownMissing?: boolean }) {
   const subtitles: MovieStream["subtitles"] = []; // 8Stream carries no subtitles
   // The direct 8Stream sources resolve lazily (see effect below), so the page
   // never blocks on them. "Cupcake" is offered optimistically until proven dead.
@@ -54,6 +54,17 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   // never said ready" is the only signal. After 25 seconds we stop pretending and offer another server.
   const [alive, setAlive] = useState(false);
   const [stuck, setStuck] = useState(false);
+  // Members who already hit this title not starting made the page stop auto-loading it; "try anyway" loads it regardless.
+  const [tryAnyway, setTryAnyway] = useState(false);
+  // When the player gives up, count it (once per title per visit), so a title nobody can play is noticed. Only the title id is sent.
+  const reported = useRef("");
+  useEffect(() => {
+    if (!stuck || !track) return;
+    const k = `${track.imdb}:${track.season ?? 0}:${track.episode ?? 0}`;
+    if (reported.current === k) return;
+    reported.current = k;
+    void fetch("/api/movie/missing", { method: "POST", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ imdb: track.imdb, season: track.season ?? 0, episode: track.episode ?? 0 }) }).catch(() => {});
+  }, [stuck, track?.imdb, track?.season, track?.episode]); // eslint-disable-line react-hooks/exhaustive-deps
   // switching server reloads the frame on that server at the spot you are at; CineSrc takes both as options (lastserver, t)
   const [pick, setPick] = useState<{ server: string; at: number } | null>(null);
   const prefs = useRef<Prefs>({ autoNext: true, stopAfter: false });
@@ -270,7 +281,19 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
 
   return (
     <div className="flex flex-col gap-2.5">
-      {askEmbed && curEmbed ? (
+      {knownMissing && !tryAnyway ? (
+        // members already found that this one does not start, so it is not loaded for everyone to wait on (it expires after a week)
+        <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center">
+          <div className="max-w-[440px]">
+            <p className="text-[17px] font-extrabold text-night-text">This one isn’t playing for people right now</p>
+            <p className="mt-2 text-[13.5px] leading-relaxed text-night-muted">Several members tried and it didn’t start, so it probably isn’t on our servers yet. New titles often turn up later.</p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <button type="button" onClick={() => setTryAnyway(true)} className="h-10 rounded-full border-1.5 border-night-line px-5 text-[13px] font-extrabold text-night-text hover:border-frost-hot">Try anyway</button>
+              {trailer && <a href={`https://www.youtube.com/watch?v=${trailer}`} target="_blank" rel="noopener noreferrer" className="flex h-10 items-center rounded-full border-1.5 border-frost-hot bg-frost px-5 text-[13px] font-extrabold text-frost-ink">Watch the trailer</a>}
+            </div>
+          </div>
+        </div>
+      ) : askEmbed && curEmbed ? (
         <div className="grid aspect-video w-full place-items-center rounded-[26px] border-1.5 border-night-line bg-night p-6 text-center">
           <div className="max-w-[460px]">
             <p className="text-[17px] font-extrabold text-night-text">{curEmbed.name} is a third-party player</p>
@@ -311,11 +334,12 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
           {stuck && curEmbed.sandbox && (
             <div className="absolute inset-0 z-[40] grid place-items-center bg-night p-6 text-center">
               <div className="max-w-[420px]">
-                <p className="text-[17px] font-extrabold text-white">This one is taking too long</p>
-                <p className="mt-2 text-[13.5px] leading-relaxed text-white/65">The server isn’t finding it. Another server often has it.</p>
+                <p className="text-[17px] font-extrabold text-white">We can’t find this one right now</p>
+                <p className="mt-2 text-[13.5px] leading-relaxed text-white/65">It may not be on our servers yet. The player already tries all of them, so another server rarely helps, but you can try. We’ve noted that it didn’t start.</p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
                   <button type="button" onClick={() => { const i = ZEUS_SERVERS.findIndex((x) => x.id === (pick?.server ?? "nebula")); setPick({ server: ZEUS_SERVERS[(i + 1) % ZEUS_SERVERS.length].id, at: 0 }); }} className="h-10 rounded-full bg-frost px-5 text-[13px] font-extrabold text-frost-ink">Try another server</button>
                   <button type="button" onClick={() => setReloads((n) => n + 1)} className="h-10 rounded-full border-1.5 border-white/30 px-5 text-[13px] font-bold text-white hover:bg-white/10">Reload</button>
+                  {trailer && <a href={`https://www.youtube.com/watch?v=${trailer}`} target="_blank" rel="noopener noreferrer" className="flex h-10 items-center rounded-full border-1.5 border-white/30 px-5 text-[13px] font-bold text-white hover:bg-white/10">Watch the trailer</a>}
                 </div>
               </div>
             </div>
