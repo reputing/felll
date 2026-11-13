@@ -32,7 +32,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const [sources, setSources] = useState<MovieSource[] | null>(null); // null = not loaded yet
   const [nativeDead, setNativeDead] = useState(false);
   const hasNative = !!streamSrc;
-  const servers = [...(hasNative ? [{ k: "cupcake", label: "Zeus", third: false }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name, third: true }))];
+  const servers = [...(hasNative ? [{ k: "cupcake", label: "Hades", third: false }] : []), ...embeds.map((e) => ({ k: e.name, label: e.name, third: true }))];
   const [server, setServer] = useState<string>(streamSrc ? "cupcake" : embeds[0]?.name ?? "cupcake");
   const curEmbed = embeds.find((e) => e.name === server) ?? null;
   // A third-party player is never loaded on its own: they are the ones that open ad tabs and redirects, and no sandbox can
@@ -149,8 +149,8 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
       const got: MovieSource[] = (d?.sources ?? []).map((s: { label: string; url: string; format?: string; proxy?: string }) => ({ label: s.label, url: s.url, format: s.format === "hls" ? ("hls" as const) : ("mp4" as const), proxy: s.proxy }));
       setSources(got);
       if (got.length) setCur(got[0]);
-      else setNativeDead(true);
-    }).catch(() => { if (on) setNativeDead(true); });
+      else { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); } // nothing resolved: fall to the first (sandboxed) embed
+    }).catch(() => { if (on) { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); } });
     return () => { on = false; };
   }, [useEmbed, streamSrc, sources, embeds]);
 
@@ -300,7 +300,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
             <p className="mt-2 text-[13.5px] leading-relaxed text-night-muted">It is the way to watch some titles, but it is not ours: it can open ad tabs, and the site behind it decides what it shows. Zeus is our own player and has no ads.</p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <button type="button" onClick={() => setOk(true)} className="h-10 rounded-full border-1.5 border-frost-hot bg-frost px-5 text-[13px] font-extrabold text-frost-ink">Play with {curEmbed.name}</button>
-              {hasNative && <button type="button" onClick={() => setServer("cupcake")} className="h-10 rounded-full border-1.5 border-night-line px-5 text-[13px] font-extrabold text-night-text">Back to Zeus</button>}
+              {hasNative && <button type="button" onClick={() => setServer("cupcake")} className="h-10 rounded-full border-1.5 border-night-line px-5 text-[13px] font-extrabold text-night-text">Back to Hades</button>}
             </div>
           </div>
         </div>

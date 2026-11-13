@@ -93,6 +93,8 @@ interface CloudflareEnv {
   TMDB_API_KEY?: string;
   /** A self-hosted 8Stream API (github.com/himanshu8443/8StreamApi) for movie HLS */
   STREAM8_API_URL?: string;
+  MOVIE_RESOLVER_URL?: string;
+  MOVIE_RESOLVER_KEY?: string;
   /** Override the VidCore embed host (it moves) */
   VIDCORE_EMBED_BASE?: string;
   /** The code that unlocks the private AI corner (/shh). Default "SEMINOLE". */

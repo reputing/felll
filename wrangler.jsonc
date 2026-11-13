@@ -66,6 +66,10 @@
     "VORTEXSCANS_API_URL": "https://vortexscans-api.matthewsjakael.workers.dev",
     "DOUJIN_API_URL": "https://doujin-api.matthewsjakael.workers.dev",
     // Embed host for the movie players (overridable since it moves).
-    "VIDCORE_EMBED_BASE": "https://vidcore.org"
+    "VIDCORE_EMBED_BASE": "https://vidcore.org",
+    // Ad-free native movie/TV sources (Lamda + AdRock) resolved in a container.
+    // Deploy movie-resolver-server/ (npm run movie-resolver:container:deploy) and
+    // set MOVIE_RESOLVER_KEY with `wrangler secret put`.
+    "MOVIE_RESOLVER_URL": "https://movie-resolver-api.matthewsjakael.workers.dev"
   }
 }

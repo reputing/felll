@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "movie-resolver-api",
+  "main": "container-worker.js",
+  "compatibility_date": "2025-09-01",
+  // Secrets (wrangler secret put -c movie-resolver-server/wrangler.jsonc):
+  //   RESOLVER_KEY  shared with cupcake (its MOVIE_RESOLVER_KEY); every request needs it
+  //   RELAY_SECRET  signs the short-lived media tokens
+  "containers": [
+    {
+      "class_name": "MovieResolverContainer",
+      "image": "./Dockerfile",
+      // Stateless (tokens are signed, not stored), so more than one is fine.
+      "max_instances": 2,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "MovieResolverContainer", "name": "MOVIE_RESOLVER_CONTAINER" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MovieResolverContainer"] }],
+  "observability": { "enabled": true }
+}

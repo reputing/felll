@@ -13,6 +13,7 @@ import { Comments } from "@/components/comments/comments";
 import { cinemaPing } from "@/lib/cinema";
 import { MISSING_THRESHOLD, missingReports } from "@/lib/movie-missing";
 import { clock, cn } from "@/lib/utils";
+import { nativeEnabled } from "@/lib/movie-native";
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ se?: string; ep?: string }> };
 
@@ -138,7 +139,9 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   const alsoSlugs = new Set(also.map((a) => `${a.media}-${a.imdb_id}`));
   const similarShown = similar.filter((m) => !alsoSlugs.has(m.slug));
 
-  const streamSrc: string | null = null; // the old direct source (Moviebox) is no longer used by the player
+  // Hades: ad-free native HLS (movie-resolver-server), keyed by TMDB id, resolved lazily in the player. Null without a TMDB id or
+  // when the resolver is not configured, and then the player is just the embed servers as before.
+  const streamSrc: string | null = d.tmdbId && (await nativeEnabled()) ? `/api/movie/native?type=${d.media}&id=${d.tmdbId}${tv ? `&s=${se}&e=${ep}` : ""}` : null;
   const watchedEps = mine.filter((m) => m.watched && m.season === se).map((m) => m.episode);
   const base = { imdb, title: d.title, poster: d.poster, year: d.year, episodes: totalAired };
 
