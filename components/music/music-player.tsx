@@ -139,7 +139,7 @@ export function MusicPlayer() {
   // collapsed: a small pill. Nothing queued: just the note.
   if (!open) {
     return (
-      <div className="fixed bottom-4 left-4 z-40 sm:bottom-6 sm:left-6">
+      <div className="fixed bottom-[calc(var(--dock-h)+env(safe-area-inset-bottom)+14px)] left-4 z-40 sm:bottom-[calc(var(--dock-h)+env(safe-area-inset-bottom)+24px)] sm:left-6">
         {hint && !track && (
           <button type="button" onClick={() => { dismissHint(); setOpen(true); }} className="mb-2 block max-w-[220px] rounded-2xl border-1.5 border-frost-hot bg-cream-card px-3.5 py-2 text-left text-[12.5px] font-bold shadow-halo animate-in fade-in slide-in-from-bottom-2">
             ♪ Listen to music while you watch. <span className="text-frost-text">Open the player</span>
@@ -163,7 +163,7 @@ export function MusicPlayer() {
   }
 
   return (
-    <div role="dialog" aria-label="Music player" className="fixed bottom-4 left-4 z-40 flex max-h-[min(640px,calc(100svh-2rem))] w-[min(360px,calc(100vw-2rem))] flex-col overflow-hidden rounded-box border-1.5 border-line bg-cream-card shadow-halo animate-in fade-in slide-in-from-bottom-3 sm:bottom-6 sm:left-6">
+    <div role="dialog" aria-label="Music player" className="fixed bottom-[calc(var(--dock-h)+env(safe-area-inset-bottom)+14px)] left-4 z-40 flex max-h-[min(640px,calc(100svh-var(--dock-h)-2rem))] w-[min(360px,calc(100vw-2rem))] flex-col glass-strong overflow-hidden rounded-box shadow-halo animate-in fade-in slide-in-from-bottom-3 sm:bottom-6 sm:left-6">
       <div className="flex items-center gap-2 border-b-1.5 border-line-soft px-4 py-3">
         <Music2 className="size-4 text-frost-hot" /><span className="flex-1 text-[14px] font-extrabold">Music</span>
         <button type="button" onClick={() => setOpen(false)} aria-label="Minimise" className="grid size-8 place-items-center rounded-full hover:bg-cream-tint"><ChevronDown className="size-4" /></button>

@@ -7,10 +7,19 @@ import { jikanOr, normAnime } from "@/lib/jikan";
 import { kuroConfig } from "@/lib/kuro";
 import { compact } from "@/lib/utils";
 import { LoginForm } from "@/components/portal/login-form";
+import { SecretGate } from "@/components/portal/secret-gate";
 import { PosterWall } from "@/components/portal/poster-wall";
 import { Avatar } from "@/components/avatar";
 
-export const metadata = { title: "The portal" };
+// Looks like an outage until the secret key is pressed (components/portal/secret-gate.tsx), so it is not for search engines either.
+const DOWN = "The server is temporarily unable to service your request due to maintenance downtime or capacity problems. Please try again later.";
+export const metadata = {
+  title: { absolute: "503 Service Unavailable" },
+  description: DOWN,
+  robots: { index: false, follow: false },
+  openGraph: { title: "503 Service Unavailable", description: DOWN, siteName: "", images: [] },
+  twitter: { title: "503 Service Unavailable", description: DOWN, images: [] },
+};
 
 const ERRORS: Record<string, string> = {
   expired: "That sign-in link expired. Give it another go.",
@@ -56,6 +65,7 @@ export default async function Portal({ searchParams }: Props) {
   const dev = process.env.NODE_ENV !== "production";
 
   return (
+    <SecretGate open={!!sp.error || !!sp.sso}>
     <main className="relative grid min-h-svh place-items-center overflow-hidden px-4 py-10">
       <PosterWall items={posters} />
       <div aria-hidden className="aurora"><i /><i /><i /></div>
@@ -142,5 +152,6 @@ export default async function Portal({ searchParams }: Props) {
         </section>
       </div>
     </main>
+    </SecretGate>
   );
 }
