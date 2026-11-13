@@ -9,14 +9,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // This is a curtain, not a lock: the sign-in endpoints are still there and still do their own checks.
 const KEY = "cupcake:portal-open";
 
-export function SecretGate({ children, open: forced }: { children: React.ReactNode; open?: boolean }) {
+export function SecretGate({ children, open: forced, locked }: { children: React.ReactNode; open?: boolean; locked?: boolean }) {
   const [open, setOpen] = useState(!!forced);
   const taps = useRef({ n: 0, at: 0 });
 
   const reveal = useCallback(() => { setOpen(true); try { sessionStorage.setItem(KEY, "1"); } catch { /* private mode */ } }, []);
   const hide = useCallback(() => { setOpen(false); try { sessionStorage.removeItem(KEY); } catch { /* */ } }, []);
 
-  useEffect(() => { try { if (sessionStorage.getItem(KEY) === "1") setOpen(true); } catch { /* */ } }, []);
+  // locked: this browser was just signed out from another device, so a sign-in opened earlier in this tab is closed again
+  useEffect(() => { try { if (locked) sessionStorage.removeItem(KEY); else if (sessionStorage.getItem(KEY) === "1") setOpen(true); } catch { /* */ } }, [locked]);
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;

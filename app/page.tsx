@@ -41,7 +41,7 @@ const FEATURES = [
   { Icon: Sparkles, label: "Your page", note: "banner, showcase, skins" },
 ];
 
-type Props = { searchParams: Promise<{ next?: string; error?: string; sso?: string; bye?: string }> };
+type Props = { searchParams: Promise<{ next?: string; error?: string; sso?: string; bye?: string; out?: string }> };
 
 export default async function Portal({ searchParams }: Props) {
   const sp = await searchParams;
@@ -51,7 +51,9 @@ export default async function Portal({ searchParams }: Props) {
   // stranger: they get the real sign-in, never the "unavailable" page.
   const jar = await cookies();
   const returning = jar.has(KNOWN_COOKIE) || jar.has(SESSION_COOKIE) || !!sp.bye;
-  const revokedAt = await revokedNotice();
+  // A device that was signed out from another device gets the "unavailable" page, not the sign-in: its cookies are cleared and it is
+  // a stranger again (app/api/auth/revoked).
+  if (await revokedNotice()) redirect("/api/auth/revoked");
 
   const [wall, stats, faces, cfg] = await Promise.all([
     jikanOr<{ data: unknown[] }>("/top/anime?filter=airing&limit=25&sfw=true", { data: [] }, 3600),
@@ -71,7 +73,7 @@ export default async function Portal({ searchParams }: Props) {
   const dev = process.env.NODE_ENV !== "production";
 
   return (
-    <SecretGate open={returning || !!sp.error || !!sp.sso}>
+    <SecretGate open={!sp.out && (returning || !!sp.error || !!sp.sso)} locked={!!sp.out}>
     <main className="relative grid min-h-svh place-items-center overflow-hidden px-4 py-10">
       <PosterWall items={posters} />
       <div aria-hidden className="aurora"><i /><i /><i /></div>
@@ -123,12 +125,7 @@ export default async function Portal({ searchParams }: Props) {
           </div>
 
           {error && <p role="alert" className="rounded-2xl border-1.5 border-line-hot bg-cream-blush px-4 py-3 text-[13px] font-bold text-frost-deep">{error}</p>}
-          {revokedAt && !error && (
-            <p role="alert" className="rounded-2xl border-1.5 border-line-hot bg-cream-blush px-4 py-3 text-[13px] font-bold text-frost-deep">
-              You were signed out of this device from another device. Sign in again to keep going.
-            </p>
-          )}
-          {sp.bye && !error && !revokedAt && <p className="rounded-2xl bg-cream-tint px-4 py-3 text-[13px] font-bold text-plum-body">Signed out. See you soon.</p>}
+          {sp.bye && !error && <p className="rounded-2xl bg-cream-tint px-4 py-3 text-[13px] font-bold text-plum-body">Signed out. See you soon.</p>}
 
           <Link
             href={`/api/auth/kuro?next=${encodeURIComponent(next)}`}

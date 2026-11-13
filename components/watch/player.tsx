@@ -238,14 +238,24 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     return () => clearTimeout(id);
   }, [sleepMin]);
 
+  // Live copies for the fallback: it is called from timers and player events, which must see the latest lists, not the ones from
+  // the render that started them.
+  const failedRef = useRef(failed);
+  const deadRef = useRef(dead);
+  const currentRef = useRef(current);
+  failedRef.current = failed; deadRef.current = dead; currentRef.current = current;
+  // A server stopped working: mark it, and move to the next one that has not failed and was not found unplayable by the probe
+  // (same audio first). Called by whichever notices first (hls.js, the video element, or the start-up timer), so a second call for
+  // the same server, or one that arrives after the viewer already picked another, does nothing.
   const fallback = useCallback((src: Source) => {
-    setFailed((prev) => {
-      const next = new Set(prev).add(src.id);
-      const cand = sources.find((s) => !next.has(s.id) && s.audio === src.audio) ?? sources.find((s) => !next.has(s.id));
-      if (cand) setCurrent(cand);
-      else setError("This episode won’t play right now. Try again in a little while.");
-      return next;
-    });
+    if (failedRef.current.has(src.id) || currentRef.current?.id !== src.id) return;
+    const next = new Set(failedRef.current).add(src.id);
+    failedRef.current = next;
+    setFailed(next);
+    const usable = (x: Source) => !next.has(x.id) && !deadRef.current.has(x.id);
+    const cand = sources.find((x) => usable(x) && x.audio === src.audio) ?? sources.find(usable);
+    if (cand) { setFlash(`${src.label} didn’t work, trying ${cand.label}`); setCurrent(cand); }
+    else setError("This episode won’t play right now. Try again in a little while.");
   }, [sources]);
 
   // load the chosen source; hls.js only downloads when the browser can't play HLS itself
@@ -253,6 +263,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     const v = video.current;
     if (!v || !current) return;
     let cancelled = false;
+    const cleanups: (() => void)[] = [];
     const resumeAt = v.currentTime > 1 ? v.currentTime : startAt;
     setError(null);
     setLoading(true);
@@ -267,6 +278,15 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       setStreamOutro(data.outro ?? null);
       hls.current?.destroy();
       hls.current = null;
+      // a stream that loads a playlist but never starts (or a native <video> that errors, which has no hls.js to tell us) must
+      // not leave the viewer waiting: if it has not started in 15 seconds, or the element reports an error, try the next server
+      const started = () => { clearTimeout(watchdog); };
+      const failedNow = () => { if (!cancelled) fallback(current); };
+      const watchdog = setTimeout(failedNow, 15_000);
+      v.addEventListener("loadeddata", started, { once: true });
+      v.addEventListener("playing", started, { once: true });
+      v.addEventListener("error", failedNow, { once: true });
+      cleanups.push(() => { clearTimeout(watchdog); v.removeEventListener("loadeddata", started); v.removeEventListener("playing", started); v.removeEventListener("error", failedNow); });
       if (v.canPlayType("application/vnd.apple.mpegurl")) {
         v.src = url;
       } else {
@@ -291,7 +311,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       v.addEventListener("loadedmetadata", onMeta, { once: true });
       v.play().catch(() => {});
     })().catch(() => fallback(current));
-    return () => { cancelled = true; };
+    return () => { cancelled = true; cleanups.forEach((f) => f()); };
   }, [current, fallback, startAt]);
 
   useEffect(() => () => hls.current?.destroy(), []);
