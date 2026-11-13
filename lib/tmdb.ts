@@ -238,6 +238,43 @@ export async function movieEmbeds(media: MovieMedia, ids: TitleIds, se?: number,
   return liveEmbeds(media, ids, se || 1, ep || 1, resume);
 }
 
+// --- numbering ---------------------------------------------------------------------------------------------------------------
+// The catalog here is Cinemeta, which numbers episodes the way IMDb does, but every player is keyed by a TMDB id and takes TMDB's
+// season and episode. They agree for most shows and disagree for some: Ever After High has a four-episode "Season 1" on IMDb that
+// TMDB keeps as specials, so IMDb S4 E11 asked TMDB for a season 4 that only has 9 episodes ("we can't find this one"). TMDB's own
+// seasons page lists the counts without a key, so the two are lined up by episode count, in order.
+/** Episodes per season as TMDB numbers them ({} when TMDB would not say; cached either way so a refusal is not retried per page). */
+async function tmdbSeasonCounts(tmdbId: number): Promise<Record<number, number>> {
+  const got = await cached(`tmdb:seasoncounts:${tmdbId}`, async () => {
+    try {
+      const r = await fetch(`https://www.themoviedb.org/tv/${tmdbId}/seasons`, { headers: { "user-agent": "Mozilla/5.0 (compatible; cupcake)", "accept-language": "en-US" }, signal: AbortSignal.timeout(4000) });
+      if (!r.ok) return {} as Record<number, number>;
+      const html = await r.text();
+      const out: Record<number, number> = {};
+      for (const m of html.matchAll(/(\d+) Episodes[\s\S]{0,700}?Season (\d+) of/g)) out[Number(m[2])] = Number(m[1]);
+      return out;
+    } catch { return {} as Record<number, number>; }
+  }, 12 * 3600);
+  return got ?? {};
+}
+
+/** The season and episode to ask a TMDB-keyed player for, given IMDb numbering. Unchanged when the numberings agree or cannot be lined up. */
+export async function tmdbNumbering(tmdbId: number, episodes: { se: number; ep: number }[], se: number, ep: number): Promise<{ se: number; ep: number }> {
+  if (!tmdbId || !episodes.length || se < 1) return { se, ep };
+  const theirs = await tmdbSeasonCounts(tmdbId);
+  const t = Object.entries(theirs).map(([k, n]) => [Number(k), n] as const).filter(([k]) => k > 0).sort((a, b) => a[0] - b[0]);
+  if (!t.length) return { se, ep };
+  const mine = new Map<number, number>();
+  for (const e of episodes) if (e.se > 0) mine.set(e.se, (mine.get(e.se) ?? 0) + 1);
+  const map = new Map<number, number>();
+  let j = 0;
+  for (const [is, ic] of [...mine.entries()].sort((a, b) => a[0] - b[0])) {
+    if (j < t.length && t[j][1] === ic) { map.set(is, t[j][0]); j += 1; } // an IMDb season TMDB has no match for (the shorts) is skipped
+  }
+  const to = map.get(se);
+  return to ? { se: to, ep } : { se, ep };
+}
+
 // --- story map ---------------------------------------------------------------------------------
 // Where this title sits in its story. A film: the collection it belongs to, in release order
 // (TMDB has no in-universe chronology, so release order is the honest one). A series: its seasons,

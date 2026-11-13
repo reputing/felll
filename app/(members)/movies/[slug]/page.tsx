@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ChevronRight, Clock, Play, Star } from "lucide-react";
 import { requireMember } from "@/lib/auth";
 import { all, first } from "@/lib/db";
-import { movieDetail, movieEmbeds, movieCatalog, movieStoryMap, moviesEnabled, type MovieMedia } from "@/lib/tmdb";
+import { movieDetail, movieEmbeds, movieCatalog, movieStoryMap, moviesEnabled, tmdbNumbering, type MovieMedia } from "@/lib/tmdb";
 import { Poster } from "@/components/poster";
 import { MoviePlayer } from "@/components/movies/player";
 import { TitleActions } from "@/components/movies/title-actions";
@@ -122,8 +122,10 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
   }
   // members who found that this one does not start (lib/movie-missing.ts): when enough did, the player is not auto-loaded
   const missing = imdb ? await missingReports(imdb, se ?? 0, ep ?? 0) : 0;
+  // the players are keyed by TMDB, which numbers some shows' seasons differently from the catalog (see tmdbNumbering)
+  const asked = tv && d.tmdbId && se && ep ? await tmdbNumbering(d.tmdbId, allEps, se, ep) : { se, ep };
   const [embeds, story, avg, similar, also] = await Promise.all([
-    movieEmbeds(d.media, { imdb: d.imdbId, tmdb: d.tmdbId }, se, ep, resume),
+    movieEmbeds(d.media, { imdb: d.imdbId, tmdb: d.tmdbId }, asked.se, asked.ep, resume),
     movieStoryMap(d.media, d.id).catch(() => null),
     imdb ? first<{ a: number | null; n: number }>("select avg(score) as a, count(score) as n from movie_library where imdb_id = ?", imdb).catch(() => null) : Promise.resolve(null),
     movieCatalog({ type: d.media, genre: d.genres[0], sort: "popular" }).then((r) => r.items.filter((i) => i.slug !== slug).slice(0, 14)).catch(() => []),
@@ -141,7 +143,7 @@ export default async function MovieWatchPage({ params, searchParams }: Props) {
 
   // Hades: ad-free native HLS (movie-resolver-server), keyed by TMDB id, resolved lazily in the player. Null without a TMDB id or
   // when the resolver is not configured, and then the player is just the embed servers as before.
-  const streamSrc: string | null = d.tmdbId && (await nativeEnabled()) ? `/api/movie/native?type=${d.media}&id=${d.tmdbId}${tv ? `&s=${se}&e=${ep}` : ""}` : null;
+  const streamSrc: string | null = d.tmdbId && (await nativeEnabled()) ? `/api/movie/native?type=${d.media}&id=${d.tmdbId}${tv ? `&s=${asked.se}&e=${asked.ep}` : ""}` : null;
   const watchedEps = mine.filter((m) => m.watched && m.season === se).map((m) => m.episode);
   const base = { imdb, title: d.title, poster: d.poster, year: d.year, episodes: totalAired };
 
