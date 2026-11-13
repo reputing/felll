@@ -1,13 +1,16 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { db, first, now, run } from "./db";
+import { all, db, first, now, run } from "./db";
 import { kuroConfig, type KuroProfile } from "./kuro";
 
 // Our own session, started once kuro has vouched for someone (lib/kuro.ts).
 // The cookie holds a random token; D1 stores only its SHA-256.
 
 export const SESSION_COOKIE = "cupcake_session";
+/** Set once someone has signed in on this browser and never cleared by signing out: the front door shows a returning member the real
+ *  sign-in instead of the "unavailable" page (see components/portal/secret-gate.tsx). It carries no identity. */
+export const KNOWN_COOKIE = "cupcake_known";
 const SESSION_DAYS = 30;
 
 export interface User {
@@ -63,6 +66,7 @@ export async function startSession(p: KuroProfile, userAgent: string): Promise<s
       .bind(await sha256(t), p.uid, now() + SESSION_DAYS * 86400, userAgent.slice(0, 200)),
     d.prepare("delete from sessions where expires_at < unixepoch()"),
   ]);
+  try { (await cookies()).set({ name: KNOWN_COOKIE, value: "1", httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 400 * 86400 }); } catch { /* not in a request that can set cookies */ }
   return t;
 }
 
@@ -128,4 +132,39 @@ export function safeNext(to: string | null | undefined): string {
   // we send people to has a control character in it.
   if (/[\u0000-\u001f\u007f]/.test(to)) return "/home";
   return to;
+}
+
+// --- your signed-in devices -------------------------------------------------------------------------------------------------
+// A session is one row per sign-in. The public handle for a row is the first 16 characters of its id (itself a SHA-256 of the
+// cookie, so it cannot be used to sign in), and every lookup is also scoped to the member's own user id.
+export interface DeviceSession { sid: string; created_at: number; expires_at: number; user_agent: string; current: boolean }
+
+export async function mySessions(userId: string): Promise<DeviceSession[]> {
+  const t = (await cookies()).get(SESSION_COOKIE)?.value;
+  const mine = t ? await sha256(t) : "";
+  const rows = await all<{ id: string; created_at: number; expires_at: number; user_agent: string }>(
+    "select id, created_at, expires_at, user_agent from sessions where user_id = ? and expires_at > unixepoch() order by created_at desc limit 50",
+    userId,
+  );
+  return rows.map((r) => ({ sid: r.id.slice(0, 16), created_at: r.created_at, expires_at: r.expires_at, user_agent: r.user_agent, current: r.id === mine }));
+}
+
+/** Sign one device out. Returns whether it was the device making the request. */
+export async function revokeSession(userId: string, sid: string): Promise<{ ok: boolean; self: boolean }> {
+  if (!/^[A-Za-z0-9_-]{16}$/.test(sid)) return { ok: false, self: false };
+  const t = (await cookies()).get(SESSION_COOKIE)?.value;
+  const mine = t ? await sha256(t) : "";
+  const row = await first<{ id: string }>("select id from sessions where user_id = ? and substr(id, 1, 16) = ?", userId, sid);
+  if (!row) return { ok: false, self: false };
+  await run("delete from sessions where id = ? and user_id = ?", row.id, userId);
+  return { ok: true, self: row.id === mine };
+}
+
+/** Sign out every device but this one. Returns how many were signed out. */
+export async function revokeOthers(userId: string): Promise<number> {
+  const t = (await cookies()).get(SESSION_COOKIE)?.value;
+  const mine = t ? await sha256(t) : "";
+  const before = await first<{ n: number }>("select count(*) as n from sessions where user_id = ? and id != ?", userId, mine);
+  await run("delete from sessions where user_id = ? and id != ?", userId, mine);
+  return before?.n ?? 0;
 }

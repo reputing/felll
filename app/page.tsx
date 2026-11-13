@@ -1,7 +1,8 @@
 import { ArrowRight, CalendarClock, Heart, MessagesSquare, Radio, Sparkles, Star, Tv } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { currentUser, safeNext } from "@/lib/auth";
+import { cookies } from "next/headers";
+import { currentUser, KNOWN_COOKIE, SESSION_COOKIE, safeNext } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { jikanOr, normAnime } from "@/lib/jikan";
 import { kuroConfig } from "@/lib/kuro";
@@ -46,6 +47,10 @@ export default async function Portal({ searchParams }: Props) {
   const sp = await searchParams;
   const next = safeNext(sp.next);
   if (await currentUser()) redirect(next);
+  // Someone who has signed in on this browser before (or whose session was just ended, here or from another device) is a member, not a
+  // stranger: they get the real sign-in, never the "unavailable" page.
+  const jar = await cookies();
+  const returning = jar.has(KNOWN_COOKIE) || jar.has(SESSION_COOKIE) || !!sp.bye;
 
   const [wall, stats, faces, cfg] = await Promise.all([
     jikanOr<{ data: unknown[] }>("/top/anime?filter=airing&limit=25&sfw=true", { data: [] }, 3600),
@@ -65,7 +70,7 @@ export default async function Portal({ searchParams }: Props) {
   const dev = process.env.NODE_ENV !== "production";
 
   return (
-    <SecretGate open={!!sp.error || !!sp.sso}>
+    <SecretGate open={returning || !!sp.error || !!sp.sso}>
     <main className="relative grid min-h-svh place-items-center overflow-hidden px-4 py-10">
       <PosterWall items={posters} />
       <div aria-hidden className="aurora"><i /><i /><i /></div>
