@@ -5,7 +5,7 @@
 // unset and every call soft-fails to [], so the embeds just carry on alone.
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
-export interface NativeSource { label: string; provider: string; format: "hls" | "mp4"; url: string }
+export interface NativeSource { label: string; provider: string; format: "hls" | "mp4" | "dash"; url: string }
 
 async function conf(): Promise<{ base: string; key: string } | null> {
   let e: Record<string, string | undefined> = {};
@@ -31,7 +31,7 @@ export async function nativeSources(type: "movie" | "tv", id: number, se?: numbe
 }
 
 /** The container's /media url for a relay token; null when not configured. */
-export async function nativeMediaUrl(token: string): Promise<{ url: string; key: string } | null> {
+export async function nativeMediaUrl(token: string, n?: string): Promise<{ url: string; key: string } | null> {
   const c = await conf();
-  return c ? { url: `${c.base}/media?t=${encodeURIComponent(token)}`, key: c.key } : null;
+  return c ? { url: `${c.base}/media?t=${encodeURIComponent(token)}${n ? `&n=${encodeURIComponent(n)}` : ""}`, key: c.key } : null;
 }

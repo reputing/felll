@@ -120,6 +120,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
     return () => clearTimeout(id);
   }, [track?.imdb, track?.season, track?.episode]); // eslint-disable-line react-hooks/exhaustive-deps
   const hls = useRef<Hls | null>(null);
+  const dash = useRef<{ destroy: () => void } | null>(null); // dash.js, for the DASH sources (Atlantic)
   const [cur, setCur] = useState<MovieSource | undefined>(undefined);
 
   // Your own subtitles for this title (upload, timing, auto-sync, look). Shown over the picture;
@@ -146,7 +147,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
     // 12 seconds is plenty for a warm backend; a cold one is not worth a viewer's wait when an embed server is one tap away
     fetch(streamSrc, { signal: AbortSignal.timeout(12000) }).then((r) => (r.ok ? r.json() : null)).then((d) => {
       if (!on) return;
-      const got: MovieSource[] = (d?.sources ?? []).map((s: { label: string; url: string; format?: string; proxy?: string }) => ({ label: s.label, url: s.url, format: s.format === "hls" ? ("hls" as const) : ("mp4" as const), proxy: s.proxy }));
+      const got: MovieSource[] = (d?.sources ?? []).map((s: { label: string; url: string; format?: string; proxy?: string }) => ({ label: s.label, url: s.url, format: s.format === "hls" || s.format === "dash" ? (s.format as "hls" | "dash") : ("mp4" as const), proxy: s.proxy }));
       setSources(got);
       if (got.length) setCur(got[0]);
       else { setNativeDead(true); if (embeds[0]) setServer(embeds[0].name); } // nothing resolved: fall to the first (sandboxed) embed
@@ -161,6 +162,8 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
     const at = v.currentTime;
     hls.current?.destroy();
     hls.current = null;
+    dash.current?.destroy();
+    dash.current = null;
     // One candidate per source: 8Stream's HLS (proxied through our origin) or an
     // embed. A watchdog advances if a source neither starts nor errors within a
     // few seconds, so a dead URL never stalls the player on a long timeout.
@@ -185,7 +188,16 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
       watchdog = setTimeout(advance, n < chain.length - 1 ? 7000 : 15000);
     };
     (async () => {
-      if (cur.format === "hls" && !v.canPlayType("application/vnd.apple.mpegurl")) {
+      if (cur.format === "dash") {
+        // DASH has no native <video> support outside Safari's MSE, so dash.js plays it. Its manifest and every segment url
+        // are same-origin relay urls (the container rewrote them), so nothing here talks to the provider.
+        const { MediaPlayer } = await import("dashjs");
+        if (cancelled) return;
+        const d = MediaPlayer().create();
+        dash.current = d;
+        d.on("error", () => { if (!cancelled) setNativeDead(true); });
+        d.initialize(v, cur.url, true);
+      } else if (cur.format === "hls" && !v.canPlayType("application/vnd.apple.mpegurl")) {
         const { default: HlsJs } = await import("hls.js");
         if (cancelled || !HlsJs.isSupported()) { v.src = cur.url; return; }
         const h = new HlsJs();
@@ -209,7 +221,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
     };
   }, [cur]);
 
-  useEffect(() => () => hls.current?.destroy(), []);
+  useEffect(() => () => { hls.current?.destroy(); dash.current?.destroy(); }, []);
 
   // Embed players say where they are with postMessage (two shapes seen in the servers we use: PLAYER_EVENT with
   // currentTime/duration, and MEDIA_DATA with progress.watched/duration, per episode for a series). Only messages from our

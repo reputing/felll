@@ -2,6 +2,7 @@
 // at their fixed origins:
 //   Lamda  (new.vidnest.fun /ophim/…)  - movies and TV, v2 AES-GCM envelope
 //   AdRock (vidrock.net /api/…)        - movies (TV unconfirmed), AES-GCM urls
+//   Atlantic (stream.hls.lol/mbox)     - movies and TV, DASH (played with dash.js; manifest rewritten here)
 // Constants below are the public ones their own web clients ship; this decodes
 // a response envelope, it does not touch DRM.
 //
@@ -27,6 +28,10 @@ const ADROCK_NAMES = new Set(["Nova", "Atlas", "Astra", "Orion", "Luna", "Lyra",
 // New hosts fail closed until someone reviews them and adds them here.
 const MEDIA_HOSTS = new Set([...LAMDA_HOSTS, ...ADROCK_HOSTS]);
 
+const ATLANTIC_API = "https://stream.hls.lol/mbox";
+const ATLANTIC_MPD_HOST = "stream.hls.lol";
+const ATLANTIC_SEG_HOST = "sacdn.hakunaymatata.com";
+const SEG_NAME = /^(?:init-stream[0-9]+|chunk-stream[0-9]+-[0-9]{1,8})\.m4s$/;
 const TOKEN_TTL_MS = 4 * 3600_000;
 const MAX_PLAYLIST = 2 * 1024 * 1024;
 const MAX_MEDIA = 128 * 1024 * 1024;
@@ -40,19 +45,28 @@ const okMedia = (value) => {
 };
 const b64u = (b) => Buffer.from(b).toString("base64url");
 const mac = (s) => crypto.createHmac("sha256", SECRET).update(s).digest("base64url");
-function mint(url) {
-  const body = b64u(JSON.stringify({ u: url, x: Date.now() + TOKEN_TTL_MS }));
+function mint(url, extra = {}) {
+  const body = b64u(JSON.stringify({ u: url, x: Date.now() + TOKEN_TTL_MS, ...extra }));
   return body + "." + mac(body);
 }
+// -> { u, k, ... } for a valid unexpired token, else null. k: "media" (HLS/mp4, allowlisted host),
+//    "mpd" (an Atlantic manifest to fetch and rewrite) or "seg" (a DASH segment base + the queries to append).
 function open(token) {
   const [body, sig] = String(token || "").split(".");
   if (!body || !sig) return null;
   const want = Buffer.from(mac(body)), got = Buffer.from(sig);
   if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) return null;
   try {
-    const { u, x } = JSON.parse(Buffer.from(body, "base64url").toString());
-    return Date.now() < x && okMedia(u) ? u : null;
+    const t = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (!(Date.now() < t.x)) return null;
+    if (t.k === "mpd") { const u = new URL(t.u); return u.protocol === "https:" && u.hostname === ATLANTIC_MPD_HOST && !u.username && !u.password && !u.port ? t : null; }
+    if (t.k === "seg") return segBaseOk(t.u) ? t : null;
+    return okMedia(t.u) ? { ...t, k: "media" } : null;
   } catch { return null; }
+}
+function segBaseOk(value) {
+  try { const u = new URL(value); return u.protocol === "https:" && u.hostname === ATLANTIC_SEG_HOST && !u.username && !u.password && !u.port && /^\/dash\/[a-zA-Z0-9_-]+\/$/.test(u.pathname); }
+  catch { return false; }
 }
 
 async function getJson(url, limit) {
@@ -101,20 +115,69 @@ async function adrock({ type, id, s, e }) {
   return out;
 }
 
+async function atlantic({ type, id, s, e }) {
+  const qs = new URLSearchParams({ tmdbId: pos(id, "id"), type });
+  if (type === "tv") { qs.set("seasonId", pos(s, "season")); qs.set("episodeId", pos(e, "episode")); }
+  const data = await getJson(`${ATLANTIC_API}?${qs}`, 1_048_576);
+  return (Array.isArray(data?.tracks) ? data.tracks : []).flatMap((t) => {
+    try {
+      const u = new URL(t.url);
+      if (t.kind !== "dash" || u.protocol !== "https:" || u.hostname !== ATLANTIC_MPD_HOST || u.username || u.password || u.port) return [];
+      return [{ provider: "Atlantic", label: ["Atlantic", String(t.lang || "").slice(0, 40), String(t.quality || "").slice(0, 12)].filter(Boolean).join(" · "), url: u.href, format: "dash", pri: /english|original/i.test(t.lang || "") ? 1 : 4 }];
+    } catch { return []; }
+  });
+}
+
 const cache = new Map(); // short cache so a page load plus a retry is one upstream call
 async function resolve(q) {
   const k = [q.type, q.id, q.s, q.e].join(":");
   const hit = cache.get(k);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
-  const settled = await Promise.allSettled([lamda(q), adrock(q)]);
+  const settled = await Promise.allSettled([lamda(q), adrock(q), atlantic(q)]);
   const all = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
   all.sort((a, b) => a.pri - b.pri);
-  const v = { sources: all.map(({ label, provider, url, format }) => ({ label, provider, format, url: RELAY_PATH + mint(url) })), errors: settled.filter((r) => r.status === "rejected").length };
+  const v = { sources: all.map(({ label, provider, url, format }) => ({ label, provider, format, url: RELAY_PATH + mint(url, format === "dash" ? { k: "mpd" } : {}) })), errors: settled.filter((r) => r.status === "rejected").length };
   if (all.length) { cache.set(k, { at: Date.now(), v }); if (cache.size > 500) cache.delete(cache.keys().next().value); }
   return v;
 }
 
-async function relay(req, res, target) {
+// Fetch an Atlantic manifest and rewrite it so every segment request comes back through cupcake with a signed token.
+// Refuses DRM (ContentProtection), an unexpected segment origin and any template shape not seen so far.
+async function relayMpd(res, mpdUrl) {
+  const r = await fetch(mpdUrl, { redirect: "error", signal: AbortSignal.timeout(15000) });
+  if (!r.ok) { res.writeHead(502); return res.end("manifest " + r.status); }
+  let xml = await r.text();
+  if (xml.length > MAX_PLAYLIST || /<ContentProtection\b/i.test(xml)) { res.writeHead(502); return res.end("unsupported manifest"); }
+  const base = xml.match(/<BaseURL>([^<]+)<\/BaseURL>/)?.[1]?.replaceAll("&amp;", "&");
+  if (!base || !segBaseOk(base)) { res.writeHead(502); return res.end("unexpected origin"); }
+  xml = xml.replace(/<SegmentTemplate\b[^>]*>/g, (tag) => {
+    const init = tag.match(/initialization="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+    const media = tag.match(/\bmedia="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+    if (!init || !media) throw new Error("unsupported template");
+    const q = (v) => (v.includes("?") ? v.slice(v.indexOf("?")) : "");
+    const t = mint(base, { k: "seg", iq: q(init), mq: q(media) });
+    return tag
+      .replace(/initialization="[^"]+"/, `initialization="${RELAY_PATH}${t}&amp;n=init-stream$RepresentationID$.m4s"`)
+      .replace(/\bmedia="[^"]+"/, `media="${RELAY_PATH}${t}&amp;n=chunk-stream$RepresentationID$-$Number%05d$.m4s"`);
+  });
+  xml = xml.replace(/<BaseURL>[^<]+<\/BaseURL>/, "<BaseURL>/</BaseURL>");
+  res.writeHead(200, { "content-type": "application/dash+xml", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  res.end(xml);
+}
+
+async function relay(req, res, tok, name) {
+  if (tok.k === "mpd") return relayMpd(res, tok.u);
+  let target = tok.u;
+  if (tok.k === "seg") {
+    const m = SEG_NAME.test(name || "");
+    if (!m) { res.writeHead(404); return res.end(); }
+    target = new URL(name + (name.startsWith("init-") ? tok.iq : tok.mq), tok.u).href;
+    if (!target.startsWith(tok.u)) { res.writeHead(404); return res.end(); }
+  }
+  return relayMedia(req, res, target);
+}
+
+async function relayMedia(req, res, target) {
   if (inflight >= MAX_INFLIGHT) { res.writeHead(503, { "retry-after": "2" }); return res.end("busy"); }
   inflight++;
   try {
@@ -166,9 +229,9 @@ http.createServer(async (req, res) => {
       return res.end(JSON.stringify(v));
     }
     if (u.pathname === "/media") {
-      const target = open(u.searchParams.get("t"));
-      if (!target) { res.writeHead(403); return res.end("bad token"); }
-      return relay(req, res, target);
+      const tok = open(u.searchParams.get("t"));
+      if (!tok) { res.writeHead(403); return res.end("bad token"); }
+      return relay(req, res, tok, u.searchParams.get("n"));
     }
     if (u.pathname === "/") { res.writeHead(200); return res.end("ok"); }
     res.writeHead(404); res.end();

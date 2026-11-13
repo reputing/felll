@@ -30,7 +30,7 @@ export interface MovieCard {
   year: number | null;
   rating: string | null;
 }
-export interface MovieSource { label: string; url: string; format: "hls" | "mp4"; /** same-origin fallback for a CDN that is fussy about who asks */ proxy?: string }
+export interface MovieSource { label: string; url: string; format: "hls" | "mp4" | "dash"; /** same-origin fallback for a CDN that is fussy about who asks */ proxy?: string }
 export interface MovieStream { sources: MovieSource[]; subtitles: { lang: string; label: string; url: string }[] }
 export type MovieEmbed = Embed;
 export interface MovieEpisode { se: number; ep: number; title: string; overview?: string; thumb?: string | null; aired?: string | null }

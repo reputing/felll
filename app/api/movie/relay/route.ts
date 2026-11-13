@@ -8,9 +8,11 @@ import { nativeMediaUrl } from "@/lib/movie-native";
 export async function GET(req: Request) {
   const me = await memberOr401();
   if (me instanceof Response) return me;
-  const t = new URL(req.url).searchParams.get("t") ?? "";
-  if (!t || t.length > 8192) return new Response("bad token", { status: 400 });
-  const target = await nativeMediaUrl(t);
+  const q = new URL(req.url).searchParams;
+  const t = q.get("t") ?? "";
+  const n = q.get("n") ?? "";
+  if (!t || t.length > 8192 || n.length > 80) return new Response("bad token", { status: 400 });
+  const target = await nativeMediaUrl(t, n || undefined);
   if (!target) return new Response("Not available", { status: 404 });
 
   const headers: Record<string, string> = { "x-resolver-key": target.key };
