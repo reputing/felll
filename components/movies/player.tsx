@@ -42,6 +42,9 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const [ready, setReady] = useState(false);
   const [theater, setTheater] = useState(false);
   const [full, setFull] = useState(false);
+  // Where the browser has no Fullscreen API for page elements (iPhone Safari), the player fills the screen with its own layout instead
+  const [pseudo, setPseudo] = useState(false);
+  const fs = full || pseudo;
   const [reloads, setReloads] = useState(0);
   // CineSrc says nothing at all when it cannot find a title (no error event; it stays on its own "Fetching media" screen), so "it
   // never said ready" is the only signal. After 25 seconds we stop pretending and offer another server.
@@ -78,7 +81,28 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
     return () => clearTimeout(t);
   }, [frameUrl, reloads, alive, curEmbed?.sandbox]);
   useEffect(() => { const t = setTimeout(() => setReady(true), 7000); return () => clearTimeout(t); }, [frameUrl, reloads]); // never hide a working player behind a spinner
-  useEffect(() => { const on = () => setFull(!!document.fullscreenElement); document.addEventListener("fullscreenchange", on); return () => document.removeEventListener("fullscreenchange", on); }, []);
+  useEffect(() => {
+    const doc = document as Document & { webkitFullscreenElement?: Element };
+    const orient = (screen as Screen & { orientation?: { unlock?: () => void } }).orientation;
+    const on = () => {
+      const f = !!(doc.fullscreenElement || doc.webkitFullscreenElement);
+      setFull(f);
+      if (!f) try { orient?.unlock?.(); } catch { /* desktop */ }
+    };
+    document.addEventListener("fullscreenchange", on);
+    document.addEventListener("webkitfullscreenchange", on);
+    return () => { document.removeEventListener("fullscreenchange", on); document.removeEventListener("webkitfullscreenchange", on); };
+  }, []);
+  // the filled-screen layout: no page scrolling behind it, and the phone's Back button leaves it instead of leaving the page
+  useEffect(() => {
+    if (!pseudo) return;
+    const html = document.documentElement, was = html.style.overflow;
+    html.style.overflow = "hidden";
+    history.pushState({ cupcakeFull: 1 }, "");
+    const onPop = () => setPseudo(false);
+    window.addEventListener("popstate", onPop);
+    return () => { html.style.overflow = was; window.removeEventListener("popstate", onPop); };
+  }, [pseudo]);
   useEffect(() => {
     if (nextIn == null) return;
     if (nextIn <= 0) { if (next) router.push(next.href); return; }
@@ -89,7 +113,29 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
   const video = useRef<HTMLVideoElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const box = useRef<HTMLDivElement>(null);
-  const goFull = () => { const el = box.current; if (!el) return; if (document.fullscreenElement) void document.exitFullscreen(); else void el.requestFullscreen?.().catch(() => {}); };
+  // Fullscreen that works on every phone. The player's own box goes fullscreen where the browser allows it (desktop, Android, iPad),
+  // so our controls and subtitles come along, and the phone turns to landscape. iPhone Safari has no such call for page elements:
+  // there our own <video> (Iris) uses the system player, and the Zeus frame, which can only go fullscreen from inside itself, is
+  // filled to the screen with our own layout.
+  const goFull = () => {
+    const el = box.current as (HTMLDivElement & { webkitRequestFullscreen?: () => void }) | null;
+    const v = video.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void; webkitExitFullscreen?: () => void; webkitDisplayingFullscreen?: boolean }) | null;
+    const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void };
+    const orient = (screen as Screen & { orientation?: { lock?: (o: string) => Promise<void>; unlock?: () => void } }).orientation;
+    if (!el) return;
+    if (pseudo) { history.back(); return; } // the popstate above closes it
+    if (doc.fullscreenElement || doc.webkitFullscreenElement) { void (doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.()); try { orient?.unlock?.(); } catch { /* desktop */ } return; }
+    if (v?.webkitDisplayingFullscreen) { v.webkitExitFullscreen?.(); return; }
+    if (el.requestFullscreen) {
+      el.requestFullscreen()
+        .then(() => { try { orient?.lock?.("landscape").catch(() => {}); } catch { /* unsupported */ } })
+        .catch(() => setPseudo(true));
+      return;
+    }
+    if (el.webkitRequestFullscreen) { el.webkitRequestFullscreen(); return; }
+    if (v?.webkitEnterFullscreen && !useEmbed) { v.webkitEnterFullscreen(); return; }
+    setPseudo(true);
+  };
 
   // --- progress: tell the server where we are, at most every 15 seconds (and when paused or finished) -----------------
   const sent = useRef({ at: 0, pos: 0 });
@@ -347,17 +393,17 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
       ) : useEmbed && curEmbed ? (
         // The frame, dressed like the anime player: night ground, 26px corners, a frost spinner over the poster until the
         // player is ready. What is inside the frame is the server's own player and cannot be restyled from here.
-        <div ref={box} className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", theater && !full && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
+        <div ref={box} data-pseudo={pseudo || undefined} className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", pseudo && "fixed inset-0 z-[90] flex h-dvh items-center rounded-none border-0 bg-black", theater && !fs && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
           {/* No sandbox attribute here only for a server that cannot take one (see lib/movie-servers.ts). For Zeus it is set before
               src, so the first request is already sandboxed: scripts and same-origin only, so popups, redirects, top navigation,
               forms, downloads and modals are blocked by the browser. `allow` grants only autoplay, fullscreen and picture-in-picture. */}
           <iframe ref={frame} key={`${frameUrl}#${reloads}`} {...(curEmbed.sandbox ? { sandbox: curEmbed.sandbox } : {})} src={frameUrl} title="Player" allowFullScreen referrerPolicy="origin"
             allow={curEmbed.sandbox ? "autoplay; fullscreen; picture-in-picture" : "autoplay; fullscreen; picture-in-picture; encrypted-media"}
             onLoad={() => setTimeout(() => setReady(true), 900)}
-            className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />
+            className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full [[data-pseudo]>&]:max-h-full" />
           {/* our own controls and the cupcake bug over a frame whose own controls are off (see zeus-controls.tsx) */}
           {curEmbed.sandbox && curEmbed.origin && (
-            <ZeusControls session={`${frameUrl}#${reloads}`} frame={frame} box={box} origin={curEmbed.origin} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull}
+            <ZeusControls session={`${frameUrl}#${reloads}`} frame={frame} box={box} origin={curEmbed.origin} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={fs} onFull={goFull}
               subsFor={track ? { tmdb: track.tmdb, imdb: track.imdb, media: track.media, season: track.season, episode: track.episode, subKey: subKey ?? `m:${track.imdb}`, title: track.title } : undefined}
               onServer={(id, at) => setPick({ server: id, at })} onPrefs={(p) => { prefs.current = p; }} />
           )}
@@ -381,10 +427,10 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
       ) : (
         // Iris: our own <video> (HLS or DASH, never a third-party script) in the same dressed frame as Zeus, driven by the same
         // control bar (zeus-controls.tsx), so the bar, settings, subtitles, skip buttons, theater and "Up next" all match.
-        <div ref={box} data-settings className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", theater && !full && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
-          <video ref={video} playsInline poster={poster ?? undefined} onLoadedData={() => setReady(true)} className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full" />
+        <div ref={box} data-settings data-pseudo={pseudo || undefined} className={cn("relative isolate overflow-hidden rounded-[26px] border-1.5 border-night-line bg-night shadow-[0_30px_60px_-30px_rgba(0,0,0,.9)] [&:fullscreen]:flex [&:fullscreen]:h-screen [&:fullscreen]:items-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-black", pseudo && "fixed inset-0 z-[90] flex h-dvh items-center rounded-none border-0 bg-black", theater && !fs && "lg:relative lg:left-1/2 lg:w-[min(100vw-2rem,1500px)] lg:-translate-x-1/2")}>
+          <video ref={video} playsInline poster={poster ?? undefined} onLoadedData={() => setReady(true)} className="aspect-video w-full bg-black [:fullscreen>&]:max-h-full [[data-pseudo]>&]:max-h-full" />
           {cur && (
-            <ZeusControls video={video} session={cur.url} box={box} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={full} onFull={goFull}
+            <ZeusControls video={video} session={cur.url} box={box} ready={ready} prev={prev} next={next} theater={theater} onTheater={() => setTheater((t) => !t)} full={fs} onFull={goFull}
               subsFor={track ? { tmdb: track.tmdb, imdb: track.imdb, media: track.media, season: track.season, episode: track.episode, subKey: subKey ?? `m:${track.imdb}`, title: track.title } : undefined}
               srcs={{ sources: (sources ?? []).map((x): Source => ({ id: x.url, label: x.label, audio: "sub" })), current: { id: cur.url, label: cur.label, audio: "sub" }, onPick: (x) => { const m = (sources ?? []).find((y) => y.url === String(x.id)); if (m) setCur(m); } }}
               onServer={() => {}} onPrefs={(p) => { prefs.current = p; }} />
@@ -401,7 +447,7 @@ export function MoviePlayer({ streamSrc, embeds = [], poster, subKey, track, nex
             {!curEmbed?.sandbox && (
               <>
                 <button type="button" aria-pressed={theater} onClick={() => setTheater((t) => !t)} className={cn("hidden h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot lg:flex", theater && "border-frost-hot text-frost-text")}><RectangleHorizontal className="size-4" />Theater</button>
-                <button type="button" onClick={goFull} className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot">{full ? <Minimize className="size-4" /> : <Maximize className="size-4" />}{full ? "Exit" : "Fullscreen"}</button>
+                <button type="button" onClick={goFull} className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot">{fs ? <Minimize className="size-4" /> : <Maximize className="size-4" />}{full ? "Exit" : "Fullscreen"}</button>
               </>
             )}
             <button type="button" onClick={() => setReloads((n) => n + 1)} title="Reload the player at your last spot" className="flex h-9 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-extrabold hover:border-frost-hot"><RotateCw className="size-4" />Reload</button>
