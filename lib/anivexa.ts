@@ -264,6 +264,20 @@ function selectStream(streams: RawStream[]): RawStream | null {
   return byType("hls")[0] ?? byType("dash")[0] ?? byType("embed")[0] ?? usable[0];
 }
 
+const PLAYLIST_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+/** Does this HLS address really answer with a playlist, from here (the same place our proxy fetches from, with the same headers)?
+ *  A provider can "have" an episode and still be useless: one hands back an encrypted blob where a playlist should be, another
+ *  refuses our address outright. Finding that out now, when the server is resolved, means the player skips it at once and the page
+ *  hides it, instead of the viewer waiting while it fails on its own. */
+async function playlistOk(url: string, headers: Record<string, string>): Promise<boolean> {
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": PLAYLIST_UA, ...headers }, signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return false;
+    return (await r.text()).trimStart().startsWith("#EXTM3U");
+  } catch { return false; }
+}
+
 export async function resolveAnivexaStream(
   provider: string,
   anilistId: number,
@@ -276,9 +290,27 @@ export async function resolveAnivexaStream(
     | null;
   if (!data || !Array.isArray(data.streams)) return null;
 
-  const chosen = selectStream(data.streams);
+  let chosen = selectStream(data.streams);
   if (!chosen?.url) return null;
+  // HLS is what the player plays, so an HLS pick must prove itself; the next HLS stream the provider offers gets a turn before
+  // the server is given up on. Embeds and the rest are passed on as before (the player skips them, other callers use them).
+  if ((chosen.type ?? "hls") === "hls") {
+    const hls = data.streams
+      .filter((x) => typeof x.url === "string" && x.url && (x.type ?? "hls") === "hls")
+      .sort((a, b) => Number(b.isActive) - Number(a.isActive) || (b.priority ?? 0) - (a.priority ?? 0))
+      .slice(0, 3);
+    let good: RawStream | null = null;
+    for (const c of hls) if (await playlistOk(c.url as string, streamHeaders(c))) { good = c; break; }
+    if (good) chosen = good;
+    else {
+      const other = data.streams.filter((x) => typeof x.url === "string" && x.url && (x.type ?? "hls") !== "hls");
+      const rest = selectStream(other);
+      if (!rest?.url) return null; // nothing playable here
+      chosen = rest;
+    }
+  }
 
+  if (!chosen.url) return null;
   const type = (chosen.type ?? "hls") as ResolvedAnivexaStream["type"];
   const headers = streamHeaders(chosen);
   const url = type === "embed" ? chosen.url : anivexaProxyPath(chosen.url, headers);
