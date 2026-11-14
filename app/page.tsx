@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { currentUser, KNOWN_COOKIE, revokedNotice, SESSION_COOKIE, safeNext } from "@/lib/auth";
-import { all } from "@/lib/db";
+import { all, env } from "@/lib/db";
 import { jikanOr, normAnime } from "@/lib/jikan";
 import { kuroConfig } from "@/lib/kuro";
 import { compact } from "@/lib/utils";
@@ -13,14 +13,21 @@ import { PosterWall } from "@/components/portal/poster-wall";
 import { Avatar } from "@/components/avatar";
 
 // Looks like an outage until the secret key is pressed (components/portal/secret-gate.tsx), so it is not for search engines either.
+// The sign-in can pose as an outage page ("503 Service Unavailable") that a secret key opens (components/portal/secret-gate.tsx). It is
+// switched OFF for now; set PORTAL_DISGUISE=1 (a var in wrangler.jsonc) to bring it back.
 const DOWN = "The server is temporarily unable to service your request due to maintenance downtime or capacity problems. Please try again later.";
-export const metadata = {
-  title: { absolute: "503 Service Unavailable" },
-  description: DOWN,
-  robots: { index: false, follow: false },
-  openGraph: { title: "503 Service Unavailable", description: DOWN, siteName: "", images: [] },
-  twitter: { title: "503 Service Unavailable", description: DOWN, images: [] },
-};
+// read like the site's other settings (Cloudflare variables first, then the process environment), so it works in dev and on the Worker
+const disguised = async () => ((await env()).PORTAL_DISGUISE ?? process.env.PORTAL_DISGUISE) === "1";
+export async function generateMetadata() {
+  if (!(await disguised())) return { title: "The portal" };
+  return {
+    title: { absolute: "503 Service Unavailable" },
+    description: DOWN,
+    robots: { index: false, follow: false },
+    openGraph: { title: "503 Service Unavailable", description: DOWN, siteName: "", images: [] },
+    twitter: { title: "503 Service Unavailable", description: DOWN, images: [] },
+  };
+}
 
 const ERRORS: Record<string, string> = {
   expired: "That sign-in link expired. Give it another go.",
@@ -72,8 +79,7 @@ export default async function Portal({ searchParams }: Props) {
   const error = sp.error ? ERRORS[sp.error] : sp.sso ? "You’re not signed in on kuro yet. Sign in there, or use your handle below." : null;
   const dev = process.env.NODE_ENV !== "production";
 
-  return (
-    <SecretGate open={!sp.out && (returning || !!sp.error || !!sp.sso)} locked={!!sp.out}>
+  const page = (
     <main className="relative grid min-h-svh place-items-center overflow-hidden px-4 py-10">
       <PosterWall items={posters} />
       <div aria-hidden className="aurora"><i /><i /><i /></div>
@@ -160,6 +166,8 @@ export default async function Portal({ searchParams }: Props) {
         </section>
       </div>
     </main>
-    </SecretGate>
   );
+  return (await disguised())
+    ? <SecretGate open={!sp.out && (returning || !!sp.error || !!sp.sso)} locked={!!sp.out}>{page}</SecretGate>
+    : page;
 }

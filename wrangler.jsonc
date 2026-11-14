@@ -70,6 +70,8 @@
     // Ad-free native movie/TV sources (Lamda + AdRock) resolved in a container.
     // Deploy movie-resolver-server/ (npm run movie-resolver:container:deploy) and
     // set MOVIE_RESOLVER_KEY with `wrangler secret put`.
+    // "1" makes the signed-out front page look like a 503 outage (a secret key opens the sign-in). Off for now.
+    "PORTAL_DISGUISE": "0",
     "MOVIE_RESOLVER_URL": "https://movie-resolver-api.matthewsjakael.workers.dev"
   }
 }

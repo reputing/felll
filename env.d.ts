@@ -93,6 +93,8 @@ interface CloudflareEnv {
   TMDB_API_KEY?: string;
   /** A self-hosted 8Stream API (github.com/himanshu8443/8StreamApi) for movie HLS */
   STREAM8_API_URL?: string;
+  /** "1" shows the sign-in as a 503 outage page that a secret key opens; anything else (the default) shows the sign-in normally */
+  PORTAL_DISGUISE?: string;
   MOVIE_RESOLVER_URL?: string;
   MOVIE_RESOLVER_KEY?: string;
   /** Override the VidCore embed host (it moves) */
