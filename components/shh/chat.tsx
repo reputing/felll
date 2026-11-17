@@ -7,13 +7,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, Feather, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
+import { Brain, Check, Cloud, CloudOff, ChevronDown, Copy, Drama, EyeOff, Feather, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
 import { pushCloak, syncCloak, type CloakPrefs } from "@/lib/cloak";
 import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/model-picker";
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
 import { FillDocButton } from "@/components/shh/fill";
+import { useCloudChats } from "@/components/shh/use-cloud-chats";
 import { normalizeMath } from "@/lib/math-text";
 import { toast } from "@/lib/store";
 import { DISGUISES, maskTo, setFavicon } from "@/lib/tab-mask";
@@ -22,7 +23,8 @@ import { cn } from "@/lib/utils";
 interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
 interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean; orig?: string; via?: { model: string; wanted?: string } }
-interface Thread { id: string; title: string; updatedAt: number }
+// `cloud`: this chat also lives on the member's account and follows them across devices (components/shh/use-cloud-chats.ts). Without it, it stays in this browser only.
+interface Thread { id: string; title: string; updatedAt: number; cloud?: boolean }
 interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string; at?: number }
 interface RoomMsg { id: number; handle: string | null; role: string; content: string; steps?: Step[] }
 
@@ -423,6 +425,7 @@ export function ShhChat({ me }: { me?: string }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const loadedThread = useRef(false);
+  const lastSaved = useRef("");   // the messages last read from or written to storage, so autosave only stamps a chat that really changed
 
   // ---- boot: code, model, threads (migrating the old single convo), prefs ----
   useEffect(() => {
@@ -437,7 +440,7 @@ export function ShhChat({ me }: { me?: string }) {
         const id = crypto.randomUUID();
         let seed: Msg[] = [];
         try { const old = localStorage.getItem(OLD_CONVO_KEY); if (old) seed = JSON.parse(old); } catch { /* */ }
-        list = [{ id, title: seed.find((m) => m.role === "user")?.content?.slice(0, 40) || "new chat", updatedAt: Date.now() }];
+        list = [{ id, title: seed.find((m) => m.role === "user")?.content?.slice(0, 40) || "new chat", updatedAt: Date.now(), ...(seed.length ? {} : { cloud: true }) }];
         try { localStorage.setItem(threadKey(id), JSON.stringify(seed)); localStorage.setItem(THREADS_KEY, JSON.stringify(list)); localStorage.removeItem(OLD_CONVO_KEY); } catch { /* */ }
       }
       setThreads(list);
@@ -450,7 +453,10 @@ export function ShhChat({ me }: { me?: string }) {
   useEffect(() => {
     if (!activeId) return;
     loadedThread.current = false;
-    try { const raw = localStorage.getItem(threadKey(activeId)); setMsgs(raw ? JSON.parse(raw) : []); } catch { setMsgs([]); }
+    let loaded: Msg[] = [];
+    try { const raw = localStorage.getItem(threadKey(activeId)); loaded = raw ? JSON.parse(raw) : []; } catch { /* */ }
+    lastSaved.current = JSON.stringify(loaded);
+    setMsgs(loaded);
     loadedThread.current = true;
     try { localStorage.setItem(ACTIVE_KEY, activeId); } catch { /* */ }
   }, [activeId]);
@@ -461,6 +467,11 @@ export function ShhChat({ me }: { me?: string }) {
     if (!activeId || !loadedThread.current) return;
     const key = threadKey(activeId);
     const t = setTimeout(() => {
+      // Switching chats, or the account handing this device a newer copy, re-runs this effect with nothing new to save. Stamping
+      // updatedAt then would make this device look newest and bounce the chat between devices forever, so only a real change counts.
+      const json = JSON.stringify(msgs);
+      if (json === lastSaved.current) return;
+      lastSaved.current = json;
       const save = (data: unknown) => { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch { return false; } };
       if (!save(msgs)) {
         if (!save(msgs.map((m, i) => (i >= msgs.length - 6 ? m : { ...m, images: undefined, docs: m.docs?.map((d) => ({ name: d.name, content: "" })) })))) {
@@ -476,6 +487,12 @@ export function ShhChat({ me }: { me?: string }) {
     }, 500);
     return () => clearTimeout(t);
   }, [msgs, activeId]);
+
+  // cloud chats: copies the chats marked `cloud` to and from the account in the background
+  const cloud = useCloudChats<Thread>({
+    code: code ?? "", threads, setThreads, activeId, setActiveId, msgs: msgs as unknown[], busy,
+    applyActive: (m) => { lastSaved.current = JSON.stringify(m); setMsgs(m as Msg[]); },
+  });
 
   useEffect(() => { setHumState(loadHumPrefs()); try { setNatural(localStorage.getItem("shh:natural") === "1"); } catch { /* */ } }, []);
   const setHum = (p: HumPrefs) => { setHumState(p); try { localStorage.setItem("shh:hum", JSON.stringify(p)); } catch { /* */ } };
@@ -642,18 +659,19 @@ export function ShhChat({ me }: { me?: string }) {
   const copyText = (t: string) => navigator.clipboard?.writeText(t).then(() => toast("copied")).catch(() => {});
 
   // ---- threads ----
-  const newThread = () => {
+  const newThread = (cloudChat = true) => {
     const id = crypto.randomUUID();
-    const t: Thread = { id, title: "new chat", updatedAt: Date.now() };
+    const t: Thread = { id, title: "new chat", updatedAt: Date.now(), cloud: cloudChat };
     setThreads((ts) => { const next = [t, ...ts]; try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); localStorage.setItem(threadKey(id), "[]"); } catch { /* */ } return next; });
     setActiveId(id);
     setInput(""); setImages([]); setDocs([]);
   };
   const deleteThread = (id: string) => {
+    if (threads.find((t) => t.id === id)?.cloud) cloud.forget(id);
     setThreads((ts) => {
       const next = ts.filter((t) => t.id !== id);
       try { localStorage.removeItem(threadKey(id)); } catch { /* */ }
-      if (!next.length) { const nid = crypto.randomUUID(); next.push({ id: nid, title: "new chat", updatedAt: Date.now() }); try { localStorage.setItem(threadKey(nid), "[]"); } catch { /* */ } }
+      if (!next.length) { const nid = crypto.randomUUID(); next.push({ id: nid, title: "new chat", updatedAt: Date.now(), cloud: true }); try { localStorage.setItem(threadKey(nid), "[]"); } catch { /* */ } }
       try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); } catch { /* */ }
       if (id === activeId) setActiveId(next[0].id);
       return next;
@@ -782,13 +800,15 @@ export function ShhChat({ me }: { me?: string }) {
           </DM.Trigger>
           <DM.Portal>
             <DM.Content align="start" sideOffset={6} className={cn(POPUP, "z-50 flex max-h-[60vh] w-[280px] flex-col gap-0.5 overflow-y-auto rounded-2xl p-1.5")}>
-              <DM.Item onSelect={() => { leaveRoom(); newThread(); }} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><MessageSquarePlus className="size-4" />New chat</DM.Item>
+              <DM.Item onSelect={() => { leaveRoom(); newThread(true); }} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><Cloud className="size-4" />New chat<span className="ml-auto text-[11px] font-bold text-plum-muted">on your account</span></DM.Item>
+              <DM.Item onSelect={() => { leaveRoom(); newThread(false); }} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><CloudOff className="size-4" />New private chat<span className="ml-auto text-[11px] font-bold text-plum-muted">this device only</span></DM.Item>
               <DM.Item onSelect={createRoom} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><Users className="size-4" />New co-work room</DM.Item>
               <DM.Item onSelect={() => joinRoom()} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-bold text-plum-body outline-none hover:bg-cream-blush"><Link2 className="size-4" />Join a room…</DM.Item>
               <div className="my-1 h-px bg-line" />
               {sortedThreads.map((t) => (
                 <div key={t.id} className={cn("group flex items-center gap-1 rounded-xl px-1 py-0.5", t.id === activeId && "bg-cream-blush")}>
                   <DM.Item onSelect={() => { leaveRoom(); setActiveId(t.id); }} className="flex min-w-0 flex-1 cursor-pointer items-center rounded-lg px-2 py-1.5 text-[13px] font-bold outline-none hover:bg-black/5"><span className="truncate">{t.title || "new chat"}</span></DM.Item>
+                  <button type="button" onClick={(e) => { e.preventDefault(); cloud.setCloud(t.id, !t.cloud); toast(t.cloud ? "now on this device only" : "saved to your account ♡"); }} aria-label={t.cloud ? "on your account, tap to keep on this device only" : "this device only, tap to save to your account"} title={t.cloud ? "on your account (tap to keep on this device only)" : "this device only (tap to save to your account)"} className={cn("grid size-7 flex-none place-items-center rounded-lg hover:bg-black/5", t.cloud ? "text-frost-text" : "text-plum-muted")}>{t.cloud ? <Cloud className="size-3.5" /> : <CloudOff className="size-3.5" />}</button>
                   <button type="button" onClick={(e) => { e.preventDefault(); renameThread(t.id); }} aria-label="rename" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-frost-text group-hover:opacity-100"><Pencil className="size-3.5" /></button>
                   <button type="button" onClick={(e) => { e.preventDefault(); deleteThread(t.id); }} aria-label="delete" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-red-500 group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
                 </div>
@@ -799,6 +819,13 @@ export function ShhChat({ me }: { me?: string }) {
 
         <ModelPicker models={models} value={model} onChange={setModel} checking={checking} loaded={modelsLoaded} rechecking={rechecking} onRecheck={recheck} />
         <span className="flex-1" />
+        {/* are this chat and the account in line? */}
+        {!room && (
+          <button type="button" onClick={() => cloud.syncNow()} title={cloud.status === "error" ? `couldn't sync: ${cloud.error} (tap to retry)` : "tap to sync now"} aria-label="sync chats now" className={cn("flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-bold hover:border-frost-hot", cloud.status === "error" ? "text-red-500" : "text-plum-muted")}>
+            {cloud.status === "syncing" ? <Loader2 className="size-3.5 animate-spin" /> : cloud.status === "error" ? <CloudOff className="size-3.5" /> : <Cloud className="size-3.5" />}
+            <span className="hidden sm:inline">{cloud.status === "syncing" ? "syncing" : cloud.status === "error" ? "offline" : cloud.status === "ok" ? "synced" : "cloud"}</span>
+          </button>
+        )}
         {/* quick decoy: pick a skin to throw up instantly */}
         <DM.Root>
           <DM.Trigger asChild>
@@ -817,6 +844,15 @@ export function ShhChat({ me }: { me?: string }) {
         <HumanizeDialog code={code} model={model} prefs={hum} setPrefs={setHum} />
         <Setup code={code} />
       </div>
+
+      {cloud.showNag && !room && (
+        <div className="flex flex-wrap items-center gap-2 rounded-shell border-1.5 border-frost-hot bg-cream-blush px-3 py-2">
+          <Cloud className="size-4 flex-none text-frost-text" />
+          <span className="min-w-0 flex-1 text-[13px] font-bold">{cloud.localOnly} {cloud.localOnly === 1 ? "chat only lives" : "chats only live"} on this device. move {cloud.localOnly === 1 ? "it" : "them"} to your account to see {cloud.localOnly === 1 ? "it" : "them"} everywhere you sign in.</span>
+          <button type="button" onClick={() => { cloud.moveAllToCloud(); toast("moving to your account ♡"); }} className="h-9 rounded-full bg-frost px-4 text-[13px] font-extrabold text-frost-ink">move them</button>
+          <button type="button" onClick={cloud.hideNag} className="h-9 rounded-full border-1.5 border-line bg-cream-card px-3 text-[13px] font-bold text-plum-muted hover:border-frost-hot">not now</button>
+        </div>
+      )}
 
       {room && (
         <div className="flex flex-wrap items-center gap-2 rounded-shell border-1.5 border-frost-hot bg-cream-blush px-3 py-2">
