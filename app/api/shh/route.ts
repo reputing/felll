@@ -456,6 +456,37 @@ export async function POST(req: Request) {
     return Response.json({ ok: true, updatedAt: at });
   }
 
+  // ---- clipboard box: text kept on the account for one-tap copying ----
+  const CLIP_MAX = 50, CLIP_BYTES = 1_500_000; // D1 rows top out at 2 MB
+  if (b.op === "clip_list") {
+    const rows = await all<{ id: string; title: string; updated_at: number; size: number; preview: string }>("select id, title, updated_at, length(body) as size, substr(body, 1, 160) as preview from shh_clips where user_id = ? order by updated_at desc limit 100", me.id);
+    return Response.json({ clips: rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updated_at, size: r.size, preview: r.preview })) }, { headers: { "cache-control": "no-store" } });
+  }
+  if (b.op === "clip_get") {
+    const id = String(b.id ?? "");
+    if (!THREAD_ID_RE.test(id)) return Response.json({ error: "bad id" }, { status: 400 });
+    const r = await first<{ body: string }>("select body from shh_clips where user_id = ? and id = ?", me.id, id);
+    if (!r) return Response.json({ error: "not found" }, { status: 404 });
+    return Response.json({ body: r.body }, { headers: { "cache-control": "no-store" } });
+  }
+  if (b.op === "clip_put") {
+    const body = String((b as { body?: unknown }).body ?? "");
+    const title = String(b.title ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!body.trim()) return Response.json({ error: "nothing to save" }, { status: 400 });
+    if (new TextEncoder().encode(body).length > CLIP_BYTES) return Response.json({ error: "that's too big to keep (1.5 MB max)" }, { status: 400 });
+    const given = String(b.id ?? "");
+    const id = THREAD_ID_RE.test(given) ? given : crypto.randomUUID();
+    const have = await first<{ n: number; mine: number }>("select count(*) as n, sum(id = ?) as mine from shh_clips where user_id = ?", id, me.id);
+    if ((have?.n ?? 0) >= CLIP_MAX && !have?.mine) return Response.json({ error: `that's ${CLIP_MAX} saved items, delete one first` }, { status: 400 });
+    await run("insert into shh_clips (user_id, id, title, body, updated_at) values (?, ?, ?, ?, ?) on conflict(user_id, id) do update set title = excluded.title, body = excluded.body, updated_at = excluded.updated_at", me.id, id, title, body, Date.now());
+    return Response.json({ id });
+  }
+  if (b.op === "clip_delete") {
+    const id = String(b.id ?? "");
+    if (THREAD_ID_RE.test(id)) await run("delete from shh_clips where user_id = ? and id = ?", me.id, id);
+    return Response.json({ ok: true });
+  }
+
   // ---- co-work rooms: a shared session several members work in at once ----
   const touchMember = (room: string) =>
     run("insert into shh_room_members (room_id, user_id, handle, last_seen) values (?, ?, ?, unixepoch()) on conflict(room_id, user_id) do update set last_seen = unixepoch(), handle = excluded.handle", room, me.id, me.handle).catch(() => {});

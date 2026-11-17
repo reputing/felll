@@ -15,6 +15,7 @@ import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/mo
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
 import { FillDocButton } from "@/components/shh/fill";
 import { useCloudChats } from "@/components/shh/use-cloud-chats";
+import { ClipboardBox } from "@/components/shh/clipboard";
 import { normalizeMath } from "@/lib/math-text";
 import { toast } from "@/lib/store";
 import { DISGUISES, maskTo, setFavicon } from "@/lib/tab-mask";
@@ -388,6 +389,25 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
         </D.Content>
       </D.Portal>
     </D.Root>
+  );
+}
+
+// One-tap copy for a whole message. Always visible (hover-only controls don't exist on a phone), and it says so when it worked.
+function CopyMsg({ text, label = "copy" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); }
+    catch { // older browsers / blocked clipboard: the selection fallback
+      const ta = document.createElement("textarea"); ta.value = text; ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch { toast("couldn’t copy"); ta.remove(); return; }
+      ta.remove();
+    }
+    setDone(true); setTimeout(() => setDone(false), 1400);
+  };
+  return (
+    <button type="button" onClick={copy} aria-label="copy message" className="flex min-h-8 items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-bold text-plum-muted hover:bg-black/5 hover:text-frost-text">
+      {done ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}{done ? "copied" : label}
+    </button>
   );
 }
 
@@ -843,6 +863,7 @@ export function ShhChat({ me }: { me?: string }) {
         <Customize prefs={prefs} setPrefs={setPrefs} />
         <HumanizeDialog code={code} model={model} prefs={hum} setPrefs={setHum} />
         <Setup code={code} />
+        <ClipboardBox code={code} />
       </div>
 
       {cloud.showNag && !room && (
@@ -902,7 +923,8 @@ export function ShhChat({ me }: { me?: string }) {
         )}
         {!room && msgs.map((m, i) => (
           <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-            <div className="group flex max-w-[85%] flex-col gap-1">
+            <div className={cn("group flex max-w-[85%] flex-col gap-1", m.role === "user" && "items-end")}>
+              {m.content.length > 1200 && !m.pending && <div className="px-1"><CopyMsg text={m.content} label="copy all" /></div>}
               <div className={cn("rounded-3xl px-4 py-2.5 text-[14.5px] leading-relaxed", m.role === "user" ? "whitespace-pre-wrap break-words bg-frost text-frost-ink" : "break-words bg-paper text-plum-body")}>
                 {m.images?.length ? (
                   <div className="mb-2 flex flex-wrap gap-1.5">
@@ -930,9 +952,10 @@ export function ShhChat({ me }: { me?: string }) {
                   </div>
                 ) : null}
               </div>
+              {m.role === "user" && m.content && <div className="px-1"><CopyMsg text={m.content} /></div>}
               {m.role === "assistant" && m.content && !m.pending && (
-                <div className="flex gap-1 px-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
-                  <button type="button" onClick={() => copyText(m.content)} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><Copy className="size-3" />copy</button>
+                <div className="flex flex-wrap items-center gap-1 px-1">
+                  <CopyMsg text={m.content} />
                   <button type="button" onClick={() => humanizeReply(i)} disabled={humBusy !== null} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text disabled:opacity-50">{humBusy === i ? <Loader2 className="size-3 animate-spin" /> : <Feather className="size-3" />}{m.orig ? "show original" : "humanize"}</button>
                   {i === msgs.length - 1 && !busy && <button type="button" onClick={regenerate} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><RotateCw className="size-3" />regenerate</button>}
                 </div>
