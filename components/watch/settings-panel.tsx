@@ -57,7 +57,10 @@ export function SettingsPanel(p: PanelProps) {
   const [busy, setBusy] = useState(false);
   const audios = (["sub", "dub", "raw"] as const).filter((a) => p.sources.some((s) => s.audio === a));
   const [audio, setAudio] = useState<"sub" | "dub" | "raw">(p.current?.audio ?? audios[0] ?? "sub");
-  const list = p.sources.filter((s) => s.audio === audio && (s.id === p.current?.id || (!p.dead.has(s.id) && !p.failed.has(s.id))));
+  // Every server stays listed, in a fixed order. Ones that don't respond are dimmed and labelled, never removed:
+  // the check runs while the panel is open, and servers vanishing under the cursor made them impossible to click.
+  const list = p.sources.filter((s) => s.audio === audio);
+  const down = (id: string | number) => p.dead.has(id) || p.failed.has(id);
   const capName = p.caption == null ? "Off" : p.subs.find((s) => s.id === p.caption)?.label ?? "On";
 
   const upload = async (f: File | undefined) => {
@@ -150,14 +153,17 @@ export function SettingsPanel(p: PanelProps) {
       <Label>Server</Label>
       {audios.length > 1 && (
         <div className="mb-1.5 flex gap-1" role="tablist" aria-label="Audio">
-          {audios.map((a) => <button key={a} type="button" role="tab" aria-selected={audio === a} onClick={() => setAudio(a)} className={cn(chip, "flex-1", audio === a ? on : off)}>{AUDIO_LABEL[a]}<span className="ml-1 opacity-60">{p.sources.filter((s) => s.audio === a && !p.dead.has(s.id)).length}</span></button>)}
+          {audios.map((a) => <button key={a} type="button" role="tab" aria-selected={audio === a} onClick={() => setAudio(a)} className={cn(chip, "flex-1", audio === a ? on : off)}>{AUDIO_LABEL[a]}<span className="ml-1 opacity-60">{p.sources.filter((s) => s.audio === a).length}</span></button>)}
         </div>
       )}
       <div className="flex flex-wrap gap-1.5">
-        {list.length === 0 && <span className="px-1 text-[12px] text-white/50">no working server for this</span>}
+        {list.length === 0 && <span className="px-1 text-[12px] text-white/50">no {AUDIO_LABEL[audio].toLowerCase()} server for this episode</span>}
         {list.map((s) => (
-          <button key={s.id} type="button" onClick={() => p.onPick(s)} aria-pressed={p.current?.id === s.id} className={cn(chip, "flex items-center gap-1.5", p.current?.id === s.id ? on : off)}>
+          <button key={s.id} type="button" onClick={() => p.onPick(s)} aria-pressed={p.current?.id === s.id}
+            title={down(s.id) && p.current?.id !== s.id ? "not responding a moment ago, tap to try again" : undefined}
+            className={cn(chip, "flex items-center gap-1.5", p.current?.id === s.id ? on : off, down(s.id) && p.current?.id !== s.id && "opacity-50")}>
             {s.label}{p.current?.id === s.id && <Check className="size-3.5" strokeWidth={3} />}
+            {down(s.id) && p.current?.id !== s.id && <span className="text-[10px] font-bold uppercase opacity-80">down</span>}
           </button>
         ))}
       </div>

@@ -146,6 +146,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
 
   // Pick a server AND remember this show's audio preference.
   const pick = useCallback((s: Source) => {
+    // choosing a server that failed (or was marked down) is a retry: clear its marks
+    setFailed((f) => { if (!f.has(s.id)) return f; const n = new Set(f); n.delete(s.id); return n; });
+    setDead((d) => { if (!d.has(s.id)) return d; const n = new Set(d); n.delete(s.id); return n; });
+    setError(null);
     setCurrent(s);
     try { localStorage.setItem(`audio:${meta.malId}`, s.audio); } catch { /* storage off */ }
   }, [meta.malId]);
@@ -237,9 +241,17 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   const fallback = useCallback((src: Source) => {
     setFailed((prev) => {
       const next = new Set(prev).add(src.id);
-      const cand = sources.find((s) => !next.has(s.id) && s.audio === src.audio) ?? sources.find((s) => !next.has(s.id));
+      // another server of the SAME audio only: quietly swapping a dub for a sub (what this used to do) hides
+      // that the dub is down. When the audio you chose has nothing left, say so and name the other side.
+      const cand = sources.find((s) => !next.has(s.id) && s.audio === src.audio);
       if (cand) setCurrent(cand);
-      else setError("This episode won’t play right now. Try again in a little while.");
+      else {
+        const label = src.audio === "dub" ? "dub" : src.audio === "raw" ? "raw" : "sub";
+        const other = sources.find((s) => s.audio !== src.audio && !next.has(s.id));
+        setError(other
+          ? `No ${label} server is working for this episode right now. Open settings and switch to ${other.audio === "dub" ? "Dub" : other.audio === "raw" ? "Raw" : "Sub"}, or tap a dimmed server to try it again.`
+          : "This episode won’t play right now. Try again in a little while, or tap a server in settings to retry.");
+      }
       return next;
     });
   }, [sources]);
