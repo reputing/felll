@@ -36,6 +36,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Typecheck first: a type error fails here, before anything is built or deployed.
+      - run: npx tsc --noEmit
       # Make sure kuro's SSO secrets live on THIS worker (so "Continue with kuro"
       # works). Add KURO_SERVICE_KEY and KURO_SUPABASE_URL as GitHub Actions
       # secrets; set only when present, so this is a no-op until you add them.
