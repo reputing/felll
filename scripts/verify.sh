@@ -9,14 +9,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> typecheck";            npx tsc --noEmit
-echo "==> next build"
-if ! npm run build >/tmp/verify-next.log 2>&1; then
-  if grep -q "SecurityFatalError" /tmp/verify-next.log; then
-    echo "   (next printed a security advisory and stopped; retrying once)"
-    npm run build >/tmp/verify-next.log 2>&1 || { tail -40 /tmp/verify-next.log; echo "next build FAILED"; exit 1; }
-  else
-    tail -40 /tmp/verify-next.log; echo "next build FAILED"; exit 1
+# run a build step; retry once only when it stopped on that advisory notice
+step() {
+  local name="$1" log="$2"; shift 2
+  echo "==> $name"
+  if ! "$@" >"$log" 2>&1; then
+    if grep -q "SecurityFatalError" "$log"; then
+      echo "   (next printed a security advisory and stopped; retrying once)"
+      "$@" >"$log" 2>&1 || { tail -40 "$log"; echo "$name FAILED"; exit 1; }
+    else
+      tail -40 "$log"; echo "$name FAILED"; exit 1
+    fi
   fi
-fi
-echo "==> cloudflare build";     npx opennextjs-cloudflare build >/tmp/verify-open.log 2>&1 || { tail -40 /tmp/verify-open.log; echo "cloudflare build FAILED"; exit 1; }
+}
+step "next build" /tmp/verify-next.log npm run build
+step "cloudflare build" /tmp/verify-open.log npx opennextjs-cloudflare build
 echo "all checks passed"
