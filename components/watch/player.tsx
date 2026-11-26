@@ -258,7 +258,8 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setFailed(next);
     const usable = (x: Source) => !next.has(x.id) && !deadRef.current.has(x.id);
     const cand = sources.find((x) => usable(x) && x.audio === src.audio) ?? sources.find(usable);
-    if (cand) { setFlash(`${src.label} didn’t work, trying ${cand.label}`); setCurrent(cand); }
+    // when the audio you chose has nothing left, say so plainly rather than swapping it without a word
+    if (cand) { setFlash(cand.audio !== src.audio ? `No ${src.audio} server is working, switched to ${cand.audio}` : `${src.label} didn’t work, trying ${cand.label}`); setCurrent(cand); }
     else setError("This episode won’t play right now. Try again in a little while.");
   }, [sources]);
 
