@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 // "Add to list" — a dialog that lists the viewer's collections with a checkbox
 // each (toggles add/remove for this item), plus an inline "new list" field.
-export function AddToCollection({ kind, refId, title, cover, className }: { kind: "anime" | "manga"; refId: string; title: string; cover: string | null; className?: string }) {
+export function AddToCollection({ kind, refId, title, cover, className }: { kind: "anime" | "manga" | "movie" | "tv"; refId: string; title: string; cover: string | null; className?: string }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<PickerRow[] | null>(null);
   const [name, setName] = useState("");
@@ -47,7 +47,7 @@ export function AddToCollection({ kind, refId, title, cover, className }: { kind
     <D.Root open={open} onOpenChange={(o) => { setOpen(o); if (o) load(); }}>
       <D.Trigger asChild>
         <button type="button" className={cn("flex h-11 items-center gap-2 rounded-full border-1.5 border-line bg-cream-card px-5 font-bold text-plum-body transition hover:border-frost-hot", className)}>
-          <FolderPlus className="size-4" />Add to list
+          <FolderPlus className="size-4" />Collection
         </button>
       </D.Trigger>
       <D.Portal>

@@ -3,6 +3,16 @@ import { currentSeason, getGenres, getHome, getScheduleDay, getSeason, WEEKDAYS 
 import { run } from "@/lib/db";
 import { runAiringCheck } from "@/lib/airing";
 import { backfillAvatars } from "@/lib/kuro";
+import { movieCatalog } from "@/lib/tmdb";
+
+// The four shelves of the movies hub (page one of each), so the hub is never the one that pays for a cold catalog call. A
+// stale list is refreshed in the background by the call itself.
+async function warmMovies() {
+  await Promise.allSettled([
+    movieCatalog({ type: "movie", sort: "popular" }), movieCatalog({ type: "tv", sort: "popular" }),
+    movieCatalog({ type: "all", sort: "rating" }), movieCatalog({ type: "all", sort: "recent" }),
+  ]);
+}
 
 // Keep the weebcentral (comick-source-api) container warm so readers never pay a
 // ~40s cold start (it sleeps after 30m; this cron runs every 20m).
@@ -29,12 +39,15 @@ export async function GET(req: Request) {
   await runAiringCheck().catch(() => {});
   await backfillAvatars().catch(() => {});
   await warmWeeb();
+  await warmMovies();
   await Promise.allSettled([
     run("delete from presence where updated_at < unixepoch() - 86400"),
-    run("delete from sessions where expires_at < unixepoch()"),
+    run("delete from sessions where expires_at < unixepoch() or revoked_at < unixepoch() - 7 * 86400"),
     run("delete from sso_burned where expires_at < unixepoch()"),
     run("delete from jikan_cache where fetched_at < unixepoch() - 30 * 86400"),
     run("delete from daily_views where day < date('now', '-60 days')"),
+    // a deleted /shh chat is kept as a tombstone long enough for every device to hear about it, then swept
+    run("delete from shh_cloud_threads where deleted = 1 and updated_at < (unixepoch() - 90 * 86400) * 1000"),
     // keep the global chat to the most recent ~500 messages
     run("delete from chat_messages where id <= (select max(id) - 500 from chat_messages)"),
   ]);

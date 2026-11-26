@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 interface Pref { key: string; label: string; hint: string; icon: React.ComponentType<{ className?: string }>; fallback: boolean }
 const PREFS: Pref[] = [
   { key: "autoNext", label: "Auto-play next episode", hint: "Roll into the next episode when one ends.", icon: SkipForward, fallback: true },
-  { key: "autoSkip", label: "Auto-skip intros", hint: "Jump the opening when skip markers are known.", icon: FastForward, fallback: false },
+  { key: "autoSkip", label: "Auto-skip intros", hint: "Jump the opening when skip markers are known. Anime, films and series.", icon: FastForward, fallback: false },
+  { key: "autoSkipOutro", label: "Auto-skip outros", hint: "Roll straight to the next episode when the credits start.", icon: SkipForward, fallback: false },
   { key: "preferDub", label: "Prefer dub", hint: "Start on a dub server when one’s available.", icon: Languages, fallback: false },
   { key: "theater", label: "Theater mode by default", hint: "Open the player wide, sidebar tucked under.", icon: Captions, fallback: false },
 ];

@@ -5,6 +5,7 @@ import { STRENGTHS, TONES, buildStyleGuide, humanizeText, type Strength, type To
 import { ocrNoteFor, readImagesWithOcr } from "@/lib/ocr";
 import { ThinkFilter, candidatesFor, chatWithFailover, cleanErr, markDown, modelFault, providersFor, readSSE, refreshModels, splitId, workingModels, type ModelRow, type Provider } from "@/lib/ai";
 import { d1Store } from "@/lib/ai-store";
+import { CLOUD_MAX_THREADS, THREAD_ID_RE, trimForCloud } from "@/lib/shh-cloud";
 import { formatHits, htmlToText, isPublicHttpUrl, parseDuckLite } from "@/lib/web";
 
 // The private AI corner (/shh). Members only, and gated by a code (SHH_CODE,
@@ -397,6 +398,95 @@ export async function POST(req: Request) {
     return Response.json({ ok: true });
   }
 
+  // ---- cloud chats: the member's own chats, kept on their account (see lib/shh-cloud.ts) ----
+  // Metadata only here (no bodies), tombstones included, so a device can tell what changed without downloading every chat.
+  if (b.op === "cloud_list") {
+    const rows = await all<{ id: string; title: string; updated_at: number; deleted: number }>("select id, title, updated_at, deleted from shh_cloud_threads where user_id = ? order by updated_at desc limit 1000", me.id);
+    return Response.json({ user: me.id, threads: rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updated_at, deleted: !!r.deleted })) }, { headers: { "cache-control": "no-store" } });
+  }
+  if (b.op === "cloud_get") {
+    const id = String(b.id ?? "");
+    if (!THREAD_ID_RE.test(id)) return Response.json({ error: "bad id" }, { status: 400 });
+    const r = await first<{ title: string; updated_at: number; deleted: number; body: string }>("select title, updated_at, deleted, body from shh_cloud_threads where user_id = ? and id = ?", me.id, id);
+    if (!r) return Response.json({ error: "not found" }, { status: 404 });
+    let messages: unknown = [];
+    try { messages = JSON.parse(r.body); } catch { /* an unreadable body reads as an empty chat */ }
+    return Response.json({ id, title: r.title, updatedAt: r.updated_at, deleted: !!r.deleted, messages: r.deleted ? [] : messages }, { headers: { "cache-control": "no-store" } });
+  }
+  // Save a few chats at once. Per chat, the later change wins: an older copy from a device that was offline cannot overwrite a newer one.
+  if (b.op === "cloud_put") {
+    const list = Array.isArray((b as { threads?: unknown }).threads) ? ((b as { threads: any[] }).threads) : [];
+    if (!list.length || list.length > 10) return Response.json({ error: "send 1 to 10 chats at a time" }, { status: 400 });
+    const have = await first<{ n: number }>("select count(*) as n from shh_cloud_threads where user_id = ? and deleted = 0", me.id);
+    let count = have?.n ?? 0;
+    const saved: { id: string; updatedAt: number; trimmed: boolean; kept: boolean }[] = [];
+    for (const t of list) {
+      const id = String(t?.id ?? "");
+      const updatedAt = Math.floor(Number(t?.updatedAt));
+      if (!THREAD_ID_RE.test(id) || !Number.isFinite(updatedAt) || updatedAt <= 0 || updatedAt > Date.now() + 86_400_000) continue;
+      const exists = await first<{ updated_at: number; deleted: number }>("select updated_at, deleted from shh_cloud_threads where user_id = ? and id = ?", me.id, id);
+      if (exists && exists.updated_at >= updatedAt) { saved.push({ id, updatedAt: exists.updated_at, trimmed: false, kept: true }); continue; } // the account already has this or newer
+      if ((!exists || exists.deleted) && count >= CLOUD_MAX_THREADS) return Response.json({ error: `that's ${CLOUD_MAX_THREADS} chats on your account — delete some first` }, { status: 400 });
+      const { messages, trimmed } = trimForCloud(t.messages);
+      const title = String(t.title ?? "new chat").replace(/\s+/g, " ").trim().slice(0, 120) || "new chat";
+      await run(
+        "insert into shh_cloud_threads (user_id, id, title, updated_at, deleted, body) values (?, ?, ?, ?, 0, ?) on conflict(user_id, id) do update set title = excluded.title, updated_at = excluded.updated_at, deleted = 0, body = excluded.body where excluded.updated_at > shh_cloud_threads.updated_at",
+        me.id, id, title, updatedAt, JSON.stringify(messages),
+      );
+      if (!exists || exists.deleted) count++;
+      saved.push({ id, updatedAt, trimmed, kept: false });
+    }
+    return Response.json({ saved });
+  }
+  // Delete leaves a tombstone so the member's other devices drop their copy as well.
+  if (b.op === "cloud_delete") {
+    const id = String(b.id ?? "");
+    if (!THREAD_ID_RE.test(id)) return Response.json({ error: "bad id" }, { status: 400 });
+    // A delete for a chat the account never had still writes a tombstone (another device may be about to upload it), so the table is
+    // capped per member: past that, new unknown ids are ignored rather than stored.
+    const known = await first<{ n: number; has: number }>("select count(*) as n, sum(id = ?) as has from shh_cloud_threads where user_id = ?", id, me.id);
+    if ((known?.n ?? 0) >= 1000 && !known?.has) return Response.json({ ok: true });
+    // stamped with the device's clock like every edit, so "deleted, then edited again" compares on one timeline
+    const given = Math.floor(Number((b as { at?: unknown }).at));
+    const at = Number.isFinite(given) && given > 0 ? Math.min(given, Date.now() + 86_400_000) : Date.now();
+    await run(
+      "insert into shh_cloud_threads (user_id, id, title, updated_at, deleted, body) values (?, ?, 'deleted', ?, 1, '[]') on conflict(user_id, id) do update set deleted = 1, updated_at = max(shh_cloud_threads.updated_at, excluded.updated_at), body = '[]', title = 'deleted'",
+      me.id, id, at,
+    );
+    return Response.json({ ok: true, updatedAt: at });
+  }
+
+  // ---- clipboard box: text kept on the account for one-tap copying ----
+  const CLIP_MAX = 50, CLIP_BYTES = 1_500_000; // D1 rows top out at 2 MB
+  if (b.op === "clip_list") {
+    const rows = await all<{ id: string; title: string; updated_at: number; size: number; preview: string }>("select id, title, updated_at, length(body) as size, substr(body, 1, 160) as preview from shh_clips where user_id = ? order by updated_at desc limit 100", me.id);
+    return Response.json({ clips: rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updated_at, size: r.size, preview: r.preview })) }, { headers: { "cache-control": "no-store" } });
+  }
+  if (b.op === "clip_get") {
+    const id = String(b.id ?? "");
+    if (!THREAD_ID_RE.test(id)) return Response.json({ error: "bad id" }, { status: 400 });
+    const r = await first<{ body: string }>("select body from shh_clips where user_id = ? and id = ?", me.id, id);
+    if (!r) return Response.json({ error: "not found" }, { status: 404 });
+    return Response.json({ body: r.body }, { headers: { "cache-control": "no-store" } });
+  }
+  if (b.op === "clip_put") {
+    const body = String((b as { body?: unknown }).body ?? "");
+    const title = String(b.title ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!body.trim()) return Response.json({ error: "nothing to save" }, { status: 400 });
+    if (new TextEncoder().encode(body).length > CLIP_BYTES) return Response.json({ error: "that's too big to keep (1.5 MB max)" }, { status: 400 });
+    const given = String(b.id ?? "");
+    const id = THREAD_ID_RE.test(given) ? given : crypto.randomUUID();
+    const have = await first<{ n: number; mine: number }>("select count(*) as n, sum(id = ?) as mine from shh_clips where user_id = ?", id, me.id);
+    if ((have?.n ?? 0) >= CLIP_MAX && !have?.mine) return Response.json({ error: `that's ${CLIP_MAX} saved items, delete one first` }, { status: 400 });
+    await run("insert into shh_clips (user_id, id, title, body, updated_at) values (?, ?, ?, ?, ?) on conflict(user_id, id) do update set title = excluded.title, body = excluded.body, updated_at = excluded.updated_at", me.id, id, title, body, Date.now());
+    return Response.json({ id });
+  }
+  if (b.op === "clip_delete") {
+    const id = String(b.id ?? "");
+    if (THREAD_ID_RE.test(id)) await run("delete from shh_clips where user_id = ? and id = ?", me.id, id);
+    return Response.json({ ok: true });
+  }
+
   // ---- co-work rooms: a shared session several members work in at once ----
   const touchMember = (room: string) =>
     run("insert into shh_room_members (room_id, user_id, handle, last_seen) values (?, ?, ?, unixepoch()) on conflict(room_id, user_id) do update set last_seen = unixepoch(), handle = excluded.handle", room, me.id, me.handle).catch(() => {});
@@ -570,7 +660,8 @@ export async function POST(req: Request) {
               try {
                 rr = await fetch(`${prov.base}/chat/completions`, {
                   method: "POST",
-                  headers: { "content-type": "application/json", accept: "text/event-stream", authorization: `Bearer ${prov.key}` },
+                  // a keyless provider gets no Authorization header at all: AI Horde answers an empty "Bearer " with a 401 (OVH and Kilo ignore it)
+                  headers: { "content-type": "application/json", accept: "text/event-stream", ...(prov.key ? { authorization: `Bearer ${prov.key}` } : {}) },
                   body: JSON.stringify({ model: sp.id, messages: sendMsgs, tools: useTools ? tools : undefined, stream: true }),
                   signal: ac.signal,
                 });

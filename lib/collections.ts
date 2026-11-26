@@ -1,7 +1,7 @@
 // Client calls for member collections (mixed anime + manga lists). Every call
 // parses the JSON body even on a non-2xx so the reason reaches the user.
 export interface CollectionCard { id: string; name: string; visibility: string; count: number; covers: string[] }
-export interface CollectionItem { kind: "anime" | "manga"; ref_id: string; title: string; cover: string | null; added_at: number }
+export interface CollectionItem { kind: "anime" | "manga" | "movie" | "tv"; ref_id: string; title: string; cover: string | null; added_at: number }
 export interface CollectionFull { id: string; user_id: string; name: string; visibility: string; created_at: number; handle: string; display_name: string; avatar_url: string | null; accent: string }
 export interface PickerRow { id: string; name: string; visibility: string; has: number }
 
@@ -28,7 +28,7 @@ export const createCollection = (name: string, visibility = "public") => post<{ 
 export const renameCollection = (id: string, name: string) => post({ op: "rename", id, name });
 export const setCollectionVisibility = (id: string, visibility: string) => post({ op: "visibility", id, visibility });
 export const deleteCollection = (id: string) => post({ op: "delete", id });
-export const addToCollection = (id: string, kind: "anime" | "manga", refId: string, title: string, cover: string | null) => post({ op: "add", id, kind, refId, title, cover });
-export const removeFromCollection = (id: string, kind: "anime" | "manga", refId: string) => post({ op: "remove", id, kind, refId });
+export const addToCollection = (id: string, kind: "anime" | "manga" | "movie" | "tv", refId: string, title: string, cover: string | null) => post({ op: "add", id, kind, refId, title, cover });
+export const removeFromCollection = (id: string, kind: "anime" | "manga" | "movie" | "tv", refId: string) => post({ op: "remove", id, kind, refId });
 
-export const itemHref = (i: { kind: string; ref_id: string }) => (i.kind === "manga" ? `/manga/${i.ref_id}` : `/anime/${i.ref_id}`);
+export const itemHref = (i: { kind: string; ref_id: string }) => (i.kind === "manga" ? `/manga/${i.ref_id}` : i.kind === "movie" || i.kind === "tv" ? `/movies/${i.kind}-${i.ref_id}` : `/anime/${i.ref_id}`);

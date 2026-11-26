@@ -1,16 +1,33 @@
 import { ArrowRight, CalendarClock, Heart, MessagesSquare, Radio, Sparkles, Star, Tv } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { currentUser, safeNext } from "@/lib/auth";
-import { all } from "@/lib/db";
+import { cookies } from "next/headers";
+import { currentUser, KNOWN_COOKIE, revokedNotice, SESSION_COOKIE, safeNext } from "@/lib/auth";
+import { all, env } from "@/lib/db";
 import { jikanOr, normAnime } from "@/lib/jikan";
 import { kuroConfig } from "@/lib/kuro";
 import { compact } from "@/lib/utils";
 import { LoginForm } from "@/components/portal/login-form";
+import { SecretGate } from "@/components/portal/secret-gate";
 import { PosterWall } from "@/components/portal/poster-wall";
 import { Avatar } from "@/components/avatar";
 
-export const metadata = { title: "The portal" };
+// Looks like an outage until the secret key is pressed (components/portal/secret-gate.tsx), so it is not for search engines either.
+// The sign-in can pose as an outage page ("503 Service Unavailable") that a secret key opens (components/portal/secret-gate.tsx). It is
+// switched OFF for now; set PORTAL_DISGUISE=1 (a var in wrangler.jsonc) to bring it back.
+const DOWN = "The server is temporarily unable to service your request due to maintenance downtime or capacity problems. Please try again later.";
+// read like the site's other settings (Cloudflare variables first, then the process environment), so it works in dev and on the Worker
+const disguised = async () => ((await env()).PORTAL_DISGUISE ?? process.env.PORTAL_DISGUISE) === "1";
+export async function generateMetadata() {
+  if (!(await disguised())) return { title: "The portal" };
+  return {
+    title: { absolute: "503 Service Unavailable" },
+    description: DOWN,
+    robots: { index: false, follow: false },
+    openGraph: { title: "503 Service Unavailable", description: DOWN, siteName: "", images: [] },
+    twitter: { title: "503 Service Unavailable", description: DOWN, images: [] },
+  };
+}
 
 const ERRORS: Record<string, string> = {
   expired: "That sign-in link expired. Give it another go.",
@@ -31,12 +48,19 @@ const FEATURES = [
   { Icon: Sparkles, label: "Your page", note: "banner, showcase, skins" },
 ];
 
-type Props = { searchParams: Promise<{ next?: string; error?: string; sso?: string; bye?: string }> };
+type Props = { searchParams: Promise<{ next?: string; error?: string; sso?: string; bye?: string; out?: string }> };
 
 export default async function Portal({ searchParams }: Props) {
   const sp = await searchParams;
   const next = safeNext(sp.next);
   if (await currentUser()) redirect(next);
+  // Someone who has signed in on this browser before (or whose session was just ended, here or from another device) is a member, not a
+  // stranger: they get the real sign-in, never the "unavailable" page.
+  const jar = await cookies();
+  const returning = jar.has(KNOWN_COOKIE) || jar.has(SESSION_COOKIE) || !!sp.bye;
+  // A device that was signed out from another device gets the "unavailable" page, not the sign-in: its cookies are cleared and it is
+  // a stranger again (app/api/auth/revoked).
+  if (await revokedNotice()) redirect("/api/auth/revoked");
 
   const [wall, stats, faces, cfg] = await Promise.all([
     jikanOr<{ data: unknown[] }>("/top/anime?filter=airing&limit=25&sfw=true", { data: [] }, 3600),
@@ -55,14 +79,13 @@ export default async function Portal({ searchParams }: Props) {
   const error = sp.error ? ERRORS[sp.error] : sp.sso ? "You’re not signed in on kuro yet. Sign in there, or use your handle below." : null;
   const dev = process.env.NODE_ENV !== "production";
 
-  return (
+  const page = (
     <main className="relative grid min-h-svh place-items-center overflow-hidden px-4 py-10">
       <PosterWall items={posters} />
-      <div aria-hidden className="pointer-events-none absolute -left-32 -top-32 size-[480px] rounded-full bg-frost/30 blur-3xl" />
-      <div aria-hidden className="pointer-events-none absolute -bottom-40 -right-24 size-[520px] rounded-full bg-sprinkle-lilac/20 blur-3xl" />
+      <div aria-hidden className="aurora"><i /><i /><i /></div>
 
       <div className="relative z-10 grid w-full max-w-[980px] items-stretch gap-4 animate-rise lg:grid-cols-[1.05fr_1fr]">
-        <section className="flex flex-col justify-between gap-8 rounded-shell border-1.5 border-night-line bg-night p-8 text-night-text shadow-[0_40px_80px_-40px_rgba(42,20,32,.9)]">
+        <section className="flex flex-col justify-between gap-8 beam rounded-shell border border-white/15 bg-black/55 p-6 text-night-text shadow-[inset_0_1px_0_rgb(255_255_255/.14),0_40px_80px_-40px_rgba(0,0,0,.9)] backdrop-blur-2xl sm:p-8">
           <div>
             <div className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -81,7 +104,7 @@ export default async function Portal({ searchParams }: Props) {
           </div>
           <ul className="grid grid-cols-2 gap-2">
             {FEATURES.map(({ Icon, label, note }) => (
-              <li key={label} className="rounded-2xl border border-night-line bg-night-line/40 p-3">
+              <li key={label} className="rounded-2xl border border-white/10 bg-white/[.06] p-3 backdrop-blur">
                 <Icon className="size-4 text-frost" />
                 <div className="mt-2 text-[13px] font-extrabold">{label}</div>
                 <div className="text-[11.5px] text-night-muted/80">{note}</div>
@@ -90,7 +113,7 @@ export default async function Portal({ searchParams }: Props) {
           </ul>
         </section>
 
-        <section className="flex flex-col gap-5 rounded-shell border-1.5 border-line bg-cream-card/95 p-7 shadow-shell backdrop-blur-xl">
+        <section className="flex flex-col gap-5 glass-strong rounded-shell p-6 sm:p-7">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 rounded-full border-1.5 border-line bg-paper px-3 py-1.5 text-[12px] font-bold text-plum-body">
               <span className="size-2 rounded-full bg-sprinkle-mint animate-pulse-dot" /> {compact(s.online)} online now
@@ -144,4 +167,7 @@ export default async function Portal({ searchParams }: Props) {
       </div>
     </main>
   );
+  return (await disguised())
+    ? <SecretGate open={!sp.out && (returning || !!sp.error || !!sp.sso)} locked={!!sp.out}>{page}</SecretGate>
+    : page;
 }

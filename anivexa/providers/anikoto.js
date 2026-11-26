@@ -2,7 +2,9 @@ import { getMedia } from '../core/anilist.js';
 import { extractMegaPlayDetails } from "../extractors/megaplay.js";
 import { buildTitleSearchQueries, buildTitles, decodeEntities, titleIdentityScore } from "../core/new-provider-utils.js";
 
-const ANIKOTO = "https://anikototv.to";
+// Anikoto moved from anikototv.to to anikototv.bz (the old address redirects). Its pages now link to the new host, and the matching below only
+// looked for the old one, which is why every search came back empty ("No confident Anikoto title candidates"). Both hosts are accepted.
+const ANIKOTO = "https://anikototv.bz";
 const MAPPER = "https://mapper.nekostream.site/api/mal";
 const ANIZIP = "https://api.ani.zip/mappings";
 const SPOOF_REF = "https://hianimes.re/";
@@ -88,7 +90,7 @@ async function searchAnikoto(query) {
   const searchHtml = await httpGet(`${ANIKOTO}/filter?keyword=${encodeURIComponent(query)}`, { Referer: `${ANIKOTO}/` });
   const candidates = [];
   
-  const re = /<a\s+class="name d-title"\s+href="https:\/\/anikototv\.to\/watch\/([^"/]+)(?:\/ep-\d+)?"[^>]*data-jp="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+  const re = /<a\s+class="name d-title"\s+href="https:\/\/anikototv\.(?:to|bz)\/watch\/([^"/]+)(?:\/ep-\d+)?"[^>]*data-jp="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
   let m;
   while ((m = re.exec(searchHtml)) !== null) {
     const slug = m[1];
@@ -98,7 +100,7 @@ async function searchAnikoto(query) {
   }
 
   if (!candidates.length) {
-    const reFallback = /<a\s+href="https:\/\/anikototv\.to\/watch\/([^"/]+)(?:\/ep-\d+)?"[^>]*>([\s\S]*?)<\/a>/g;
+    const reFallback = /<a\s+href="https:\/\/anikototv\.(?:to|bz)\/watch\/([^"/]+)(?:\/ep-\d+)?"[^>]*>([\s\S]*?)<\/a>/g;
     while ((m = reFallback.exec(searchHtml)) !== null) {
       candidates.push({ slug: m[1], name: m[1], jp: "" });
     }
@@ -550,7 +552,7 @@ async function handleWatch(anilistId, audio, epNum, ctx = {}) {
     downloads,
     headers: {
       "User-Agent": UA,
-      "Referer": streams[0]?.referer || "https://anikototv.to/"
+      "Referer": streams[0]?.referer || `${ANIKOTO}/`
     }
   });
 }

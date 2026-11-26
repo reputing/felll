@@ -50,6 +50,8 @@
     // The catalog comes from `npm run sync` (AniList/Kitsu), never live Jikan.
     // This makes any stray live call fail fast instead of hanging on a timeout.
     "JIKAN_DISABLED": "1",
+    // /shh fallback with no key: AI Horde (volunteers' machines answer, so it is last in line). See lib/ai.ts.
+    "AIHORDE_ENABLED": "1",
     // The Anivexa backend ("the bot"). Deploy anivexa-server/ as a Cloudflare
     // Container (npm run anivexa:container:deploy) and point this at its URL.
     "ANIVEXA_API_URL": "https://anivexa-api.matthewsjakael.workers.dev",
@@ -64,6 +66,12 @@
     "VORTEXSCANS_API_URL": "https://vortexscans-api.matthewsjakael.workers.dev",
     "DOUJIN_API_URL": "https://doujin-api.matthewsjakael.workers.dev",
     // Embed host for the movie players (overridable since it moves).
-    "VIDCORE_EMBED_BASE": "https://vidcore.org"
+    "VIDCORE_EMBED_BASE": "https://vidcore.org",
+    // Ad-free native movie/TV sources (Lamda + AdRock) resolved in a container.
+    // Deploy movie-resolver-server/ (npm run movie-resolver:container:deploy) and
+    // set MOVIE_RESOLVER_KEY with `wrangler secret put`.
+    // "1" makes the signed-out front page look like a 503 outage (a secret key opens the sign-in). Off for now.
+    "PORTAL_DISGUISE": "0",
+    "MOVIE_RESOLVER_URL": "https://movie-resolver-api.matthewsjakael.workers.dev"
   }
 }

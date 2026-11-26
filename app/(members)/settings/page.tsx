@@ -4,6 +4,7 @@ import { PageHead } from "@/components/page-head";
 import { ProfileEditor } from "@/components/settings/editor";
 import { PlaybackSettings } from "@/components/settings/playback";
 import { SyncPanel } from "@/components/settings/sync-panel";
+import { DevicesPanel } from "@/components/settings/devices-panel";
 
 export const metadata = { title: "Customize" };
 
@@ -28,6 +29,7 @@ export default async function Settings() {
       />
       <SyncPanel />
       <PlaybackSettings />
+      <DevicesPanel />
     </div>
   );
 }

@@ -37,6 +37,8 @@ export async function memberStats(userId: string) {
       userId,
     ).catch(() => []),
   ]);
+  // films and series: how many are finished (needs migration 0021, so a missing table just counts as none)
+  const movies = await first<{ done: number; watching: number }>("select sum(status = 'completed') as done, sum(status = 'watching') as watching from movie_library where user_id = ?", userId).catch(() => null);
   const episodes = Number(s?.episodes ?? 0);
   return {
     entries: Number(s?.entries ?? 0),
@@ -50,6 +52,7 @@ export async function memberStats(userId: string) {
     rated: Number(s?.rated ?? 0),
     streak: streakFromDays(watchDays),
     mangaRead: Number(mangaRow?.n ?? 0),
+    moviesDone: Number(movies?.done ?? 0),
     readStreak: streakFromDays(mangaDays),
   };
 }

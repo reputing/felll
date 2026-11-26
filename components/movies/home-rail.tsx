@@ -2,6 +2,14 @@ import Link from "next/link";
 import { ChevronRight, Star } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { tmdbTrending } from "@/lib/tmdb";
+import { continueWatching } from "@/lib/movie-user";
+import { ContinueRail } from "@/components/movies/rail";
+
+/** Films and series the member is part-way through, for the home page. Nothing when there are none. */
+export async function MoviesContinue({ userId }: { userId: string }) {
+  const items = await continueWatching(userId, 12);
+  return <ContinueRail items={items} title="Keep watching: films & series" />;
+}
 
 // A broad "beyond anime" rail for the home page. Hidden when TMDB isn't
 // configured (tmdbTrending returns []).

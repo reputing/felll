@@ -5,6 +5,8 @@ import { Search, Star } from "lucide-react";
 import { Poster } from "@/components/poster";
 import { cn } from "@/lib/utils";
 import type { MovieCard } from "@/lib/tmdb";
+import { GENRES } from "@/lib/cinema";
+import { CATALOG } from "@/lib/catalog-size";
 
 // Anime has its own section, so the movies page is films + series only.
 const TABS = [
@@ -13,29 +15,40 @@ const TABS = [
   { v: "tv", label: "TV series" },
 ] as const;
 
-export function MovieBrowse() {
+const SORTS = [
+  { v: "popular", label: "Popular" },
+  { v: "rating", label: "Top rated" },
+  { v: "recent", label: "New" },
+] as const;
+
+export function MovieBrowse({ initialGenre = "", initialQuery = "" }: { initialGenre?: string; initialQuery?: string }) {
   const [type, setType] = useState("all");
-  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<string>("popular");
+  const [genre, setGenre] = useState(GENRES.includes(initialGenre) ? initialGenre : "");
+  const [q, setQ] = useState(initialQuery);
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MovieCard[] | null>(null);
   const [totalPages, setTotalPages] = useState(1);
+  const [down, setDown] = useState(false);
+  const [tries, setTries] = useState(0);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  useEffect(() => { setPage(1); }, [type, q]);
+  useEffect(() => { setPage(1); }, [type, q, sort, genre]);
 
   useEffect(() => {
     clearTimeout(debounce.current);
     debounce.current = setTimeout(() => {
       setItems(null);
-      const qs = new URLSearchParams({ type, sort: "rating", page: String(page) });
+      const qs = new URLSearchParams({ type, sort, page: String(page) });
       if (q.trim()) qs.set("q", q.trim());
+      if (genre && sort !== "recent") qs.set("genre", genre);
       fetch(`/api/movie/catalog?${qs}`)
         .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { setItems(d?.items ?? []); setTotalPages(d?.totalPages ?? 1); })
-        .catch(() => setItems([]));
+        .then((d) => { setItems(d?.items ?? []); setTotalPages(d?.totalPages ?? 1); setDown(!d || !!d.degraded); })
+        .catch(() => { setItems([]); setDown(true); });
     }, q ? 350 : 0);
     return () => clearTimeout(debounce.current);
-  }, [type, q, page]);
+  }, [type, q, page, sort, genre, tries]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -43,12 +56,28 @@ export function MovieBrowse() {
         {TABS.map((t) => (
           <button key={t.v} type="button" aria-pressed={type === t.v} onClick={() => setType(t.v)}
             className={cn("h-[42px] rounded-full border-1.5 border-line bg-cream-card px-5 text-[13.5px] font-bold hover:border-frost-hot", type === t.v && "border-frost-hot bg-frost text-frost-ink")}>
-            {t.label}
+            {t.label}<span className="ml-1.5 font-mono text-[11.5px] opacity-75">{CATALOG[t.v]}</span>
           </button>
         ))}
+        {!q.trim() && (
+          <>
+            <span aria-hidden className="mx-1 hidden h-6 w-px bg-line sm:block" />
+            {SORTS.map((t) => (
+              <button key={t.v} type="button" aria-pressed={sort === t.v} onClick={() => setSort(t.v)}
+                className={cn("h-[42px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold hover:border-frost-hot", sort === t.v && "border-frost-hot bg-frost text-frost-ink")}>
+                {t.label}
+              </button>
+            ))}
+            <select value={sort === "recent" ? "" : genre} disabled={sort === "recent"} onChange={(e) => setGenre(e.target.value)} aria-label="Genre"
+              className="h-[42px] rounded-full border-1.5 border-line bg-cream-card px-4 text-[13px] font-bold outline-none hover:border-frost-hot disabled:opacity-50">
+              <option value="">All genres</option>
+              {GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </>
+        )}
         <div className="relative ml-auto">
           <Search aria-hidden className="pointer-events-none absolute left-3.5 top-1/2 size-[17px] -translate-y-1/2 text-plum-muted" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search movies & series…" aria-label="Search"
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${CATALOG.all} films & series…`} aria-label="Search"
             className="h-[42px] w-[220px] max-w-full rounded-full border-1.5 border-line bg-cream-card pl-10 pr-4 text-[13.5px] font-semibold outline-none focus:border-frost-hot" />
         </div>
       </div>
@@ -58,9 +87,16 @@ export function MovieBrowse() {
           {Array.from({ length: 12 }).map((_, i) => <div key={i} className="aspect-[2/3] rounded-2xl skeleton" />)}
         </div>
       ) : items.length === 0 ? (
-        <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">
-          {q.trim() ? `Nothing matches “${q.trim()}”.` : "No titles here yet."}
-        </p>
+        down ? (
+          <div className="flex flex-col items-center gap-3 rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center">
+            <p className="font-semibold text-plum-muted">The catalog isn’t answering right now. It usually comes back within a minute.</p>
+            <button type="button" onClick={() => setTries((n) => n + 1)} className="h-10 rounded-full bg-frost px-6 text-[13px] font-extrabold text-frost-ink">Try again</button>
+          </div>
+        ) : (
+          <p className="rounded-box border-1.5 border-dashed border-line bg-cream-card p-10 text-center font-semibold text-plum-muted">
+            {q.trim() ? `Nothing matches “${q.trim()}”.` : "No titles here yet."}
+          </p>
+        )
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3.5">
           {items.map((m) => (

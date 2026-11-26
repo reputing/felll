@@ -7,7 +7,8 @@ import {
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useBox } from "@/lib/store";
+import { toast, useBox } from "@/lib/store";
+import { introIsSane, outroIsSane, useSkipPrefs } from "@/lib/use-skip-prefs";
 import { REACTIONS } from "@/lib/reactions";
 import { fetchAniSkip } from "@/lib/aniskip";
 import { clock, cn } from "@/lib/utils";
@@ -81,7 +82,10 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
   // and the ended handler fires again, so without this the countdown restarted the moment
   // it was dismissed ("loops back into that interaction again").
   const nextDismissed = useRef(false);
-  useEffect(() => { nextDismissed.current = false; }, [meta.malId, meta.ep]);
+  // auto-skip jumps once per episode: if the viewer scrubs back into the opening, we leave them there
+  const skipped = useRef({ intro: false, outro: false });
+  const skip = useSkipPrefs();
+  useEffect(() => { nextDismissed.current = false; skipped.current = { intro: false, outro: false }; }, [meta.malId, meta.ep]);
   const [flash, setFlash] = useState<string | null>(null);
   const [stopAfterEp, setStopAfterEp] = useState(false);
   const [sleepMin, setSleepMin] = useState<number | null>(null);
@@ -238,22 +242,24 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     return () => clearTimeout(id);
   }, [sleepMin]);
 
+  // Live copies for the fallback: it is called from timers and player events, which must see the latest lists, not the ones from
+  // the render that started them.
+  const failedRef = useRef(failed);
+  const deadRef = useRef(dead);
+  const currentRef = useRef(current);
+  failedRef.current = failed; deadRef.current = dead; currentRef.current = current;
+  // A server stopped working: mark it, and move to the next one that has not failed and was not found unplayable by the probe
+  // (same audio first). Called by whichever notices first (hls.js, the video element, or the start-up timer), so a second call for
+  // the same server, or one that arrives after the viewer already picked another, does nothing.
   const fallback = useCallback((src: Source) => {
-    setFailed((prev) => {
-      const next = new Set(prev).add(src.id);
-      // another server of the SAME audio only: quietly swapping a dub for a sub (what this used to do) hides
-      // that the dub is down. When the audio you chose has nothing left, say so and name the other side.
-      const cand = sources.find((s) => !next.has(s.id) && s.audio === src.audio);
-      if (cand) setCurrent(cand);
-      else {
-        const label = src.audio === "dub" ? "dub" : src.audio === "raw" ? "raw" : "sub";
-        const other = sources.find((s) => s.audio !== src.audio && !next.has(s.id));
-        setError(other
-          ? `No ${label} server is working for this episode right now. Open settings and switch to ${other.audio === "dub" ? "Dub" : other.audio === "raw" ? "Raw" : "Sub"}, or tap a dimmed server to try it again.`
-          : "This episode won’t play right now. Try again in a little while, or tap a server in settings to retry.");
-      }
-      return next;
-    });
+    if (failedRef.current.has(src.id) || currentRef.current?.id !== src.id) return;
+    const next = new Set(failedRef.current).add(src.id);
+    failedRef.current = next;
+    setFailed(next);
+    const usable = (x: Source) => !next.has(x.id) && !deadRef.current.has(x.id);
+    const cand = sources.find((x) => usable(x) && x.audio === src.audio) ?? sources.find(usable);
+    if (cand) { setFlash(`${src.label} didn’t work, trying ${cand.label}`); setCurrent(cand); }
+    else setError("This episode won’t play right now. Try again in a little while.");
   }, [sources]);
 
   // load the chosen source; hls.js only downloads when the browser can't play HLS itself
@@ -261,6 +267,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     const v = video.current;
     if (!v || !current) return;
     let cancelled = false;
+    const cleanups: (() => void)[] = [];
     const resumeAt = v.currentTime > 1 ? v.currentTime : startAt;
     setError(null);
     setLoading(true);
@@ -275,6 +282,15 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       setStreamOutro(data.outro ?? null);
       hls.current?.destroy();
       hls.current = null;
+      // a stream that loads a playlist but never starts (or a native <video> that errors, which has no hls.js to tell us) must
+      // not leave the viewer waiting: if it has not started in 15 seconds, or the element reports an error, try the next server
+      const started = () => { clearTimeout(watchdog); };
+      const failedNow = () => { if (!cancelled) fallback(current); };
+      const watchdog = setTimeout(failedNow, 15_000);
+      v.addEventListener("loadeddata", started, { once: true });
+      v.addEventListener("playing", started, { once: true });
+      v.addEventListener("error", failedNow, { once: true });
+      cleanups.push(() => { clearTimeout(watchdog); v.removeEventListener("loadeddata", started); v.removeEventListener("playing", started); v.removeEventListener("error", failedNow); });
       if (v.canPlayType("application/vnd.apple.mpegurl")) {
         v.src = url;
       } else {
@@ -299,7 +315,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
       v.addEventListener("loadedmetadata", onMeta, { once: true });
       v.play().catch(() => {});
     })().catch(() => fallback(current));
-    return () => { cancelled = true; };
+    return () => { cancelled = true; cleanups.forEach((f) => f()); };
   }, [current, fallback, startAt]);
 
   useEffect(() => () => hls.current?.destroy(), []);
@@ -553,6 +569,20 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
     setT(v.currentTime);
     if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
     report();
+    // Auto-skip (off until the viewer turns it on). Markers come from the stream, AniSkip, the vault or the crowd; a jump nobody
+    // tapped for must pass a sanity check first (see lib/use-skip-prefs.ts).
+    if (skip.intro && !skipped.current.intro && introStart != null && introEnd != null && v.currentTime >= introStart && v.currentTime < introEnd && introIsSane(introStart, introEnd, v.duration || dur)) {
+      skipped.current.intro = true;
+      v.currentTime = introEnd;
+      toast("Skipped intro");
+      return;
+    }
+    if (skip.outro && !skipped.current.outro && nextHref && !stopAfterEp && !nextDismissed.current && outroStartEff != null && v.currentTime >= outroStartEff && outroIsSane(outroStartEff, v.duration || dur)) {
+      skipped.current.outro = true;
+      toast("Skipped outro");
+      router.push(nextHref);
+      return;
+    }
     if (autoNext && !stopAfterEp && nextHref && !nextDismissed.current && outroStartEff != null && v.currentTime >= outroStartEff && nextIn === null) setNextIn(8);
   };
 
@@ -653,6 +683,7 @@ export function Player({ sources, subtitles, intro, outroStart, nextHref, prevHr
             offset={offset} onOffset={setOffset} onAutoSync={autoSync} sync={sync} hasCues={cues.length > 0} onDownload={downloadSubs}
             style={subStyle} onStyle={patchSubStyle} onResetStyle={resetSubStyle}
             autoNext={autoNext} onAutoNext={setAutoNext} stopAfter={stopAfterEp} onStopAfter={setStopAfterEp}
+            autoSkipIntro={skip.intro} onAutoSkipIntro={skip.setIntro} autoSkipOutro={skip.outro} onAutoSkipOutro={skip.setOutro}
             sleepMin={sleepMin} onSleep={setSleepMin}
             page={page} onPage={setPage} onClose={() => { setMenuOpen(false); setPage("main"); }}
           />

@@ -12,27 +12,32 @@ import { cn } from "@/lib/utils";
 export const coverSrc = (u: string) => (/^https:\/\/uploads\.mangadex\.org\/covers\//i.test(u) ? `/api/manga-img?u=${encodeURIComponent(u)}` : u);
 
 export function Poster({
-  src, alt = "", color, className, eager, sizes,
-}: { src: string | null | undefined; alt?: string; color?: string; className?: string; eager?: boolean; sizes?: string }) {
+  src, alt = "", color, className, eager, sizes, fallbackSrc, label,
+}: { src: string | null | undefined; alt?: string; color?: string; className?: string; eager?: boolean; sizes?: string; fallbackSrc?: string | null; label?: string }) {
+  // `fallbackSrc` is tried when `src` fails (an episode still that does not exist yet falls back to the show's picture); `label` is
+  // written on the tile when neither loads, so a missing poster still says what it was
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
+  const [useFallback, setUseFallback] = useState(false);
+  useEffect(() => { setFailed(false); setUseFallback(false); }, [src, fallbackSrc]);
+  const shown = useFallback && fallbackSrc ? fallbackSrc : src;
   return (
     <span className={cn("relative block overflow-hidden", className)} style={{ background: color ?? "var(--cream-blush)" }}>
-      {src && !failed ? (
+      {shown && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={coverSrc(src)}
+          src={coverSrc(shown)}
           alt={alt}
           sizes={sizes}
           loading={eager ? "eager" : "lazy"}
           fetchPriority={eager ? "high" : undefined}
           decoding="async"
           referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
+          onError={() => (!useFallback && fallbackSrc ? setUseFallback(true) : setFailed(true))}
           className="absolute inset-0 size-full object-cover"
         />
       ) : failed ? (
-        <span aria-hidden className="absolute inset-0 grid place-items-center text-[clamp(14px,30%,28px)] text-plum-faint/70">✿</span>
+        label ? <span className="absolute inset-0 grid place-items-center p-2 text-center text-[11.5px] font-extrabold leading-tight text-plum-muted">{label}</span>
+          : <span aria-hidden className="absolute inset-0 grid place-items-center text-[clamp(14px,30%,28px)] text-plum-faint/70">✿</span>
       ) : null}
     </span>
   );

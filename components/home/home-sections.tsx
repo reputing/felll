@@ -2,6 +2,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Eye, EyeOff, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BlurFade } from "@/components/fx/blur-fade";
 
 // The rows under the hero, in whatever order you like. The server renders them in the default
 // order; this reads your saved layout (kept on this device) and reorders/hides them. "Edit home"
@@ -56,7 +57,7 @@ export function HomeSections({ sections }: { sections: HomeSection[] }) {
         const hidden = layout.hidden.includes(id);
         if (hidden && !editing) return null;
         return (
-          <div key={id} className={cn(editing && "rounded-3xl border-1.5 border-dashed border-line p-3", hidden && "opacity-50")}>
+          <div key={id} className={cn("has-[>.bf:empty]:hidden", editing && "rounded-3xl border-1.5 border-dashed border-line p-3", hidden && "opacity-50")}>
             {editing && (
               <div className="mb-3 flex items-center gap-1.5">
                 <span className="mr-auto text-[12.5px] font-extrabold uppercase tracking-[.08em] text-plum-muted">{s.label}</span>
@@ -65,7 +66,7 @@ export function HomeSections({ sections }: { sections: HomeSection[] }) {
                 <button type="button" onClick={() => toggle(id)} aria-label={hidden ? `Show ${s.label}` : `Hide ${s.label}`} className="grid size-8 place-items-center rounded-full border-1.5 border-line hover:border-frost-hot">{hidden ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button>
               </div>
             )}
-            {!hidden && s.node}
+            {!hidden && (editing ? s.node : <BlurFade>{s.node}</BlurFade>)}
           </div>
         );
       })}

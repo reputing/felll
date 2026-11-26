@@ -7,19 +7,26 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Brain, Check, ChevronDown, Copy, Drama, EyeOff, Feather, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
+import { Brain, Check, Cloud, CloudOff, ChevronDown, Copy, Drama, EyeOff, Feather, FileText, Globe, ImagePlus, Link2, Loader2, Lock, LogOut, MessageSquarePlus, Paperclip, Pencil, RotateCw, Search, Send, Settings2, Sliders, Sparkles, Square, Terminal, Trash2, Upload, Users, X } from "lucide-react";
 import { OVERLAY, POPUP } from "@/components/ui/popup";
 import { Decoy, DECOY_SKINS, type DecoyConfig } from "@/components/shh/decoy";
+import { pushCloak, syncCloak, type CloakPrefs } from "@/lib/cloak";
 import { ModelPicker, useModelList, useSelectedModel } from "@/components/shh/model-picker";
 import { DEFAULT_HUM, HumanizeDialog, humanizeRequest, loadHumPrefs, loadVoice, type HumPrefs } from "@/components/shh/humanizer";
+import { FillDocButton } from "@/components/shh/fill";
+import { useCloudChats } from "@/components/shh/use-cloud-chats";
+import { ClipboardBox } from "@/components/shh/clipboard";
+import { normalizeMath } from "@/lib/math-text";
 import { toast } from "@/lib/store";
+import { DISGUISES, maskTo, setFavicon } from "@/lib/tab-mask";
 import { cn } from "@/lib/utils";
 
 interface Doc { name: string; content: string }
 interface Step { id: string; name?: string; language?: string; code?: string; query?: string; url?: string; output?: string; status?: "running" | "done" }
 interface Msg { role: "user" | "assistant"; content: string; images?: string[]; docs?: Doc[]; steps?: Step[]; memories?: string[]; pending?: boolean; orig?: string; via?: { model: string; wanted?: string } }
-interface Thread { id: string; title: string; updatedAt: number }
-interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string }
+// `cloud`: this chat also lives on the member's account and follows them across devices (components/shh/use-cloud-chats.ts). Without it, it stays in this browser only.
+interface Thread { id: string; title: string; updatedAt: number; cloud?: boolean }
+interface Prefs { hideFooter: boolean; hideHeader: boolean; bossKey: boolean; bossKeys: string[]; disguise: string; customTitle: string; decoy: string; decoyConfig: DecoyConfig; antiFlip: boolean; antiFlipTarget: string; antiFlipCustom: string; at?: number }
 interface RoomMsg { id: number; handle: string | null; role: string; content: string; steps?: Step[] }
 
 const CODE_KEY = "shh:code";
@@ -30,16 +37,8 @@ const OLD_CONVO_KEY = "shh:convo";
 const threadKey = (id: string) => `shh:thread:${id}`;
 const SYSTEM = "You are a sharp, helpful assistant. Answer clearly and concisely, and admit when you are unsure. Use markdown and fenced code blocks where it helps, and LaTeX ($…$ or $$…$$) for math.";
 
-const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {}, antiFlip: false, antiFlipTarget: "docs", antiFlipCustom: "" };
+const DEFAULT_PREFS: Prefs = { hideFooter: false, hideHeader: false, bossKey: true, bossKeys: ["`"], disguise: "off", customTitle: "", decoy: "word", decoyConfig: {}, antiFlip: false, antiFlipTarget: "word", antiFlipCustom: "" };
 const keyLabel = (k: string) => (k === " " ? "Space" : k.length === 1 ? k.toUpperCase() : k);
-const DISGUISES: Record<string, { title: string; emoji: string }> = {
-  docs: { title: "Untitled document - Google Docs", emoji: "📝" },
-  sheets: { title: "Untitled spreadsheet - Google Sheets", emoji: "📊" },
-  slides: { title: "Untitled presentation - Google Slides", emoji: "📽️" },
-  classroom: { title: "Classes", emoji: "🎓" },
-  drive: { title: "My Drive - Google Drive", emoji: "📁" },
-  mail: { title: "Inbox - Gmail", emoji: "✉️" },
-};
 
 // OpenAI-style payload (string content, or an array with image_url parts).
 // Attached files are folded into the user turn's text.
@@ -148,9 +147,10 @@ const MD_COMPONENTS = {
   a: (props: React.ComponentProps<"a">) => <a {...props} target="_blank" rel="noopener noreferrer" />,
 };
 function Markdown({ text }: { text: string }) {
+  const md = useMemo(() => normalizeMath(text), [text]);
   return (
     <div className="shh-md">
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={MD_COMPONENTS}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={MD_COMPONENTS}>{md}</ReactMarkdown>
     </div>
   );
 }
@@ -369,7 +369,7 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
           </div>
           <div className="flex flex-col gap-2 rounded-2xl border-1.5 border-line bg-cream-card px-4 py-3">
             <div className="flex items-center justify-between gap-3">
-              <div><div className="text-[13.5px] font-extrabold">Anti-flip</div><div className="text-[12px] font-semibold text-plum-muted">the instant you click away, swap the tab title + icon to a disguise so it never flashes what it really is; switches back when you return. (browsers can’t read your other tabs, so you pick the mask.)</div></div>
+              <div><div className="text-[13.5px] font-extrabold">Anti-flip (whole site)</div><div className="text-[12px] font-semibold text-plum-muted">the instant you click away, on any page of the site, the tab title + icon swap to the disguise you pick here so it never flashes what it really is; it switches back when you return. this is the only place it is set. (browsers can’t read your other tabs, so you pick the mask.)</div></div>
               <Toggle on={prefs.antiFlip} onClick={() => set({ antiFlip: !prefs.antiFlip })} />
             </div>
             {prefs.antiFlip && (
@@ -392,12 +392,23 @@ function Customize({ prefs, setPrefs }: { prefs: Prefs; setPrefs: (p: Prefs) => 
   );
 }
 
-// Swap the tab title + favicon when a disguise is on; restore on change/unmount.
-function setFavicon(emoji: string | null) {
-  let link = document.querySelector<HTMLLinkElement>("link[data-shh-fav]");
-  if (!emoji) { link?.remove(); return; }
-  if (!link) { link = document.createElement("link"); link.rel = "icon"; link.setAttribute("data-shh-fav", "1"); document.head.appendChild(link); }
-  link.href = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${emoji}</text></svg>`)}`;
+// One-tap copy for a whole message. Always visible (hover-only controls don't exist on a phone), and it says so when it worked.
+function CopyMsg({ text, label = "copy" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); }
+    catch { // older browsers / blocked clipboard: the selection fallback
+      const ta = document.createElement("textarea"); ta.value = text; ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch { toast("couldn’t copy"); ta.remove(); return; }
+      ta.remove();
+    }
+    setDone(true); setTimeout(() => setDone(false), 1400);
+  };
+  return (
+    <button type="button" onClick={copy} aria-label="copy message" className="flex min-h-8 items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-bold text-plum-muted hover:bg-black/5 hover:text-frost-text">
+      {done ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}{done ? "copied" : label}
+    </button>
+  );
 }
 
 export function ShhChat({ me }: { me?: string }) {
@@ -434,19 +445,22 @@ export function ShhChat({ me }: { me?: string }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const loadedThread = useRef(false);
+  const lastSaved = useRef("");   // the messages last read from or written to storage, so autosave only stamps a chat that really changed
 
   // ---- boot: code, model, threads (migrating the old single convo), prefs ----
   useEffect(() => {
     try {
       const c = localStorage.getItem(CODE_KEY); if (c) setCode(c);
       const p = localStorage.getItem(PREFS_KEY); if (p) setPrefsState({ ...DEFAULT_PREFS, ...JSON.parse(p) });
+      // and the account's copy, when it is newer than this device's
+      syncCloak().then((m) => { if (m) setPrefsState({ ...DEFAULT_PREFS, ...(m as unknown as Partial<Prefs>) }); });
       let list: Thread[] = [];
       try { list = JSON.parse(localStorage.getItem(THREADS_KEY) || "[]"); } catch { list = []; }
       if (!Array.isArray(list) || !list.length) {
         const id = crypto.randomUUID();
         let seed: Msg[] = [];
         try { const old = localStorage.getItem(OLD_CONVO_KEY); if (old) seed = JSON.parse(old); } catch { /* */ }
-        list = [{ id, title: seed.find((m) => m.role === "user")?.content?.slice(0, 40) || "new chat", updatedAt: Date.now() }];
+        list = [{ id, title: seed.find((m) => m.role === "user")?.content?.slice(0, 40) || "new chat", updatedAt: Date.now(), ...(seed.length ? {} : { cloud: true }) }];
         try { localStorage.setItem(threadKey(id), JSON.stringify(seed)); localStorage.setItem(THREADS_KEY, JSON.stringify(list)); localStorage.removeItem(OLD_CONVO_KEY); } catch { /* */ }
       }
       setThreads(list);
@@ -459,7 +473,10 @@ export function ShhChat({ me }: { me?: string }) {
   useEffect(() => {
     if (!activeId) return;
     loadedThread.current = false;
-    try { const raw = localStorage.getItem(threadKey(activeId)); setMsgs(raw ? JSON.parse(raw) : []); } catch { setMsgs([]); }
+    let loaded: Msg[] = [];
+    try { const raw = localStorage.getItem(threadKey(activeId)); loaded = raw ? JSON.parse(raw) : []; } catch { /* */ }
+    lastSaved.current = JSON.stringify(loaded);
+    setMsgs(loaded);
     loadedThread.current = true;
     try { localStorage.setItem(ACTIVE_KEY, activeId); } catch { /* */ }
   }, [activeId]);
@@ -470,6 +487,11 @@ export function ShhChat({ me }: { me?: string }) {
     if (!activeId || !loadedThread.current) return;
     const key = threadKey(activeId);
     const t = setTimeout(() => {
+      // Switching chats, or the account handing this device a newer copy, re-runs this effect with nothing new to save. Stamping
+      // updatedAt then would make this device look newest and bounce the chat between devices forever, so only a real change counts.
+      const json = JSON.stringify(msgs);
+      if (json === lastSaved.current) return;
+      lastSaved.current = json;
       const save = (data: unknown) => { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch { return false; } };
       if (!save(msgs)) {
         if (!save(msgs.map((m, i) => (i >= msgs.length - 6 ? m : { ...m, images: undefined, docs: m.docs?.map((d) => ({ name: d.name, content: "" })) })))) {
@@ -486,10 +508,17 @@ export function ShhChat({ me }: { me?: string }) {
     return () => clearTimeout(t);
   }, [msgs, activeId]);
 
+  // cloud chats: copies the chats marked `cloud` to and from the account in the background
+  const cloud = useCloudChats<Thread>({
+    code: code ?? "", threads, setThreads, activeId, setActiveId, msgs: msgs as unknown[], busy,
+    applyActive: (m) => { lastSaved.current = JSON.stringify(m); setMsgs(m as Msg[]); },
+  });
+
   useEffect(() => { setHumState(loadHumPrefs()); try { setNatural(localStorage.getItem("shh:natural") === "1"); } catch { /* */ } }, []);
   const setHum = (p: HumPrefs) => { setHumState(p); try { localStorage.setItem("shh:hum", JSON.stringify(p)); } catch { /* */ } };
   const toggleNatural = () => setNatural((n) => { const v = !n; try { localStorage.setItem("shh:natural", v ? "1" : "0"); } catch { /* */ } return v; });
-  const setPrefs = (p: Prefs) => { setPrefsState(p); try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* */ } };
+  // every change is stamped and mirrored to the account, so it follows the member to other devices (lib/cloak.ts)
+  const setPrefs = (p: Prefs) => { const q = { ...p, at: Date.now() }; setPrefsState(q); try { localStorage.setItem(PREFS_KEY, JSON.stringify(q)); } catch { /* */ } pushCloak(q as unknown as CloakPrefs); };
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy, roomMsgs, roomBusy]);
   useEffect(() => { const ta = taRef.current; if (ta) { ta.style.height = "0px"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; } }, [input]);
@@ -508,10 +537,6 @@ export function ShhChat({ me }: { me?: string }) {
   // the tab loses focus, so it never flashes the real title/icon when you tab away.
   useEffect(() => {
     const original = document.title;
-    const maskTo = (target: string, custom: string) => {
-      if (target === "custom") { if (custom.trim()) document.title = custom.trim(); setFavicon("📄"); }
-      else if (DISGUISES[target]) { document.title = DISGUISES[target].title; setFavicon(DISGUISES[target].emoji); }
-    };
     const activeLook = () => {
       const d = prefs.disguise;
       if (d === "off") { document.title = original; setFavicon(null); }
@@ -654,18 +679,19 @@ export function ShhChat({ me }: { me?: string }) {
   const copyText = (t: string) => navigator.clipboard?.writeText(t).then(() => toast("copied")).catch(() => {});
 
   // ---- threads ----
-  const newThread = () => {
+  const newThread = (cloudChat = true) => {
     const id = crypto.randomUUID();
-    const t: Thread = { id, title: "new chat", updatedAt: Date.now() };
+    const t: Thread = { id, title: "new chat", updatedAt: Date.now(), cloud: cloudChat };
     setThreads((ts) => { const next = [t, ...ts]; try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); localStorage.setItem(threadKey(id), "[]"); } catch { /* */ } return next; });
     setActiveId(id);
     setInput(""); setImages([]); setDocs([]);
   };
   const deleteThread = (id: string) => {
+    if (threads.find((t) => t.id === id)?.cloud) cloud.forget(id);
     setThreads((ts) => {
       const next = ts.filter((t) => t.id !== id);
       try { localStorage.removeItem(threadKey(id)); } catch { /* */ }
-      if (!next.length) { const nid = crypto.randomUUID(); next.push({ id: nid, title: "new chat", updatedAt: Date.now() }); try { localStorage.setItem(threadKey(nid), "[]"); } catch { /* */ } }
+      if (!next.length) { const nid = crypto.randomUUID(); next.push({ id: nid, title: "new chat", updatedAt: Date.now(), cloud: true }); try { localStorage.setItem(threadKey(nid), "[]"); } catch { /* */ } }
       try { localStorage.setItem(THREADS_KEY, JSON.stringify(next)); } catch { /* */ }
       if (id === activeId) setActiveId(next[0].id);
       return next;
@@ -794,13 +820,15 @@ export function ShhChat({ me }: { me?: string }) {
           </DM.Trigger>
           <DM.Portal>
             <DM.Content align="start" sideOffset={6} className={cn(POPUP, "z-50 flex max-h-[60vh] w-[280px] flex-col gap-0.5 overflow-y-auto rounded-2xl p-1.5")}>
-              <DM.Item onSelect={() => { leaveRoom(); newThread(); }} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><MessageSquarePlus className="size-4" />New chat</DM.Item>
+              <DM.Item onSelect={() => { leaveRoom(); newThread(true); }} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><Cloud className="size-4" />New chat<span className="ml-auto text-[11px] font-bold text-plum-muted">on your account</span></DM.Item>
+              <DM.Item onSelect={() => { leaveRoom(); newThread(false); }} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><CloudOff className="size-4" />New private chat<span className="ml-auto text-[11px] font-bold text-plum-muted">this device only</span></DM.Item>
               <DM.Item onSelect={createRoom} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-extrabold text-frost-text outline-none hover:bg-cream-blush"><Users className="size-4" />New co-work room</DM.Item>
               <DM.Item onSelect={() => joinRoom()} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-bold text-plum-body outline-none hover:bg-cream-blush"><Link2 className="size-4" />Join a room…</DM.Item>
               <div className="my-1 h-px bg-line" />
               {sortedThreads.map((t) => (
                 <div key={t.id} className={cn("group flex items-center gap-1 rounded-xl px-1 py-0.5", t.id === activeId && "bg-cream-blush")}>
                   <DM.Item onSelect={() => { leaveRoom(); setActiveId(t.id); }} className="flex min-w-0 flex-1 cursor-pointer items-center rounded-lg px-2 py-1.5 text-[13px] font-bold outline-none hover:bg-black/5"><span className="truncate">{t.title || "new chat"}</span></DM.Item>
+                  <button type="button" onClick={(e) => { e.preventDefault(); cloud.setCloud(t.id, !t.cloud); toast(t.cloud ? "now on this device only" : "saved to your account ♡"); }} aria-label={t.cloud ? "on your account, tap to keep on this device only" : "this device only, tap to save to your account"} title={t.cloud ? "on your account (tap to keep on this device only)" : "this device only (tap to save to your account)"} className={cn("grid size-7 flex-none place-items-center rounded-lg hover:bg-black/5", t.cloud ? "text-frost-text" : "text-plum-muted")}>{t.cloud ? <Cloud className="size-3.5" /> : <CloudOff className="size-3.5" />}</button>
                   <button type="button" onClick={(e) => { e.preventDefault(); renameThread(t.id); }} aria-label="rename" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-frost-text group-hover:opacity-100"><Pencil className="size-3.5" /></button>
                   <button type="button" onClick={(e) => { e.preventDefault(); deleteThread(t.id); }} aria-label="delete" className="grid size-7 flex-none place-items-center rounded-lg text-plum-muted opacity-0 hover:bg-black/5 hover:text-red-500 group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
                 </div>
@@ -811,6 +839,13 @@ export function ShhChat({ me }: { me?: string }) {
 
         <ModelPicker models={models} value={model} onChange={setModel} checking={checking} loaded={modelsLoaded} rechecking={rechecking} onRecheck={recheck} />
         <span className="flex-1" />
+        {/* are this chat and the account in line? */}
+        {!room && (
+          <button type="button" onClick={() => cloud.syncNow()} title={cloud.status === "error" ? `couldn't sync: ${cloud.error} (tap to retry)` : "tap to sync now"} aria-label="sync chats now" className={cn("flex h-10 items-center gap-1.5 rounded-full border-1.5 border-line bg-cream-card px-3 text-[12px] font-bold hover:border-frost-hot", cloud.status === "error" ? "text-red-500" : "text-plum-muted")}>
+            {cloud.status === "syncing" ? <Loader2 className="size-3.5 animate-spin" /> : cloud.status === "error" ? <CloudOff className="size-3.5" /> : <Cloud className="size-3.5" />}
+            <span className="hidden sm:inline">{cloud.status === "syncing" ? "syncing" : cloud.status === "error" ? "offline" : cloud.status === "ok" ? "synced" : "cloud"}</span>
+          </button>
+        )}
         {/* quick decoy: pick a skin to throw up instantly */}
         <DM.Root>
           <DM.Trigger asChild>
@@ -828,7 +863,17 @@ export function ShhChat({ me }: { me?: string }) {
         <Customize prefs={prefs} setPrefs={setPrefs} />
         <HumanizeDialog code={code} model={model} prefs={hum} setPrefs={setHum} />
         <Setup code={code} />
+        <ClipboardBox code={code} />
       </div>
+
+      {cloud.showNag && !room && (
+        <div className="flex flex-wrap items-center gap-2 rounded-shell border-1.5 border-frost-hot bg-cream-blush px-3 py-2">
+          <Cloud className="size-4 flex-none text-frost-text" />
+          <span className="min-w-0 flex-1 text-[13px] font-bold">{cloud.localOnly} {cloud.localOnly === 1 ? "chat only lives" : "chats only live"} on this device. move {cloud.localOnly === 1 ? "it" : "them"} to your account to see {cloud.localOnly === 1 ? "it" : "them"} everywhere you sign in.</span>
+          <button type="button" onClick={() => { cloud.moveAllToCloud(); toast("moving to your account ♡"); }} className="h-9 rounded-full bg-frost px-4 text-[13px] font-extrabold text-frost-ink">move them</button>
+          <button type="button" onClick={cloud.hideNag} className="h-9 rounded-full border-1.5 border-line bg-cream-card px-3 text-[13px] font-bold text-plum-muted hover:border-frost-hot">not now</button>
+        </div>
+      )}
 
       {room && (
         <div className="flex flex-wrap items-center gap-2 rounded-shell border-1.5 border-frost-hot bg-cream-blush px-3 py-2">
@@ -878,7 +923,8 @@ export function ShhChat({ me }: { me?: string }) {
         )}
         {!room && msgs.map((m, i) => (
           <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-            <div className="group flex max-w-[85%] flex-col gap-1">
+            <div className={cn("group flex max-w-[85%] flex-col gap-1", m.role === "user" && "items-end")}>
+              {m.content.length > 1200 && !m.pending && <div className="px-1"><CopyMsg text={m.content} label="copy all" /></div>}
               <div className={cn("rounded-3xl px-4 py-2.5 text-[14.5px] leading-relaxed", m.role === "user" ? "whitespace-pre-wrap break-words bg-frost text-frost-ink" : "break-words bg-paper text-plum-body")}>
                 {m.images?.length ? (
                   <div className="mb-2 flex flex-wrap gap-1.5">
@@ -906,9 +952,10 @@ export function ShhChat({ me }: { me?: string }) {
                   </div>
                 ) : null}
               </div>
+              {m.role === "user" && m.content && <div className="px-1"><CopyMsg text={m.content} /></div>}
               {m.role === "assistant" && m.content && !m.pending && (
-                <div className="flex gap-1 px-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
-                  <button type="button" onClick={() => copyText(m.content)} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><Copy className="size-3" />copy</button>
+                <div className="flex flex-wrap items-center gap-1 px-1">
+                  <CopyMsg text={m.content} />
                   <button type="button" onClick={() => humanizeReply(i)} disabled={humBusy !== null} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text disabled:opacity-50">{humBusy === i ? <Loader2 className="size-3 animate-spin" /> : <Feather className="size-3" />}{m.orig ? "show original" : "humanize"}</button>
                   {i === msgs.length - 1 && !busy && <button type="button" onClick={regenerate} className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11.5px] font-bold text-plum-muted hover:text-frost-text"><RotateCw className="size-3" />regenerate</button>}
                 </div>
@@ -950,6 +997,7 @@ export function ShhChat({ me }: { me?: string }) {
         <div className="flex flex-none gap-1">
           <button type="button" onClick={() => fileRef.current?.click()} aria-label="Attach image" title="attach image" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><ImagePlus className="size-5" /></button>
           <button type="button" onClick={() => docRef.current?.click()} aria-label="Attach file" title="attach a text / doc file" className="grid size-11 place-items-center rounded-full border-1.5 border-line bg-cream-card text-plum-body hover:border-frost-hot"><Paperclip className="size-[18px]" /></button>
+          {code && <FillDocButton code={code} model={model} others={models.filter((m) => m.id !== model).map((m) => m.id)} visionModels={models.filter((m) => m.vision).map((m) => m.id)} />}
           <button type="button" onClick={() => setWeb((w) => !w)} aria-pressed={web} title="search the web (it decides when to search and read links)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", web ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Globe className="size-5" /></button>
           <button type="button" onClick={() => { if (!exec && !selTools) toast("this model can’t run code. pick one marked ⚙"); setExec((x) => !x); }} aria-pressed={exec} title="let it run code in a sandbox (needs a ⚙ model)" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", exec ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Terminal className="size-5" /></button>
           <button type="button" onClick={toggleNatural} aria-pressed={natural} title="natural voice: replies are written like a person from the start" className={cn("grid size-11 place-items-center rounded-full border-1.5 transition", natural ? "border-frost-hot bg-cream-blush text-frost-text" : "border-line bg-cream-card text-plum-body hover:border-frost-hot")}><Feather className="size-5" /></button>

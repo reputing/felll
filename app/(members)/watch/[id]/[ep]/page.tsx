@@ -20,6 +20,7 @@ import { Comments } from "@/components/comments/comments";
 import { LibraryControls } from "@/components/anime/library-controls";
 import { Player, type Source, type Track } from "@/components/watch/player";
 import { EpisodeRail, type EpisodeEntry } from "@/components/watch/episode-rail";
+import { FlixServers } from "@/components/watch/flix-servers";
 import { Reactions, RequestButton, WatchBeacon } from "@/components/watch/bits";
 
 type Props = { params: Promise<{ id: string; ep: string }>; searchParams: Promise<{ t?: string }> };
@@ -192,6 +193,9 @@ export default async function WatchPage({ params, searchParams }: Props) {
               </div>
             </div>
           )}
+
+          {/* optional extra servers from another site's player: collapsed, labelled, sandboxed (components/watch/flix-servers.tsx) */}
+          {a.format !== "Movie" && <FlixServers anilistId={anilistId} episode={ep} />}
 
           <div className="flex flex-wrap items-start justify-between gap-4 rounded-box border-1.5 border-line bg-cream-card p-5">
             <div className="min-w-0">

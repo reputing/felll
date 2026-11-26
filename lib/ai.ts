@@ -19,9 +19,13 @@ type F = typeof fetch;
 // `fixed` (keyless providers): the models offered, with what each can do, as verified by hand. A keyless
 // service rate-limits per model (OVHcloud: 2 requests a minute per IP), so these are not probed for
 // capabilities (that would spend the allowance) and a 429 is "busy, try the next one", never "down".
-export interface Provider { id: string; label: string; base: string; key: string; concurrency: number; keyless?: boolean; fixed?: Record<string, { vision: boolean; tools: boolean }> }
+// `slow`: a provider with a small daily allowance (a free key's 100 requests a day). Its models are probed every few hours
+// instead of every 15 minutes, a 429 from it only means "out for now" (never "down"), and its capabilities are not measured
+// (each measurement is more requests). `max` caps how many of a long model list are used; `match` keeps only ids that fit.
+export interface Provider { id: string; label: string; base: string; key: string; concurrency: number; keyless?: boolean; fixed?: Record<string, { vision: boolean; tools: boolean }>; slow?: boolean; max?: number; match?: string }
 
-const PROVIDERS: { id: string; label: string; base: string; keyVar: string; defaultKey: string; concurrency: number; keyless?: boolean; fixed?: Provider["fixed"] }[] = [
+type ProviderDef = { id: string; label: string; base: string; keyVar: string; defaultKey: string; concurrency: number; keyless?: boolean; fixed?: Provider["fixed"]; slow?: boolean; max?: number; match?: string; optInVar?: string }
+const PROVIDERS: ProviderDef[] = [
   { id: "inception", label: "Inception", base: "https://api.inceptionlabs.ai/v1", keyVar: "INCEPTION_API_KEY", defaultKey: "sk_828e53bbd4422201bd577e47c7f9c5282ec26c5c0217057758874c910c4f2650", concurrency: 4 },
   // Image readers with no key at all (OVHcloud AI Endpoints, anonymous access). Checked live with a
   // picture of text and shapes: all three read it correctly. Inception cannot see images, so these
@@ -48,14 +52,39 @@ const PROVIDERS: { id: string; label: string; base: string; keyVar: string; defa
       "dots-studio/dots-3-note-preview:free": { vision: true, tools: false },
     },
   },
+  // ---- more fallbacks, from the Free-LLM directory (github.com/nejib1/Free-LLM) and ChatAnywhere -------------------------
+  // Each needs its own free key, set in the environment (see .env.example); with no key the provider is simply not offered.
+  // They sit behind the ones above, so they only matter when those are down or out of requests.
+  // ChatAnywhere (github.com/chatanywhere/GPT_API_free): GPT and DeepSeek behind one OpenAI-style endpoint. A free key is
+  // 100 requests a day, so it is probed rarely. api.chatanywhere.org is the host for use outside China (.tech is the China one).
+  {
+    id: "chatanywhere", label: "ChatAnywhere", base: "https://api.chatanywhere.org/v1", keyVar: "CHATANYWHERE_API_KEY", defaultKey: "", concurrency: 1, slow: true,
+    fixed: {
+      "gpt-4o-mini": { vision: true, tools: true },
+      "gpt-4.1-mini": { vision: true, tools: true },
+      "gpt-5-mini": { vision: true, tools: true },
+      "deepseek-v3": { vision: false, tools: true },
+    },
+  },
+  { id: "groq", label: "Groq", base: "https://api.groq.com/openai/v1", keyVar: "GROQ_API_KEY", defaultKey: "", concurrency: 2, max: 8 },
+  { id: "cerebras", label: "Cerebras", base: "https://api.cerebras.ai/v1", keyVar: "CEREBRAS_API_KEY", defaultKey: "", concurrency: 2, max: 6 },
+  // OpenRouter's free models (ids ending in :free): 50 requests a day on a free account, so probed rarely.
+  { id: "openrouter", label: "OpenRouter", base: "https://openrouter.ai/api/v1", keyVar: "OPENROUTER_API_KEY", defaultKey: "", concurrency: 1, slow: true, max: 6, match: ":free$" },
+  { id: "freeinference", label: "FreeInference", base: "https://freeinference.org/v1", keyVar: "FREEINFERENCE_API_KEY", defaultKey: "", concurrency: 1, slow: true, fixed: { "qwen3.6-35b": { vision: false, tools: false }, "deepseek-v4-flash": { vision: false, tools: false } } },
+  { id: "airforce", label: "Api.Airforce", base: "https://api.airforce/v1", keyVar: "AIRFORCE_API_KEY", defaultKey: "", concurrency: 1, slow: true, fixed: { "qwen3.8-27b": { vision: false, tools: false }, "glm-5.3-flash": { vision: false, tools: false }, "kimi-k2.7-code": { vision: false, tools: false } } },
+  // AI Horde: no key at all, but volunteers' computers answer, so a stranger can read what is sent. Off unless AIHORDE_ENABLED=1,
+  // and last in line even then. Its model list changes with whoever is online, so it is read live and capped.
+  { id: "aihorde", label: "AI Horde", base: "https://oai.aihorde.net/v1", keyVar: "", defaultKey: "", concurrency: 1, keyless: true, slow: true, max: 3, optInVar: "AIHORDE_ENABLED" },
 ];
 
 /** The providers this deployment has keys for. */
 export function providersFor(env: Env): Provider[] {
   return PROVIDERS.flatMap((p) => {
-    if (p.keyless) return [{ id: p.id, label: p.label, base: p.base, key: "", concurrency: p.concurrency, keyless: true, fixed: p.fixed }];
+    if (p.optInVar && (env[p.optInVar] ?? "").trim() !== "1") return [];
+    const extra = { slow: p.slow, max: p.max, match: p.match };
+    if (p.keyless) return [{ id: p.id, label: p.label, base: p.base, key: "", concurrency: p.concurrency, keyless: true, fixed: p.fixed, ...extra }];
     const key = (env[p.keyVar] ?? "").trim() || p.defaultKey;
-    return key ? [{ id: p.id, label: p.label, base: p.base, key, concurrency: p.concurrency }] : [];
+    return key ? [{ id: p.id, label: p.label, base: p.base, key, concurrency: p.concurrency, fixed: p.fixed, ...extra }] : [];
   });
 }
 
@@ -277,7 +306,8 @@ export async function probeTools(f: F, p: Provider, id: string, timeoutMs = 25_0
 export interface ModelRow { id: string; ok: number; vision: number; tools: number; ms: number | null; err: string | null; checked_at: number }
 
 // Provider order (only one for now), then speed.
-const PROVIDER_ORDER = ["inception", "ovh", "kilo"];
+const PROVIDER_ORDER = ["inception", "ovh", "kilo", "chatanywhere", "groq", "cerebras", "openrouter", "freeinference", "airforce", "aihorde"];
+const isSlow = (ns: string) => !!PROVIDERS.find((p) => p.id === splitId(ns)?.provider)?.slow;
 const rankId = (ns: string) => {
   const pi = PROVIDER_ORDER.indexOf(splitId(ns)?.provider ?? "");
   return pi < 0 ? PROVIDER_ORDER.length : pi;
@@ -293,11 +323,13 @@ const fixedRank = (ns: string) => {
 };
 
 export const MAX_AGE_SEC = 45 * 60; // a pass older than this no longer counts
+export const SLOW_MAX_AGE_SEC = 7 * 3600; // ... except for a provider with a small daily allowance, which is only checked every few hours
+const SLOW_STALE_SEC = 6 * 3600;
 
 /** The models safe to offer right now: probed OK recently, best first. */
 export function workingModels(rows: ModelRow[], nowSec: number, maxAgeSec = MAX_AGE_SEC): ModelRow[] {
   return rows
-    .filter((r) => r.id !== "__lock" && r.ok === 1 && r.checked_at >= nowSec - maxAgeSec)
+    .filter((r) => r.id !== "__lock" && r.ok === 1 && r.checked_at >= nowSec - (isSlow(r.id) ? Math.max(maxAgeSec, SLOW_MAX_AGE_SEC) : maxAgeSec))
     .sort((a, b) => rankId(a.id) - rankId(b.id) || fixedRank(a.id) - fixedRank(b.id) || (a.ms ?? 1e9) - (b.ms ?? 1e9) || a.id.localeCompare(b.id));
 }
 
@@ -330,7 +362,7 @@ export function needsProbe(ids: string[], rows: ModelRow[], nowSec: number, okSt
   const by = new Map(rows.map((r) => [r.id, r]));
   const at = (id: string) => by.get(id)?.checked_at ?? 0;
   const due = ids
-    .filter((id) => { const r = by.get(id); return !r || !r.checked_at || r.checked_at < nowSec - (r.ok ? okStaleSec : failStaleSec); })
+    .filter((id) => { const r = by.get(id); return !r || !r.checked_at || r.checked_at < nowSec - (isSlow(id) ? SLOW_STALE_SEC : r.ok ? okStaleSec : failStaleSec); })
     .sort((a, b) => at(a) - at(b) || rankId(a) - rankId(b));
   const groups = new Map<string, string[]>();
   for (const id of due) { const k = splitId(id)?.provider ?? ""; const g = groups.get(k); if (g) g.push(id); else groups.set(k, [id]); }
@@ -361,8 +393,11 @@ export interface RefreshResult { probed: number; ok: number; skipped: boolean; r
 async function listModels(f: F, p: Provider): Promise<string[]> {
   if (p.fixed) return Object.keys(p.fixed); // a hand-checked list: no request spent asking
   const r = await f(`${p.base}/models`, { headers: { accept: "application/json", ...(p.key ? { authorization: `Bearer ${p.key}` } : {}) }, signal: AbortSignal.timeout(20_000) });
+  if (!r.ok) throw new Error(`model list HTTP ${r.status}`);
   const j: any = await r.json();
-  return (j?.data ?? []).map((m: { id: string }) => m.id).filter((id: unknown): id is string => typeof id === "string" && isChatId(id));
+  const re = p.match ? new RegExp(p.match) : null;
+  const ids = (j?.data ?? []).map((m: { id: string }) => m.id).filter((id: unknown): id is string => typeof id === "string" && isChatId(id) && (!re || re.test(id)));
+  return p.max ? ids.slice(0, p.max) : ids;
 }
 
 /** Probe a bounded batch of models and persist each result as it lands, so partial
@@ -406,7 +441,7 @@ export async function refreshModels(f: F, providers: Provider[], store: Store, o
       const row: ModelRow = { id: ns, ok: t.ok ? 1 : 0, vision: t.ok ? (prev?.vision ?? 0) : 0, tools: t.ok ? (prev?.tools ?? 0) : 0, ms: t.ok ? t.ms : null, err: t.ok ? null : t.err, checked_at: Math.floor(clock() / 1000) };
       const fixed = p.fixed?.[s.id];
       if (t.ok && fixed) { row.vision = fixed.vision ? 1 : 0; row.tools = fixed.tools ? 1 : 0; }
-      else if (t.ok && (!prev || !prev.checked_at || o.force) && requests + 2 <= cap && clock() - start < deadline) {
+      else if (t.ok && !p.slow && (!prev || !prev.checked_at || o.force) && requests + 2 <= cap && clock() - start < deadline) {
         requests += 2;
         const [v, tl] = await Promise.all([probeVision(f, p, s.id, to), probeTools(f, p, s.id, to)]);
         row.vision = v ? 1 : 0; row.tools = tl ? 1 : 0;
@@ -450,7 +485,7 @@ export async function chatWithFailover(
     if (usable) return { reply, model: ns, tried };
     last = reply;
     // a keyless service's 429 only means "slow down" (it limits per model): try the next, do not drop this one
-    if (reply.status === 200 || (modelFault(reply.status) && !(p.keyless && reply.status === 429))) o.onDown?.(ns, reply.err || "empty reply");
+    if (reply.status === 200 || (modelFault(reply.status) && !((p.keyless || p.slow) && reply.status === 429))) o.onDown?.(ns, reply.err || "empty reply");
   }
   return { reply: last, model: null, tried };
 }

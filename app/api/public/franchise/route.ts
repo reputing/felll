@@ -1,3 +1,4 @@
+import { memberOr401 } from "@/lib/auth";
 import { getFranchise, lastError } from "@/lib/franchise";
 import { eviCall } from "@/lib/music-server";
 
@@ -16,7 +17,13 @@ export async function GET(req: Request) {
   const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "unknown";
   if (throttled(ip)) return Response.json({ error: "slow down" }, { status: 429 });
   const sp = new URL(req.url).searchParams;
-  if (sp.get("probe")) return Response.json({ ...(await probe()), ...(await musicProbe(req)) }, { headers: { "cache-control": "no-store" } });
+  // the probe makes outbound calls (AniList, and the keyless AI vision services) from our server: members only, so nobody can use the open
+  // endpoint to spend those services' per-IP allowance and leave /shh without its fallbacks
+  if (sp.get("probe")) {
+    const me = await memberOr401();
+    if (me instanceof Response) return me;
+    return Response.json({ ...(await probe()), ...(await musicProbe(req)) }, { headers: { "cache-control": "no-store" } });
+  }
   const mal = Number(sp.get("mal"));
   if (!Number.isInteger(mal) || mal <= 0) return Response.json({ error: "mal id?" }, { status: 400 });
   const f = await getFranchise(mal).catch((e) => { return { error: String(e) } as never; });

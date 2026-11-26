@@ -45,10 +45,16 @@ export interface PanelProps {
   offset: number; onOffset: (v: number) => void; onAutoSync: () => void; sync: SyncState; hasCues: boolean; onDownload: (fmt: "srt" | "vtt") => void;
   style: SubStyle; onStyle: (p: Partial<SubStyle>) => void; onResetStyle: () => void;
   autoNext: boolean; onAutoNext: (v: boolean) => void; stopAfter: boolean; onStopAfter: (v: boolean) => void;
+  /** jump the opening / credits on their own (shown only when the player passes them) */
+  autoSkipIntro?: boolean; onAutoSkipIntro?: (v: boolean) => void; autoSkipOutro?: boolean; onAutoSkipOutro?: (v: boolean) => void;
   sleepMin: number | null; onSleep: (m: number | null) => void;
   page: "main" | "subs"; onPage: (p: "main" | "subs") => void; onClose: () => void;
   /** movies: only the subtitles page, opening at the top of the picture (the native controls sit at the bottom) */
   subsOnly?: boolean;
+  /** the picture is in a frame we cannot listen to, so there is no audio to sync against */
+  noAutoSync?: boolean;
+  /** a phone: the panel sits at the bottom of the screen as a sheet instead of inside the (small) picture */
+  sheet?: boolean;
 }
 
 export function SettingsPanel(p: PanelProps) {
@@ -70,7 +76,9 @@ export function SettingsPanel(p: PanelProps) {
     setBusy(false);
   };
 
-  const box = cn(p.subsOnly ? "top-2" : "bottom-[58px]", "absolute right-2 z-30 max-h-[min(70%,460px)] w-[min(320px,calc(100%-1rem))] overflow-y-auto rounded-2xl border border-white/15 bg-black/90 p-3 text-white shadow-[0_18px_40px_-12px_rgba(0,0,0,.9)] backdrop-blur-xl animate-in fade-in");
+  const box = p.sheet
+    ? "fixed inset-x-2 bottom-[88px] z-[70] max-h-[calc(100dvh-210px)] overflow-y-auto rounded-3xl border border-white/15 bg-black/95 p-4 pb-5 text-white shadow-[0_-12px_50px_-10px_rgba(0,0,0,.9)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4"
+    : cn(p.subsOnly ? "top-2" : "bottom-[58px]", "absolute right-2 z-30 max-h-[min(70%,460px)] w-[min(320px,calc(100%-1rem))] overflow-y-auto rounded-2xl border border-white/15 bg-black/90 p-3 text-white shadow-[0_18px_40px_-12px_rgba(0,0,0,.9)] backdrop-blur-xl animate-in fade-in");
 
   if (p.page === "subs" || p.subsOnly) {
     return (
@@ -108,10 +116,10 @@ export function SettingsPanel(p: PanelProps) {
           <button type="button" onClick={() => p.onOffset(0)} className={cn(chip, off)}>0</button>
         </div>
         <p className="px-1 pt-1 text-[11px] text-white/50">+ shows them later, − earlier.</p>
-        <button type="button" disabled={!p.hasCues || p.sync.phase === "listening"} onClick={p.onAutoSync} className={cn(chip, off, "mt-2 flex h-9 w-full items-center justify-center gap-2 disabled:opacity-50")}>
+        {!p.noAutoSync && (<button type="button" disabled={!p.hasCues || p.sync.phase === "listening"} onClick={p.onAutoSync} className={cn(chip, off, "mt-2 flex h-9 w-full items-center justify-center gap-2 disabled:opacity-50")}>
           {p.sync.phase === "listening" ? <Loader2 className="size-4 animate-spin" /> : <AudioLines className="size-4" />}
           {p.sync.phase === "listening" ? `Listening… ${Math.round(p.sync.progress * 100)}%` : "Auto-sync by listening to the audio"}
-        </button>
+        </button>)}
         {p.sync.msg && <p className={cn("px-1 pt-1.5 text-[11.5px] font-bold", p.sync.phase === "error" ? "text-red-300" : "text-frost")}>{p.sync.msg}</p>}
         <div className="mt-2 flex gap-2">
           <button type="button" disabled={!p.hasCues} onClick={() => p.onDownload("srt")} className={cn(chip, off, "flex flex-1 items-center justify-center gap-1.5 disabled:opacity-50")}><Download className="size-3.5" />.srt</button>
@@ -182,6 +190,8 @@ export function SettingsPanel(p: PanelProps) {
       <Label>Playback</Label>
       <Toggle checked={p.autoNext} onChange={p.onAutoNext} label="Auto-play next episode" />
       <Toggle checked={p.stopAfter} onChange={p.onStopAfter} label="Stop after this episode" />
+      {p.onAutoSkipIntro && <Toggle checked={!!p.autoSkipIntro} onChange={p.onAutoSkipIntro} label="Auto-skip intro" />}
+      {p.onAutoSkipOutro && <Toggle checked={!!p.autoSkipOutro} onChange={p.onAutoSkipOutro} label="Auto-skip outro" />}
       <div className="flex items-center gap-1 pt-1.5">
         <span className="flex-1 px-1 text-[13px] font-bold">Sleep timer</span>
         {[15, 30, 60].map((m) => <button key={m} type="button" onClick={() => p.onSleep(p.sleepMin === m ? null : m)} className={cn(chip, p.sleepMin === m ? on : off)}>{m}m</button>)}
